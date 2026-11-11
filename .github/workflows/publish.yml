@@ -1,0 +1,91 @@
+# Publish the module to mooncakes.io.
+#
+# Release flow for a new version:
+#   1. Bump `version` in moon.mod, commit, and push to master.
+#   2. Wait for CI on that push to pass.
+#   3. Draft a GitHub Release with a matching tag (v0.2.0 for version 0.2.0)
+#      targeting master, then publish it. This workflow starts automatically.
+#
+# The tag is only a marker: mooncakes.io takes the version from moon.mod.
+# The workflow can also be dispatched manually from the Actions tab to publish
+# the version currently on master.
+#
+# One-time setup:
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+#   Name: MOONCAKES_TOKEN
+#   Value: the full contents of ~/.moon/credentials.json (one JSON line),
+#          for example {"token":"<token>","username":"q2316367743"}
+
+name: publish
+
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Fail in seconds on a version mismatch instead of surfacing the registry
+      # error later. A `v` prefix on the tag is allowed (v0.2.0 == 0.2.0).
+      - name: Check tag matches moon.mod version
+        if: ${{ github.event_name == 'release' }}
+        run: |
+          MOON_VERSION=$(grep -m1 '^version' moon.mod | sed -E 's/.*"(.*)".*/\1/')
+          TAG="${{ github.event.release.tag_name }}"
+          TAG_VERSION="${TAG#v}"
+          echo "moon.mod version = $MOON_VERSION"
+          echo "release tag      = $TAG"
+          if [ "$MOON_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag \"$TAG\" does not match moon.mod version \"$MOON_VERSION\". Bump the version, push to master, then create the tag and release."
+            exit 1
+          fi
+
+      - name: Set up MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain versions
+        run: moon version --all
+
+      - name: Update MoonBit dependencies
+        run: moon update
+
+      # Full gate: nothing is published unless every step passes.
+      - name: Check
+        run: moon check --target native --deny-warn
+
+      - name: Build native
+        run: moon build --target native
+
+      - name: Run tests
+        run: moon test --target native
+
+      - name: Run CLI golden tests
+        run: moon testcli test tests/cli.md --target native
+
+      - name: Check generated interfaces are committed
+        run: |
+          moon info
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+
+      - name: Check formatting
+        run: moon fmt --check
+
+      - name: Publish to mooncakes.io
+        run: |
+          echo "$CREDENTIALS" > ~/.moon/credentials.json
+          moon publish
+          rm -f ~/.moon/credentials.json
+        env:
+          CREDENTIALS: ${{ secrets.MOONCAKES_TOKEN }}
