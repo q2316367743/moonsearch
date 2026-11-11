@@ -1,0 +1,6 @@
+import {
+  "q2316367743/moonsearch/src/cli",
+  "moonbitlang/core/env",
+}
+
+pkgtype(kind: "executable")

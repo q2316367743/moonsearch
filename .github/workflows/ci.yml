@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> $GITHUB_PATH
+
+      - name: Show toolchain versions
+        run: moon version --all
+
+      - name: Check
+        run: moon check --target native --deny-warn
+
+      - name: Check formatting
+        run: moon fmt --check
+
+      - name: Build native
+        run: moon build --target native
+
+      - name: Run tests
+        run: moon test --target native
+
+      - name: Run CLI golden tests
+        run: moon testcli test tests/cli.md --target native
+
+      - name: Check generated interfaces are committed
+        run: |
+          moon info
+          git diff --exit-code
+          test -z "$(git status --porcelain)"

@@ -1,0 +1,48 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/cli"
+
+import {
+  "moonbitlang/core/argparse",
+}
+
+// Values
+pub fn build_command() -> @argparse.Command
+
+pub fn parse(ArrayView[String], env? : Map[String, String]) -> Result[Parsed, String]
+
+pub fn run(ArrayView[String], env? : Map[String, String]) -> CliResult
+
+// Errors
+
+// Types and methods
+pub(all) enum CliResult {
+  Success(String)
+  NoMatch
+  Failure(String)
+}
+pub fn CliResult::exit_code(Self) -> Int32
+
+pub(all) enum Command {
+  Index
+  Update
+  Search
+  Count
+  Info
+}
+pub fn Command::name(Self) -> String
+
+pub(all) struct Invocation {
+  command : Command
+  query : String
+  matches : @argparse.Matches
+}
+
+pub(all) enum Parsed {
+  Run(Invocation)
+  ShowHelp(String)
+  ShowVersion(String)
+}
+
+// Type aliases
+
+// Traits
