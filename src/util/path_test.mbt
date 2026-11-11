@@ -66,6 +66,27 @@ test "cmp_paths orders non-ASCII and invalid UTF-8 by raw bytes" {
 }
 
 ///|
+test "join_path adds exactly one separator" {
+  assert_eq(@util.join_path("/home/user", "docs"), "/home/user/docs")
+  assert_eq(@util.join_path("/home/user/", "docs"), "/home/user/docs")
+  assert_eq(@util.join_path("/", "tmp"), "/tmp")
+  assert_eq(@util.join_path("", "name"), "name")
+  assert_eq(@util.join_path("relative", "name"), "relative/name")
+}
+
+///|
+test "is_within compares whole components" {
+  assert_true(@util.is_within("/home/user", "/home/user"))
+  assert_true(@util.is_within("/home/user", "/home/user/docs"))
+  assert_false(@util.is_within("/home/user", "/home/user2"))
+  assert_false(@util.is_within("/home/user/docs", "/home/user"))
+  assert_true(@util.is_within("/", "/home"))
+  assert_false(@util.is_within("/home", "/"))
+  assert_false(@util.is_within("", "/home"))
+  assert_false(@util.is_within("/home", ""))
+}
+
+///|
 test "sorting with cmp_paths is deterministic" {
   let names : Array[Bytes] = [
     b"file10", b"a.b", b"7", b"a/b", b"file2", b"007", b"a", b"07",

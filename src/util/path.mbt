@@ -1,4 +1,51 @@
 ///|
+/// Join a directory path and a child name with exactly one separator.
+///
+/// An empty parent yields the name itself; a parent that already ends with `/`
+/// is not given a second separator, so joining `/` and `tmp` gives `/tmp`
+/// rather than `//tmp`.
+pub fn join_path(parent : StringView, name : StringView) -> String {
+  if parent.is_empty() {
+    "\{name}"
+  } else if parent.get_char(parent.length() - 1) is Some('/') {
+    "\{parent}\{name}"
+  } else {
+    "\{parent}/\{name}"
+  }
+}
+
+///|
+/// Whether `path` names a direct or indirect child of `ancestor`.
+///
+/// Both paths are expected to be normalized absolute paths. The comparison is
+/// component-wise: `/home/user2` is not inside `/home/user`, while `/home/user`
+/// and `/home/user/docs` are both inside `/home/user`. A root of `/` contains
+/// every other absolute path.
+pub fn is_within(ancestor : StringView, path : StringView) -> Bool {
+  if ancestor.is_empty() || path.is_empty() {
+    return false
+  }
+  if ancestor == path {
+    return true
+  }
+  let ancestor_len = ancestor.length()
+  if ancestor_len == 1 && ancestor.get_char(0) is Some('/') {
+    return path.get_char(0) is Some('/')
+  }
+  if path.length() <= ancestor_len {
+    return false
+  }
+  let mut i = 0
+  while i < ancestor_len {
+    if path.get_char(i) != ancestor.get_char(i) {
+      return false
+    }
+    i = i + 1
+  }
+  path.get_char(ancestor_len) is Some('/')
+}
+
+///|
 /// Natural ordering for byte paths.
 ///
 /// Paths are compared byte by byte with two exceptions:

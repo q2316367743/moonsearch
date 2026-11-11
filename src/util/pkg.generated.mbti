@@ -20,6 +20,8 @@ pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
 
 pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
 
+pub fn glob_match(BytesView, BytesView) -> Bool
+
 pub fn is_ascii_alpha(Byte) -> Bool
 
 pub fn is_ascii_digit(Byte) -> Bool
@@ -27,6 +29,10 @@ pub fn is_ascii_digit(Byte) -> Bool
 pub fn is_ascii_lower(Byte) -> Bool
 
 pub fn is_ascii_upper(Byte) -> Bool
+
+pub fn is_within(StringView, StringView) -> Bool
+
+pub fn join_path(StringView, StringView) -> String
 
 pub fn starts_with(BytesView, BytesView) -> Bool
 

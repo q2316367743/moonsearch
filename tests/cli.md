@@ -42,4 +42,73 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch 'ext:pdf'
 @STDERR
 error: 'search' is not implemented yet
 [2]
+$ moonx q2316367743/moonsearch/cmd/moonsearch index --help
+Usage: moonsearch index [options] [roots...]
+
+Scan the configured roots and write the index
+
+Arguments:
+  roots...  Root directories to index; may be repeated
+
+Options:
+  -h, --help                         Show help information.
+  -V, --version                      Show version information.
+  --no-config                        Do not read the configuration file
+  -v, --verbose                      Print detailed progress information
+  -q, --quiet                        Only print results and errors
+  --stats                            Print timings and index sizes to stderr
+  --explain                          Print the execution plan to stderr
+  -D, --database <database>          Path to the index database [env: MOONSEARCH_DATABASE]
+  --config <config>                  Path to the configuration file [env: MOONSEARCH_CONFIG]
+  --exclude-hidden                   Skip names that start with a dot
+  --one-file-system                  Do not cross file system boundaries
+  --no-default-excludes              Do not skip /proc, /sys, /dev, and /run
+  --allow-nested-roots               Allow roots that are nested inside each other
+  --no-trigram                       Do not build the trigram index
+  -r, --root <root>                  Root directory to index; may be repeated
+  -x, --exclude <exclude>            Exclude pattern; may be repeated
+  --exclude-scope <exclude-scope>    Pattern scope: full_path or basename [default: full_path]
+  --exclude-target <exclude-target>  Pattern target: both, files, or folders [default: both]
+  --fast-fields <fast-fields>        Range fields loaded eagerly: size,mtime [default: size,mtime]
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch update --help
+Usage: moonsearch update [options] [roots...]
+
+Rescan the configured roots and rebuild the index
+
+Arguments:
+  roots...  Root directories to index; may be repeated
+
+Options:
+  -h, --help                         Show help information.
+  -V, --version                      Show version information.
+  --no-config                        Do not read the configuration file
+  -v, --verbose                      Print detailed progress information
+  -q, --quiet                        Only print results and errors
+  --stats                            Print timings and index sizes to stderr
+  --explain                          Print the execution plan to stderr
+  -D, --database <database>          Path to the index database [env: MOONSEARCH_DATABASE]
+  --config <config>                  Path to the configuration file [env: MOONSEARCH_CONFIG]
+  --exclude-hidden                   Skip names that start with a dot
+  --one-file-system                  Do not cross file system boundaries
+  --no-default-excludes              Do not skip /proc, /sys, /dev, and /run
+  --allow-nested-roots               Allow roots that are nested inside each other
+  --no-trigram                       Do not build the trigram index
+  -r, --root <root>                  Root directory to index; may be repeated
+  -x, --exclude <exclude>            Exclude pattern; may be repeated
+  --exclude-scope <exclude-scope>    Pattern scope: full_path or basename [default: full_path]
+  --exclude-target <exclude-target>  Pattern target: both, files, or folders [default: both]
+  --fast-fields <fast-fields>        Range fields loaded eagerly: size,mtime [default: size,mtime]
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch index
+@STDOUT (empty)
+@STDERR
+error: no roots configured; pass --root <PATH> or a root argument
+[2]
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch count 'ext:mp4'
+@STDOUT (empty)
+@STDERR
+error: 'count' is not implemented yet
+[2]
 ```

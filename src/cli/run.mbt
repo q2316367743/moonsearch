@@ -2,10 +2,13 @@
 /// Outcome of one CLI invocation.
 ///
 /// `Success` carries the text written to stdout, `Failure` the text written to
-/// stderr. Keeping text as a value makes help and error output assertable in
-/// tests and leaves stream handling to `cmd/moonsearch`.
+/// stderr. `SuccessWith` is used when a command also has diagnostics for
+/// stderr (`--verbose`, `--stats`, warnings) while still succeeding. Keeping
+/// text as a value makes help and error output assertable in tests and leaves
+/// stream handling to `cmd/moonsearch`.
 pub(all) enum CliResult {
   Success(String)
+  SuccessWith(String, String)
   NoMatch
   Failure(String)
 }
@@ -15,6 +18,7 @@ pub(all) enum CliResult {
 pub fn CliResult::exit_code(self : CliResult) -> Int32 {
   match self {
     Success(_) => @core.EXIT_OK
+    SuccessWith(_, _) => @core.EXIT_OK
     NoMatch => @core.EXIT_NO_MATCH
     Failure(_) => @core.EXIT_ERROR
   }
@@ -22,12 +26,14 @@ pub fn CliResult::exit_code(self : CliResult) -> Int32 {
 
 ///|
 /// Run one subcommand.
-///
-/// S01 only fixes the CLI contract; every command reports that its
-/// implementation is still pending.
-fn execute(invocation : Invocation) -> CliResult {
-  let name = invocation.command.name()
-  Failure("error: '\{name}' is not implemented yet")
+async fn execute(invocation : Invocation) -> CliResult {
+  match invocation.command {
+    Index => run_index(invocation)
+    Update => run_index(invocation)
+    Search => Failure("error: 'search' is not implemented yet")
+    Count => Failure("error: 'count' is not implemented yet")
+    Info => Failure("error: 'info' is not implemented yet")
+  }
 }
 
 ///|
@@ -35,7 +41,7 @@ fn execute(invocation : Invocation) -> CliResult {
 ///
 /// `argv` excludes the program name. Help and version requests succeed and
 /// return the text to print on stdout.
-pub fn run(
+pub async fn run(
   argv : ArrayView[String],
   env~ : Map[String, String] = Map([]),
 ) -> CliResult {

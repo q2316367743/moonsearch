@@ -30,6 +30,10 @@ pub const ENTRY_FLAG_HIDDEN : UInt16 = 0x0001
 pub const ENTRY_FLAG_SYMLINK : UInt16 = 0x0002
 
 ///|
+/// Bit 2 of `Entry::flags`: the entry is a socket, pipe, or device node.
+pub const ENTRY_FLAG_SPECIAL : UInt16 = 0x0004
+
+///|
 /// One file or folder in the index.
 ///
 /// The entry stores only raw fields and a reference into the name pool; the

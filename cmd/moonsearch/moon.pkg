@@ -1,6 +1,11 @@
 import {
+  "moonbitlang/core/async",
   "q2316367743/moonsearch/src/cli",
   "moonbitlang/core/env",
 }
 
 pkgtype(kind: "executable")
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

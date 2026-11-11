@@ -1,0 +1,9 @@
+import {
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/os_error",
+  "q2316367743/moonsearch/src/util",
+}
+
+options(
+  "allow-experimental-packages": true,
+)

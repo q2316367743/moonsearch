@@ -10,13 +10,14 @@ pub fn build_command() -> @argparse.Command
 
 pub fn parse(ArrayView[String], env? : Map[String, String]) -> Result[Parsed, String]
 
-pub fn run(ArrayView[String], env? : Map[String, String]) -> CliResult
+pub async fn run(ArrayView[String], env? : Map[String, String]) -> CliResult
 
 // Errors
 
 // Types and methods
 pub(all) enum CliResult {
   Success(String)
+  SuccessWith(String, String)
   NoMatch
   Failure(String)
 }

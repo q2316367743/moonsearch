@@ -216,6 +216,22 @@ fn scan_flags() -> Array[@argparse.FlagArg] {
 }
 
 ///|
+/// Root arguments shared by `index` and `update`.
+///
+/// `-r/--root` and bare positionals are both accepted. Repeated `-r` values are
+/// collected first, then bare positionals, and that order is preserved in
+/// `RootInfo`.
+fn root_positionals() -> Array[@argparse.PositionArg] {
+  [
+    @argparse.PositionArg(
+      "roots",
+      about="Root directories to index; may be repeated",
+      num_args=@argparse.ValueRange(lower=0),
+    ),
+  ]
+}
+
+///|
 /// Build an `index` or `update` command.
 fn scan_command(name : String, about : String) -> @argparse.Command {
   @argparse.Command(
@@ -224,6 +240,7 @@ fn scan_command(name : String, about : String) -> @argparse.Command {
     version=@core.VERSION_TEXT,
     options=scan_options(),
     flags=scan_flags(),
+    positionals=root_positionals(),
   )
 }
 

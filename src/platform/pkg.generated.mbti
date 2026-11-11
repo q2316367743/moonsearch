@@ -1,0 +1,66 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/platform"
+
+// Values
+pub fn system_source() -> SystemScanSource
+
+// Errors
+pub suberror PlatformError {
+  NotFound(String)
+  AccessDenied(String)
+  NotDirectory(String)
+  Unsupported(String)
+  Io(String)
+}
+pub fn PlatformError::access_denied(String) -> Self
+pub fn PlatformError::message(Self) -> String
+pub fn PlatformError::not_found(String) -> Self
+
+// Types and methods
+pub(all) struct DirFailure {
+  name : String
+  message : String
+}
+pub fn DirFailure::new(name~ : String, message~ : String) -> Self
+
+pub(all) struct DirListing {
+  entries : Array[NodeInfo]
+  failures : Array[DirFailure]
+}
+pub fn DirListing::new(entries~ : Array[NodeInfo], failures? : Array[DirFailure]) -> Self
+
+pub(all) struct NodeInfo {
+  name : String
+  kind : NodeKind
+  size : Int64
+  mtime : Int64
+  device : UInt64?
+}
+pub fn NodeInfo::new(name~ : String, kind~ : NodeKind, size? : Int64, mtime? : Int64, device? : UInt64?) -> Self
+
+pub(all) enum NodeKind {
+  Directory
+  File
+  Symlink
+  Other
+}
+
+pub(all) struct SystemScanSource {
+  // private fields
+}
+pub fn SystemScanSource::has_devices(Self) -> Bool
+pub async fn SystemScanSource::list(Self, StringView) -> DirListing raise PlatformError
+pub fn SystemScanSource::new() -> Self
+pub async fn SystemScanSource::realpath(Self, StringView) -> String raise PlatformError
+pub async fn SystemScanSource::stat(Self, StringView) -> NodeInfo raise PlatformError
+pub impl ScanSource for SystemScanSource
+
+// Type aliases
+
+// Traits
+pub(open) trait ScanSource {
+  async fn list(Self, StringView) -> DirListing raise PlatformError
+  async fn stat(Self, StringView) -> NodeInfo raise PlatformError
+  fn has_devices(Self) -> Bool
+  async fn realpath(Self, StringView) -> String raise PlatformError
+}

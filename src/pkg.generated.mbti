@@ -3,10 +3,14 @@ package "q2316367743/moonsearch/src"
 
 import {
   "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/index",
+  "q2316367743/moonsearch/src/platform",
 }
 
 // Values
 pub const ENTRY_FLAG_HIDDEN : UInt16 = 0x0001
+
+pub const ENTRY_FLAG_SPECIAL : UInt16 = 0x0004
 
 pub const ENTRY_FLAG_SYMLINK : UInt16 = 0x0002
 
@@ -44,6 +48,8 @@ pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
 
 pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
 
+pub fn glob_match(BytesView, BytesView) -> Bool
+
 pub fn is_ascii_alpha(Byte) -> Bool
 
 pub fn is_ascii_digit(Byte) -> Bool
@@ -52,25 +58,71 @@ pub fn is_ascii_lower(Byte) -> Bool
 
 pub fn is_ascii_upper(Byte) -> Bool
 
+pub fn is_within(StringView, StringView) -> Bool
+
+pub fn join_path(StringView, StringView) -> String
+
+pub async fn[Source : @platform.ScanSource] scan(@index.ScanConfig, Source) -> @index.ScanReport raise @index.IndexError
+
 pub fn starts_with(BytesView, BytesView) -> Bool
+
+pub fn system_source() -> @platform.SystemScanSource
 
 // Errors
 
 // Types and methods
 
 // Type aliases
+pub using @index {type Builder}
+
+pub using @platform {type DirFailure}
+
+pub using @platform {type DirListing}
+
 pub using @core {type Entry}
 
 pub type EntryId = Int32
 
 pub using @core {type EntryKind}
 
+pub using @index {type ExcludeKind}
+
+pub using @index {type ExcludeRule}
+
+pub using @index {type ExcludeScope}
+
+pub using @index {type ExcludeTarget}
+
 pub type FolderId = Int32
+
+pub using @index {type IndexError}
 
 pub using @core {type NamePool}
 
 pub using @core {type NamePoolError}
 
 pub using @core {type NameRef}
+
+pub using @platform {type NodeInfo}
+
+pub using @platform {type NodeKind}
+
+pub using @platform {type PlatformError}
+
+pub using @core {type RootInfo}
+
+pub using @index {type RootSpec}
+
+pub using @index {type ScanConfig}
+
+pub using @index {type ScanIssue}
+
+pub using @index {type ScanReport}
+
+pub using @core {type Store}
+
+pub using @platform {type SystemScanSource}
+
+pub using @platform {trait ScanSource}
 
 // Traits

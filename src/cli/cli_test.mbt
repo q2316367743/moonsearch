@@ -3,6 +3,7 @@
 fn stdout_of(result : @cli.CliResult) -> String {
   match result {
     @cli.Success(text) => text
+    @cli.SuccessWith(out, _) => out
     @cli.NoMatch => abort("expected success, got NoMatch")
     @cli.Failure(text) => abort("expected success, got: \{text}")
   }
@@ -29,7 +30,7 @@ fn first_value(invocation : @cli.Invocation, name : String) -> String? {
 }
 
 ///|
-test "top-level help is stable" {
+async test "top-level help is stable" {
   inspect(
     stdout_of(@cli.run([])),
     content=(
@@ -60,14 +61,17 @@ test "top-level help is stable" {
 }
 
 ///|
-test "index help is stable" {
+async test "index help is stable" {
   inspect(
     stdout_of(@cli.run(["index", "--help"])),
     content=(
-      #|Usage: moonsearch index [options]
+      #|Usage: moonsearch index [options] [roots...]
       #|
       #|Scan the configured roots and write the index
       #|
+      #|Arguments:
+      #|  roots...  Root directories to index; may be repeated
+      #|
       #|Options:
       #|  -h, --help                         Show help information.
       #|  -V, --version                      Show version information.
@@ -93,13 +97,16 @@ test "index help is stable" {
 }
 
 ///|
-test "update help is stable" {
+async test "update help is stable" {
   inspect(
     stdout_of(@cli.run(["update", "--help"])),
     content=(
-      #|Usage: moonsearch update [options]
+      #|Usage: moonsearch update [options] [roots...]
       #|
       #|Rescan the configured roots and rebuild the index
+      #|
+      #|Arguments:
+      #|  roots...  Root directories to index; may be repeated
       #|
       #|Options:
       #|  -h, --help                         Show help information.
@@ -126,7 +133,7 @@ test "update help is stable" {
 }
 
 ///|
-test "search help is stable" {
+async test "search help is stable" {
   inspect(
     stdout_of(@cli.run(["search", "--help"])),
     content=(
@@ -170,7 +177,7 @@ test "search help is stable" {
 }
 
 ///|
-test "count help is stable" {
+async test "count help is stable" {
   inspect(
     stdout_of(@cli.run(["count", "--help"])),
     content=(
@@ -205,7 +212,7 @@ test "count help is stable" {
 }
 
 ///|
-test "info help is stable" {
+async test "info help is stable" {
   inspect(
     stdout_of(@cli.run(["info", "--help"])),
     content=(
@@ -228,38 +235,38 @@ test "info help is stable" {
 }
 
 ///|
-test "version" {
+async test "version" {
   inspect(stdout_of(@cli.run(["--version"])), content="moonsearch 0.1.0")
 }
 
 ///|
-test "no arguments prints help and succeeds" {
+async test "no arguments prints help and succeeds" {
   let empty = @cli.run([])
   assert_eq(empty.exit_code(), 0)
   assert_eq(stdout_of(empty), stdout_of(@cli.run(["--help"])))
 }
 
 ///|
-test "bare query dispatches to search" {
+async test "bare query dispatches to search" {
   let invocation = run_ok(["ext:pdf"])
   assert_eq(invocation.command.name(), "search")
   assert_eq(invocation.query, "ext:pdf")
 }
 
 ///|
-test "positional query terms are joined with single spaces" {
+async test "positional query terms are joined with single spaces" {
   let invocation = run_ok(["report", "pdf"])
   assert_eq(invocation.query, "report pdf")
 }
 
 ///|
-test "double dash allows a leading-hyphen query" {
+async test "double dash allows a leading-hyphen query" {
   let invocation = run_ok(["--", "-foo"])
   assert_eq(invocation.query, "-foo")
 }
 
 ///|
-test "explicit subcommands are recognised" {
+async test "explicit subcommands are recognised" {
   assert_eq(run_ok(["index", "-r", "/tmp"]).command.name(), "index")
   assert_eq(run_ok(["update"]).command.name(), "update")
   assert_eq(run_ok(["search"]).command.name(), "search")
@@ -268,20 +275,20 @@ test "explicit subcommands are recognised" {
 }
 
 ///|
-test "repeated index roots are kept in order" {
+async test "repeated index roots are kept in order" {
   let invocation = run_ok(["index", "-r", "/tmp", "--root", "/var"])
   let roots = invocation.matches.values.get("root").unwrap()
   assert_eq(roots.join(","), "/tmp,/var")
 }
 
 ///|
-test "global option works after the subcommand" {
+async test "global option works after the subcommand" {
   let invocation = run_ok(["search", "-D", "/tmp/db.msdb"])
   assert_eq(first_value(invocation, "database"), Some("/tmp/db.msdb"))
 }
 
 ///|
-test "database path can come from the environment" {
+async test "database path can come from the environment" {
   let parsed = @cli.parse(
     ["search"],
     env=Map([("MOONSEARCH_DATABASE", "/tmp/env.msdb")]),
@@ -295,7 +302,7 @@ test "database path can come from the environment" {
 }
 
 ///|
-test "unknown options are usage errors" {
+async test "unknown options are usage errors" {
   match @cli.parse(["search", "--bogus"]) {
     Err(message) => {
       assert_true(message.contains("unexpected argument '--bogus'"))
@@ -306,7 +313,7 @@ test "unknown options are usage errors" {
 }
 
 ///|
-test "missing option values are usage errors" {
+async test "missing option values are usage errors" {
   match @cli.parse(["search", "--database"]) {
     Err(message) => assert_true(message.contains("a value is required"))
     Ok(_) => abort("expected a parse error")
@@ -314,7 +321,7 @@ test "missing option values are usage errors" {
 }
 
 ///|
-test "count rejects search-only ordering options" {
+async test "count rejects search-only ordering options" {
   match @cli.parse(["count", "--sort", "size"]) {
     Err(_) => ()
     Ok(_) => abort("count must not accept --sort")
@@ -322,18 +329,72 @@ test "count rejects search-only ordering options" {
 }
 
 ///|
-test "exit code mapping" {
+async test "exit code mapping" {
   assert_eq(@cli.Success("").exit_code(), 0)
   assert_eq(@cli.NoMatch.exit_code(), 1)
   assert_eq(@cli.Failure("error").exit_code(), 2)
 }
 
 ///|
-test "pending subcommands report a usage error" {
+async test "pending subcommands report a usage error" {
   let result = @cli.run(["search", "report"])
   assert_eq(result.exit_code(), 2)
   match result {
     @cli.Failure(text) => assert_true(text.contains("not implemented"))
     _ => abort("expected a failure")
+  }
+}
+
+///|
+/// Create a small fixture tree for end-to-end index tests.
+async fn make_fixture(prefix : String) -> String {
+  let dir = @fs.tmpdir(prefix~)
+  @fs.mkdir("\{dir}/sub")
+  @fs.write_text("\{dir}/a.txt", "hello")
+  @fs.write_text("\{dir}/sub/b.pdf", "x")
+  @fs.symlink(target="\{dir}/sub", "\{dir}/link")
+  dir
+}
+
+///|
+async test "index scans a real directory tree" {
+  let dir = make_fixture("moonsearch-index")
+  let result = @cli.run(["index", dir])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.Success(text) =>
+      // Root + sub are folders; a.txt, b.pdf, and the symlink are files.
+      // The symlink is not followed, so it contributes no bytes.
+      assert_eq(text, "roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+    @cli.SuccessWith(out, diagnostics) =>
+      abort("unexpected diagnostics: \{out}\n\{diagnostics}")
+    _ => abort("expected the index command to succeed")
+  }
+}
+
+///|
+async test "index excludes hidden entries and glob rules end to end" {
+  let dir = @fs.tmpdir(prefix="moonsearch-hidden")
+  @fs.write_text("\{dir}/keep.txt", "abc")
+  @fs.write_text("\{dir}/drop.tmp", "x")
+  @fs.write_text("\{dir}/.secret", "x")
+  let result = @cli.run(["index", "--exclude-hidden", "-x", "*.tmp", dir])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.Success(text) =>
+      assert_eq(text, "roots: 1\nfolders: 1\nfiles: 1\nbytes: 3\nskipped: 2")
+    _ => abort("expected the index command to succeed")
+  }
+}
+
+///|
+async test "index reports a missing root" {
+  let result = @cli.run(["index", "/moonsearch/definitely/not/here"])
+  match result {
+    @cli.Failure(text) => {
+      assert_true(text.contains("root does not exist"))
+      assert_eq(result.exit_code(), 2)
+    }
+    _ => abort("expected an index failure")
   }
 }

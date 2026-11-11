@@ -1,0 +1,100 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/index"
+
+import {
+  "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/platform",
+}
+
+// Values
+pub async fn[Source : @platform.ScanSource] scan(ScanConfig, Source) -> ScanReport raise IndexError
+
+// Errors
+pub suberror IndexError {
+  RootMissing(String)
+  RootNotDirectory(String)
+  NestedRoots(outer~ : String, nested~ : String)
+  UnsupportedExclude(String)
+  NameTooLong(Int32)
+  NamePoolFull
+  Io(String)
+}
+pub fn IndexError::message(Self) -> String
+
+// Types and methods
+pub struct Builder {
+  // private fields
+}
+pub fn Builder::add_file(Self, Int32, StringView, Int64, Int64, flags? : UInt16) -> Int32 raise IndexError
+pub fn Builder::add_folder(Self, Int32, StringView, Int64, flags? : UInt16) -> Int32 raise IndexError
+pub fn Builder::add_folder_size(Self, Int32, Int64) -> Unit
+pub fn Builder::add_root(Self, StringView, Bool, Int64) -> Int32 raise IndexError
+pub fn Builder::file_count(Self) -> Int32
+pub fn Builder::finish(Self, built_at? : Int64) -> @core.Store
+pub fn Builder::folder_count(Self) -> Int32
+pub fn Builder::new() -> Self
+pub fn Builder::root_count(Self) -> Int32
+pub fn Builder::set_child_counts(Self, Int32, UInt32, UInt32) -> Unit
+pub fn Builder::set_root_stats(Self, Int32, UInt32, UInt32, Int64) -> Unit
+
+pub(all) enum ExcludeKind {
+  Fixed
+  Glob
+  Regex
+}
+
+pub struct ExcludeRule {
+  // private fields
+}
+pub fn ExcludeRule::is_active(Self) -> Bool
+pub fn ExcludeRule::kind(Self) -> ExcludeKind
+pub fn ExcludeRule::matches(Self, StringView, StringView, Bool) -> Bool
+pub fn ExcludeRule::new(kind~ : ExcludeKind, pattern~ : StringView, scope? : ExcludeScope, target? : ExcludeTarget, active? : Bool) -> Self
+pub fn ExcludeRule::parse(StringView, scope? : ExcludeScope, target? : ExcludeTarget) -> Self raise IndexError
+pub fn ExcludeRule::pattern(Self) -> String
+pub fn ExcludeRule::scope(Self) -> ExcludeScope
+pub fn ExcludeRule::target(Self) -> ExcludeTarget
+
+pub(all) enum ExcludeScope {
+  FullPath
+  Basename
+}
+
+pub(all) enum ExcludeTarget {
+  Both
+  Files
+  Folders
+}
+
+pub(all) struct RootSpec {
+  path : String
+  one_file_system : Bool
+}
+pub fn RootSpec::new(path~ : String, one_file_system? : Bool) -> Self
+
+pub(all) struct ScanConfig {
+  roots : Array[RootSpec]
+  excludes : Array[ExcludeRule]
+  exclude_hidden : Bool
+  allow_nested_roots : Bool
+  default_excludes : Bool
+}
+pub fn ScanConfig::new(roots~ : Array[RootSpec], excludes? : Array[ExcludeRule], exclude_hidden? : Bool, allow_nested_roots? : Bool, default_excludes? : Bool) -> Self
+
+pub(all) struct ScanIssue {
+  path : String
+  message : String
+}
+
+pub(all) struct ScanReport {
+  store : @core.Store
+  issues : Array[ScanIssue]
+  skipped_hidden : Int32
+  skipped_excluded : Int32
+  skipped_mount : Int32
+  device_ids_available : Bool
+}
+
+// Type aliases
+
+// Traits

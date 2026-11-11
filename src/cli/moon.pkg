@@ -1,4 +1,19 @@
 import {
   "moonbitlang/core/argparse",
+  "moonbitlang/core/env",
   "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/index",
+  "q2316367743/moonsearch/src/platform",
 }
+
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+} for "test"
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/fs",
+  ],
+)

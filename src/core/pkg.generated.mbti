@@ -4,6 +4,8 @@ package "q2316367743/moonsearch/src/core"
 // Values
 pub const ENTRY_FLAG_HIDDEN : UInt16 = 0x0001
 
+pub const ENTRY_FLAG_SPECIAL : UInt16 = 0x0004
+
 pub const ENTRY_FLAG_SYMLINK : UInt16 = 0x0002
 
 pub const EXIT_ERROR : Int32 = 2
@@ -76,6 +78,33 @@ pub struct NameRef {
 pub fn NameRef::byte_len(Self) -> Int32
 pub fn NameRef::end_offset(Self) -> UInt32
 pub fn NameRef::new(UInt32, UInt16) -> Self
+
+pub(all) struct RootInfo {
+  path : String
+  one_file_system : Bool
+  folder : Int32
+  files : UInt32
+  folders : UInt32
+  size : Int64
+}
+
+pub struct Store {
+  // private fields
+}
+pub fn Store::built_at(Self) -> Int64
+pub fn Store::entry_count(Self) -> Int32
+pub fn Store::file(Self, Int32) -> Entry?
+pub fn Store::file_count(Self) -> Int32
+pub fn Store::file_path(Self, Int32) -> Bytes
+pub fn Store::folder(Self, Int32) -> Entry?
+pub fn Store::folder_count(Self) -> Int32
+pub fn Store::folder_path(Self, Int32) -> Bytes
+pub fn Store::name(Self, NameRef) -> BytesView
+pub fn Store::name_bytes(Self) -> Int32
+pub fn Store::name_count(Self) -> Int32
+pub fn Store::new(names~ : NamePool, folders~ : Array[Entry], files~ : Array[Entry], roots~ : Array[RootInfo], built_at~ : Int64) -> Self
+pub fn Store::roots(Self) -> ArrayView[RootInfo]
+pub fn Store::total_size(Self) -> Int64
 
 // Type aliases
 pub type EntryId = Int32

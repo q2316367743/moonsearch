@@ -1,0 +1,21 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/platform",
+  "q2316367743/moonsearch/src/util",
+}
+
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/platform",
+} for "test"
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/fs",
+  ],
+)
