@@ -1,0 +1,39 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/util"
+
+// Values
+pub fn ascii_fold(BytesView) -> Bytes
+
+pub fn ascii_lower(Byte) -> Byte
+
+pub fn ascii_upper(Byte) -> Byte
+
+pub fn cmp_paths(BytesView, BytesView) -> Int32
+
+pub fn contains_bytes(BytesView, BytesView) -> Bool
+
+pub fn ends_with(BytesView, BytesView) -> Bool
+
+pub fn eq_ignore_ascii_case(BytesView, BytesView) -> Bool
+
+pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
+
+pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
+
+pub fn is_ascii_alpha(Byte) -> Bool
+
+pub fn is_ascii_digit(Byte) -> Bool
+
+pub fn is_ascii_lower(Byte) -> Bool
+
+pub fn is_ascii_upper(Byte) -> Bool
+
+pub fn starts_with(BytesView, BytesView) -> Bool
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

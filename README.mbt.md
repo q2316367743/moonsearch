@@ -9,10 +9,10 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S01 — project skeleton and CLI contract**. Every subcommand parses
-> its arguments and documents its options, but the index, query engine, and
-> output layers are not implemented yet; commands exit with code `2` and a
-> pending message.
+> Status: **S02 — byte paths and the name pool**. The CLI contract from S01 is
+> unchanged; every subcommand still parses its arguments and documents its
+> options, but the scanner, query engine, and output layers are not implemented
+> yet; commands exit with code `2` and a pending message.
 
 ## Build and run
 
@@ -58,6 +58,24 @@ Global options are accepted before or after the subcommand:
 
 Run `moonsearch <command> --help` for the full option list.
 
+## Core model (S02)
+
+The shared, byte-level data model now lives in `src/core` and `src/util`:
+
+- `NamePool` — a chunked byte arena for file names. Names are appended as raw
+  bytes and read back as zero-copy `BytesView`s through
+  `NameRef { offset, length }`. The pool allocates one buffer per chunk, not per
+  name, and earlier references remain valid while the pool grows.
+- `Entry` — one file or folder: parent folder id, name reference, flags, size,
+  mtime, and direct child counts. Folder sizes accumulate with saturation at the
+  `Int64` bounds.
+- `cmp_paths` — natural path ordering. Digit runs compare numerically
+  (`file2 < file10`), `/` sorts before every other byte (`a/b < a.b`), and
+  leading-zero runs follow `strverscmp` semantics (`007 < 07 < 7`,
+  `09 > 010`).
+- `util` byte helpers — ASCII case folding, case-insensitive equality,
+  prefix/suffix tests, and byte/needle search over `BytesView`.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -80,7 +98,8 @@ moon testcli test tests/cli.md --target native
 Layout:
 
 ```text
-src/core/          version, exit codes, shared errors
+src/util/          byte helpers and natural path ordering
+src/core/          version, exit codes, name pool, entry model
 src/cli/           command specification, invocation, result mapping
 src/               public facade
 cmd/moonsearch/    executable entry point
@@ -88,7 +107,7 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S01; later steps add the scanner, query language, scan oracle, bitmap sets,
+S02; later steps add the scanner, query language, scan oracle, bitmap sets,
 dictionaries, range indexes, trigram postings, execution plans, persistence, and
 benchmarks.
 

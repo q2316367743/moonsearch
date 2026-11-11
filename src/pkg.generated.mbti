@@ -1,7 +1,15 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "q2316367743/moonsearch/src"
 
+import {
+  "q2316367743/moonsearch/src/core",
+}
+
 // Values
+pub const ENTRY_FLAG_HIDDEN : UInt16 = 0x0001
+
+pub const ENTRY_FLAG_SYMLINK : UInt16 = 0x0002
+
 pub const EXIT_ERROR : Int32 = 2
 
 pub const EXIT_INTERRUPTED : Int32 = 130
@@ -10,14 +18,59 @@ pub const EXIT_NO_MATCH : Int32 = 1
 
 pub const EXIT_OK : Int32 = 0
 
+pub const MAX_NAME_LEN : Int32 = 65535
+
+pub const NO_PARENT : Int32 = -1
+
 pub const VERSION : String = "0.1.0"
 
 pub const VERSION_TEXT : String = "moonsearch 0.1.0"
+
+pub fn ascii_fold(BytesView) -> Bytes
+
+pub fn ascii_lower(Byte) -> Byte
+
+pub fn ascii_upper(Byte) -> Byte
+
+pub fn cmp_paths(BytesView, BytesView) -> Int32
+
+pub fn contains_bytes(BytesView, BytesView) -> Bool
+
+pub fn ends_with(BytesView, BytesView) -> Bool
+
+pub fn eq_ignore_ascii_case(BytesView, BytesView) -> Bool
+
+pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
+
+pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
+
+pub fn is_ascii_alpha(Byte) -> Bool
+
+pub fn is_ascii_digit(Byte) -> Bool
+
+pub fn is_ascii_lower(Byte) -> Bool
+
+pub fn is_ascii_upper(Byte) -> Bool
+
+pub fn starts_with(BytesView, BytesView) -> Bool
 
 // Errors
 
 // Types and methods
 
 // Type aliases
+pub using @core {type Entry}
+
+pub type EntryId = Int32
+
+pub using @core {type EntryKind}
+
+pub type FolderId = Int32
+
+pub using @core {type NamePool}
+
+pub using @core {type NamePoolError}
+
+pub using @core {type NameRef}
 
 // Traits

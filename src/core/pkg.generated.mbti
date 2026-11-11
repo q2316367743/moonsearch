@@ -2,6 +2,10 @@
 package "q2316367743/moonsearch/src/core"
 
 // Values
+pub const ENTRY_FLAG_HIDDEN : UInt16 = 0x0001
+
+pub const ENTRY_FLAG_SYMLINK : UInt16 = 0x0002
+
 pub const EXIT_ERROR : Int32 = 2
 
 pub const EXIT_INTERRUPTED : Int32 = 130
@@ -10,14 +14,72 @@ pub const EXIT_NO_MATCH : Int32 = 1
 
 pub const EXIT_OK : Int32 = 0
 
+pub const MAX_NAME_LEN : Int32 = 65535
+
+pub const NO_PARENT : Int32 = -1
+
 pub const VERSION : String = "0.1.0"
 
 pub const VERSION_TEXT : String = "moonsearch 0.1.0"
 
 // Errors
+pub suberror NamePoolError {
+  NameTooLong(Int32)
+  PoolFull
+}
 
 // Types and methods
+pub struct Entry {
+  // private fields
+}
+pub fn Entry::add_child(Self, EntryKind) -> Unit
+pub fn Entry::add_size(Self, Int64) -> Unit
+pub fn Entry::child_count(Self) -> UInt32
+pub fn Entry::file(parent~ : Int32, name~ : NameRef, size~ : Int64, mtime~ : Int64, flags? : UInt16) -> Self
+pub fn Entry::flags(Self) -> UInt16
+pub fn Entry::folder(parent~ : Int32, name~ : NameRef, mtime~ : Int64, flags? : UInt16) -> Self
+pub fn Entry::is_hidden(Self) -> Bool
+pub fn Entry::is_root(Self) -> Bool
+pub fn Entry::is_symlink(Self) -> Bool
+pub fn Entry::mtime(Self) -> Int64
+pub fn Entry::name(Self) -> NameRef
+pub fn Entry::num_files(Self) -> UInt32
+pub fn Entry::num_folders(Self) -> UInt32
+pub fn Entry::parent(Self) -> Int32
+pub fn Entry::set_child_counts(Self, UInt32, UInt32) -> Unit
+pub fn Entry::set_parent(Self, Int32) -> Unit
+pub fn Entry::size(Self) -> Int64
+
+pub(all) enum EntryKind {
+  File
+  Folder
+}
+
+pub struct NamePool {
+  // private fields
+}
+pub fn NamePool::add(Self, BytesView) -> NameRef raise NamePoolError
+pub fn NamePool::byte_len(Self) -> Int32
+pub fn NamePool::chunk_count(Self) -> Int32
+pub fn NamePool::compare(Self, NameRef, NameRef) -> Int32
+pub fn NamePool::count(Self) -> Int32
+pub fn NamePool::is_empty(Self) -> Bool
+pub fn NamePool::new() -> Self
+pub fn NamePool::to_bytes(Self) -> Bytes
+pub fn NamePool::view(Self, NameRef) -> BytesView
+pub fn NamePool::with_chunk_size(Int32) -> Self
+
+pub struct NameRef {
+  offset : UInt32
+  length : UInt16
+}
+pub fn NameRef::byte_len(Self) -> Int32
+pub fn NameRef::end_offset(Self) -> UInt32
+pub fn NameRef::new(UInt32, UInt16) -> Self
 
 // Type aliases
+pub type EntryId = Int32
+
+pub type FolderId = Int32
 
 // Traits

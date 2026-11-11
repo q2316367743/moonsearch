@@ -1,3 +1,4 @@
 import {
   "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/util",
 }
