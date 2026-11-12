@@ -59,3 +59,114 @@ test "glob handles star combinations" {
   assert_true(matches(b"", b"**"))
   assert_true(matches(b"abc", b"a**c"))
 }
+
+///|
+test "a trailing backslash is a literal backslash" {
+  assert_true(matches(b"\\", b"\\"))
+  assert_false(matches(b"a", b"\\"))
+  assert_true(matches(b"a\\", b"a\\"))
+  // The escape consumes exactly the next byte.
+  assert_true(matches(b"\\*", b"\\\\\\*"))
+}
+
+///|
+test "escapes work on ordinary characters" {
+  assert_true(matches(b"a", b"\\a"))
+  assert_false(matches(b"b", b"\\a"))
+  assert_true(matches(b"\\a", b"\\\\a"))
+}
+
+///|
+/// Independent reference matcher, written as a dynamic program over the whole
+/// pattern. It shares no backtracking logic with `@util.glob_match`.
+fn glob_reference(text : BytesView, pattern : BytesView) -> Bool {
+  let text_len = text.length()
+  let pattern_len = pattern.length()
+  let mut reachable = Array::make(pattern_len + 1, false)
+  reachable[0] = true
+  // Epsilon closure: `*` may match nothing, including a run of stars.
+  for p in 0..<pattern_len {
+    if reachable[p] && pattern[p] == b'*' {
+      reachable[p + 1] = true
+    }
+  }
+  for ti in 0..<text_len {
+    let next = Array::make(pattern_len + 1, false)
+    let byte = text[ti]
+    for p in 0..<pattern_len {
+      if !reachable[p] {
+        continue
+      }
+      let pattern_byte = pattern[p]
+      if pattern_byte == b'*' {
+        next[p] = true
+      } else if pattern_byte == b'?' {
+        next[p + 1] = true
+      } else if pattern_byte == b'\\' {
+        if p + 1 < pattern_len {
+          if pattern[p + 1] == byte {
+            next[p + 2] = true
+          }
+        } else if byte == b'\\' {
+          next[p + 1] = true
+        }
+      } else if pattern_byte == byte {
+        next[p + 1] = true
+      }
+    }
+    for p in 0..<pattern_len {
+      if next[p] && pattern[p] == b'*' {
+        next[p + 1] = true
+      }
+    }
+    reachable = next
+  }
+  reachable[pattern_len]
+}
+
+///|
+/// Enumerate every byte string over `alphabet` up to `max_len`.
+fn all_strings(alphabet : Array[Byte], max_len : Int32) -> Array[Bytes] {
+  let result : Array[Bytes] = [b""]
+  let mut level : Array[Bytes] = [b""]
+  for _ in 0..<max_len {
+    let next : Array[Bytes] = []
+    for prefix in level {
+      for byte in alphabet {
+        next.push(
+          Bytes::makei(prefix.length() + 1, fn(index) {
+            if index == prefix.length() {
+              byte
+            } else {
+              prefix[index]
+            }
+          }),
+        )
+      }
+    }
+    for bytes in next {
+      result.push(bytes)
+    }
+    level = next
+  }
+  result
+}
+
+///|
+test "glob_match agrees with an independent reference matcher" {
+  let pattern_alphabet : Array[Byte] = [b'a', b'*', b'?', b'\\']
+  let text_alphabet : Array[Byte] = [b'a', b'b', b'\\']
+  let patterns = all_strings(pattern_alphabet, 4)
+  let texts = all_strings(text_alphabet, 4)
+  for pattern in patterns {
+    for text in texts {
+      let actual = @util.glob_match(text[:], pattern[:])
+      let expected = glob_reference(text[:], pattern[:])
+      if actual != expected {
+        abort(
+          "glob mismatch: text=\{text.to_string()} pattern=\{pattern.to_string()} actual=\{actual} expected=\{expected}",
+        )
+      }
+    }
+  }
+}

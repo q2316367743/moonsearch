@@ -146,3 +146,117 @@ test "a macro that fails to lex is reported at the use site" {
     err => abort("expected a macro error, got \{err.message()}")
   }
 }
+
+///|
+test "modifiers around a macro do not leak into it" {
+  let macros = [@query.Macro::new(name="book", query="ext:epub;pdf")]
+  // The macro is parsed with its own flags; the outer `case:` applies to
+  // nothing because a macro expansion is a complete subquery.
+  assert_eq(macro_parsed("case:book:", macros), "(ext \"epub\" \"pdf\")")
+  assert_eq(macro_parsed("path:book:", macros), "(ext \"epub\" \"pdf\")")
+}
+
+///|
+test "macros shadow modifiers and field names" {
+  let macros = [@query.Macro::new(name="case", query="ext:x")]
+  assert_eq(macro_parsed("case:", macros), "(ext \"x\")")
+  let sized = [@query.Macro::new(name="size", query="ext:big")]
+  assert_eq(macro_parsed("size:", sized), "(ext \"big\")")
+}
+
+///|
+test "a macro can be used more than once in a query" {
+  let macros = [@query.Macro::new(name="m", query="ext:x")]
+  assert_eq(macro_parsed("m: m:", macros), "(and (ext \"x\") (ext \"x\"))")
+}
+
+///|
+test "a three-step macro cycle is reported" {
+  let macros = [
+    @query.Macro::new(name="a", query="b:"),
+    @query.Macro::new(name="b", query="c:"),
+    @query.Macro::new(name="c", query="a:"),
+  ]
+  match macro_error("a:", macros) {
+    @query.MacroCycle(_, name) => assert_eq(name, "a")
+    err => abort("expected a macro cycle, got \{err.message()}")
+  }
+}
+
+///|
+test "an error inside a nested macro names the outermost macro" {
+  let macros = [
+    @query.Macro::new(name="outer", query="inner:"),
+    @query.Macro::new(name="inner", query="size:abc"),
+  ]
+  match macro_error("outer:", macros) {
+    @query.MacroError(pos, name, message) => {
+      assert_eq(pos, 0)
+      assert_eq(name, "outer")
+      assert_true(message.contains("in macro 'inner'"))
+      assert_true(message.contains("size:abc"))
+    }
+    err => abort("expected a macro error, got \{err.message()}")
+  }
+}
+
+///|
+test "compat mode applies inside macros too" {
+  let table = @query.Macros::from_array([
+    @query.Macro::new(name="bad", query="size:abc"),
+  ])
+  let described = @query.parse("bad:", macros=table, compat=true).describe() catch {
+    err => abort(err.message())
+  }
+  assert_eq(described, "none")
+}
+
+///|
+test "a chain of macros is bounded by the nesting limit" {
+  let chain : Array[@query.Macro] = []
+  for index in 0..<300 {
+    let query = if index == 299 { "ext:last" } else { "m\{index + 1}:" }
+    chain.push(@query.Macro::new(name="m\{index}", query~))
+  }
+  let table = @query.Macros::from_array(chain)
+  let message = try {
+    let _ = @query.parse("m0:", macros=table)
+    ""
+  } catch {
+    err => err.message()
+  } noraise {
+    _ => ""
+  }
+  assert_true(message.contains("deeply"))
+}
+
+///|
+/// Build a chain of `length` macros where each expands to the next.
+fn macro_chain(length : Int32) -> Array[@query.Macro] {
+  let chain : Array[@query.Macro] = []
+  for index in 0..<length {
+    let query = if index == length - 1 { "ext:last" } else { "m\{index + 1}:" }
+    chain.push(@query.Macro::new(name="m\{index}", query~))
+  }
+  chain
+}
+
+///|
+test "the macro nesting limit is exactly 256" {
+  let allowed = @query.Macros::from_array(macro_chain(256))
+  let described = @query.parse("m0:", macros=allowed).describe() catch {
+    err => abort(err.message())
+  }
+  assert_eq(described, "(ext \"last\")")
+
+  let rejected = @query.Macros::from_array(macro_chain(257))
+  let message = try {
+    let _ = @query.parse("m0:", macros=rejected)
+    ""
+  } catch {
+    err => err.message()
+  } noraise {
+    _ => ""
+  }
+  assert_true(message.contains("deeply"))
+}

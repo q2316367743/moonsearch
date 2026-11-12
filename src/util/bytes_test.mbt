@@ -75,3 +75,47 @@ test "find_bytes handles a needle at the very end" {
   assert_eq(@util.find_bytes(view, b"abc"[0:3]), Some(0))
   assert_eq(@util.find_bytes(view, b"abcd"[0:4]), None)
 }
+
+///|
+test "prefix and suffix helpers handle oversized needles" {
+  let view = b"abc"[0:3]
+  assert_false(@util.starts_with(view, b"abcd"[0:4]))
+  assert_false(@util.ends_with(view, b"abcd"[0:4]))
+  assert_true(@util.starts_with(b""[0:0], b""[0:0]))
+  assert_true(@util.ends_with(b""[0:0], b""[0:0]))
+  assert_false(@util.starts_with(b""[0:0], b"a"[0:1]))
+  assert_false(@util.ends_with(b""[0:0], b"a"[0:1]))
+}
+
+///|
+test "find_bytes clamps both ends of the start offset" {
+  let view = b"abcabc"[0:6]
+  assert_eq(@util.find_bytes(view, b"abc"[0:3], from=-10), Some(0))
+  assert_eq(@util.find_bytes(view, b"abc"[0:3], from=6), None)
+  assert_eq(@util.find_bytes(view, b"abc"[0:3], from=10), None)
+  assert_eq(@util.find_bytes(view, b"abc"[0:3], from=1), Some(3))
+  // An empty needle matches at the clamped start, even past the end.
+  assert_eq(@util.find_bytes(view, b""[0:0], from=-1), Some(0))
+  assert_eq(@util.find_bytes(view, b""[0:0], from=3), Some(3))
+  assert_eq(@util.find_bytes(view, b""[0:0], from=99), Some(6))
+}
+
+///|
+test "find_bytes finds overlapping occurrences" {
+  let view = b"aaaa"[0:4]
+  assert_eq(@util.find_bytes(view, b"aa"[0:2]), Some(0))
+  assert_eq(@util.find_bytes(view, b"aa"[0:2], from=1), Some(1))
+  assert_eq(@util.find_bytes(view, b"aa"[0:2], from=3), None)
+  assert_eq(@util.find_bytes(view, b"aaa"[0:3]), Some(0))
+  assert_eq(@util.find_bytes(view, b"aaa"[0:3], from=1), Some(1))
+}
+
+///|
+test "ascii case folding leaves non-ASCII bytes alone" {
+  assert_eq(@util.ascii_upper(b'\xC3'), b'\xC3')
+  assert_eq(@util.ascii_upper(b'a'), b'A')
+  assert_true(@util.eq_ignore_ascii_case(b"\xC3\xA9"[0:2], b"\xC3\xA9"[0:2]))
+  assert_false(@util.eq_ignore_ascii_case(b"\xC3\xA9"[0:2], b"\xC3\x89"[0:2]))
+  assert_eq(@util.find_byte(b"abc"[0:3], b'c', from=2), Some(2))
+  assert_eq(@util.find_byte(b"abc"[0:3], b'a', from=3), None)
+}

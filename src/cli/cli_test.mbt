@@ -398,3 +398,379 @@ async test "index reports a missing root" {
     _ => abort("expected an index failure")
   }
 }
+
+///|
+/// Build a fixture tree with nested, hidden, empty, and symlinked entries.
+async fn make_tree_fixture() -> String {
+  let dir = @fs.tmpdir(prefix="moonsearch-tree")
+  @fs.mkdir("\{dir}/sub")
+  @fs.mkdir("\{dir}/empty")
+  @fs.mkdir("\{dir}/.git")
+  @fs.write_text("\{dir}/a.txt", "hello")
+  @fs.write_text("\{dir}/.hidden", "hh")
+  @fs.write_text("\{dir}/sub/b.pdf", "abc")
+  @fs.write_text("\{dir}/.git/config", "x")
+  @fs.symlink(target="\{dir}/sub", "\{dir}/link")
+  dir
+}
+
+///|
+/// Accept a successful index run and return its stdout.
+fn index_stdout(result : @cli.CliResult) -> String {
+  match result {
+    @cli.Success(text) => text
+    @cli.SuccessWith(_, diagnostics) =>
+      abort("unexpected diagnostics: \{diagnostics}")
+    @cli.NoMatch => abort("index must not return NoMatch")
+    @cli.Failure(text) => abort("index failed: \{text}")
+  }
+}
+
+///|
+async test "index summarises a realistic tree" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["index", dir])
+  @fs.rmdir(dir, recursive=true)
+  // root, sub, empty, .git; the symlink is a zero-sized file.
+  assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+}
+
+///|
+async test "index excludes hidden entries and their subtrees" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["index", "--exclude-hidden", dir])
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(
+    index_stdout(result),
+    "roots: 1\nfolders: 3\nfiles: 3\nbytes: 8\nskipped: 2",
+  )
+}
+
+///|
+async test "index applies basename and target restrictions to excludes" {
+  let dir = make_tree_fixture()
+  let files = @cli.run([
+    "index", "-x", "*.pdf", "--exclude-scope", "basename", "--exclude-target", "files",
+    dir,
+  ])
+  let folders = @cli.run([
+    "index", "-x", "sub", "--exclude-scope", "basename", "--exclude-target", "folders",
+    dir,
+  ])
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(
+    index_stdout(files),
+    "roots: 1\nfolders: 4\nfiles: 4\nbytes: 8\nskipped: 1",
+  )
+  assert_eq(
+    index_stdout(folders),
+    "roots: 1\nfolders: 3\nfiles: 4\nbytes: 8\nskipped: 1",
+  )
+}
+
+///|
+async test "index applies a fixed full-path exclusion" {
+  let dir = make_tree_fixture()
+  let root = @fs.realpath(dir)
+  let result = @cli.run([
+    "index",
+    "-x",
+    "fixed:\{root}/a.txt",
+    "--exclude-target",
+    "files",
+    root,
+  ])
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(
+    index_stdout(result),
+    "roots: 1\nfolders: 4\nfiles: 4\nbytes: 6\nskipped: 1",
+  )
+}
+
+///|
+async test "invalid exclude settings are usage errors" {
+  let scope = @cli.run(["index", "--exclude-scope", "nope", "/tmp"])
+  match scope {
+    @cli.Failure(text) => {
+      assert_true(text.contains("--exclude-scope"))
+      assert_true(text.contains("got 'nope'"))
+    }
+    _ => abort("expected a scope failure")
+  }
+  let target = @cli.run(["index", "--exclude-target", "nope", "/tmp"])
+  match target {
+    @cli.Failure(text) => {
+      assert_true(text.contains("--exclude-target"))
+      assert_true(text.contains("got 'nope'"))
+    }
+    _ => abort("expected a target failure")
+  }
+  let regex = @cli.run(["index", "-x", "regex:^tmp$", "/tmp"])
+  match regex {
+    @cli.Failure(text) => assert_true(text.contains("not implemented"))
+    _ => abort("expected a regex failure")
+  }
+}
+
+///|
+async test "nested roots require an explicit opt-in" {
+  let dir = make_tree_fixture()
+  let rejected = @cli.run(["index", dir, "\{dir}/sub"])
+  let accepted = @cli.run(["index", "--allow-nested-roots", dir, "\{dir}/sub"])
+  @fs.rmdir(dir, recursive=true)
+  match rejected {
+    @cli.Failure(text) => {
+      assert_true(text.contains("is inside"))
+      assert_true(text.contains("--allow-nested-roots"))
+    }
+    _ => abort("expected nested roots to be rejected")
+  }
+  // The subtree is indexed twice: once under the parent and once as a root.
+  assert_eq(index_stdout(accepted), "roots: 2\nfolders: 5\nfiles: 6\nbytes: 14")
+}
+
+///|
+async test "duplicate roots are normalised before scanning" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["index", dir, "\{dir}/", "\{dir}/."])
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+}
+
+///|
+async test "a file used as a root is rejected" {
+  let dir = @fs.tmpdir(prefix="moonsearch-file-root")
+  let file = "\{dir}/plain"
+  @fs.write_text(file, "x")
+  let result = @cli.run(["index", file])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.Failure(text) => assert_true(text.contains("not a directory"))
+    _ => abort("expected a root failure")
+  }
+}
+
+///|
+async test "indexing an empty directory reports zero files" {
+  let dir = @fs.tmpdir(prefix="moonsearch-empty")
+  let result = @cli.run(["index", dir])
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(index_stdout(result), "roots: 1\nfolders: 1\nfiles: 0\nbytes: 0")
+}
+
+///|
+async test "quiet suppresses the summary but keeps success" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["index", "--quiet", dir])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(out, diagnostics) => {
+      assert_eq(out, "")
+      assert_eq(diagnostics, "")
+      assert_eq(result.exit_code(), 0)
+    }
+    _ => abort("expected a quiet success")
+  }
+}
+
+///|
+async test "stats and verbose write diagnostics to stderr" {
+  let dir = make_tree_fixture()
+  let root = @fs.realpath(dir)
+  let stats = @cli.run(["index", "--stats", dir])
+  let verbose = @cli.run(["index", "--verbose", dir])
+  let both = @cli.run(["index", "--verbose", "--stats", dir])
+  @fs.rmdir(dir, recursive=true)
+  match stats {
+    @cli.SuccessWith(out, diagnostics) => {
+      assert_eq(out, "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+      assert_true(diagnostics.contains("scan:"))
+      assert_true(diagnostics.contains("names:"))
+      assert_true(diagnostics.contains("skipped: hidden=0 excluded=0 mount=0"))
+      assert_true(diagnostics.contains("issues: 0"))
+      // Without --verbose the per-root line is absent.
+      assert_false(diagnostics.contains("root: "))
+    }
+    _ => abort("expected stats diagnostics")
+  }
+  match verbose {
+    @cli.SuccessWith(_, diagnostics) => {
+      assert_true(
+        diagnostics.contains("root: \{root} (files: 5, folders: 3, bytes: 11)"),
+      )
+      assert_false(diagnostics.contains("scan:"))
+    }
+    _ => abort("expected verbose diagnostics")
+  }
+  match both {
+    @cli.SuccessWith(_, diagnostics) => {
+      assert_true(diagnostics.contains("root: \{root}"))
+      assert_true(diagnostics.contains("scan:"))
+    }
+    _ => abort("expected verbose and stats diagnostics")
+  }
+}
+
+///|
+async test "one-file-system warns when the backend has no device ids" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["index", "--one-file-system", dir])
+  let quiet = @cli.run(["index", "--quiet", "--one-file-system", dir])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(out, diagnostics) => {
+      assert_eq(out, "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+      assert_true(diagnostics.contains("--one-file-system has no effect"))
+    }
+    _ => abort("expected the one-file-system warning")
+  }
+  match quiet {
+    @cli.SuccessWith(out, diagnostics) => {
+      assert_eq(out, "")
+      assert_true(diagnostics.contains("has no effect"))
+    }
+    _ => abort("expected the warning even with --quiet")
+  }
+}
+
+///|
+async test "unicode and long names are indexed end to end" {
+  let dir = @fs.tmpdir(prefix="moonsearch-names")
+  let long = StringBuilder()
+  for _ in 0..<240 {
+    long.write_string("n")
+  }
+  long.write_string(".txt")
+  @fs.write_text("\{dir}/发票 2024.pdf", "ab")
+  @fs.write_text("\{dir}/\{long.to_string()}", "c")
+  let result = @cli.run(["index", dir])
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(index_stdout(result), "roots: 1\nfolders: 1\nfiles: 2\nbytes: 3")
+}
+
+///|
+async test "index accepts a mix of option and positional roots" {
+  let first = @fs.tmpdir(prefix="moonsearch-root-a")
+  let second = @fs.tmpdir(prefix="moonsearch-root-b")
+  @fs.write_text("\{first}/a", "1")
+  @fs.write_text("\{second}/b", "22")
+  let result = @cli.run(["index", "-r", first, second])
+  @fs.rmdir(first, recursive=true)
+  @fs.rmdir(second, recursive=true)
+  assert_eq(index_stdout(result), "roots: 2\nfolders: 2\nfiles: 2\nbytes: 3")
+}
+
+///|
+async test "global options work before the subcommand" {
+  let dir = @fs.tmpdir(prefix="moonsearch-global")
+  let result = @cli.run([
+    "-D", "/tmp/does-not-matter.msdb", "--quiet", "index", dir,
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(out, _) => assert_eq(out, "")
+    _ => abort("expected a quiet success")
+  }
+}
+
+///|
+async test "parse results distinguish help, version, and runs" {
+  assert_true(@cli.parse([]) is Ok(@cli.ShowHelp(_)))
+  assert_true(@cli.parse(["--version"]) is Ok(@cli.ShowVersion(_)))
+  assert_true(@cli.parse(["help"]) is Ok(@cli.ShowHelp(_)))
+  assert_true(@cli.parse(["index", "-r", "/tmp"]) is Ok(@cli.Run(_)))
+}
+
+///|
+async test "pending subcommands report usage errors" {
+  let search = @cli.run(["search", "report"])
+  let count = @cli.run(["count", "report"])
+  let info = @cli.run(["info"])
+  for result in [search, count, info] {
+    assert_eq(result.exit_code(), 2)
+    match result {
+      @cli.Failure(text) => assert_true(text.contains("not implemented"))
+      _ => abort("expected a failure")
+    }
+  }
+}
+
+///|
+async test "success results map to the success exit code" {
+  assert_eq(@cli.SuccessWith("out", "err").exit_code(), 0)
+}
+
+///|
+async test "update is the same scan as index" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["update", dir])
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+}
+
+///|
+async test "index without roots is a usage error" {
+  let result = @cli.run(["index"])
+  assert_eq(result.exit_code(), 2)
+  match result {
+    @cli.Failure(text) => {
+      assert_true(text.contains("no roots configured"))
+      assert_true(text.contains("--root"))
+    }
+    _ => abort("expected a usage failure")
+  }
+}
+
+///|
+async test "command-line errors surface as failures" {
+  match @cli.run(["search", "--bogus"]) {
+    @cli.Failure(text) => assert_true(text.contains("unexpected argument"))
+    _ => abort("expected an argument failure")
+  }
+}
+
+///|
+async test "verbose and the one-file-system warning combine" {
+  let dir = make_tree_fixture()
+  let result = @cli.run([
+    "index", "--verbose", "--stats", "--one-file-system", dir,
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(out, diagnostics) => {
+      assert_eq(out, "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+      assert_true(diagnostics.contains("root: "))
+      assert_true(diagnostics.contains("--one-file-system has no effect"))
+      assert_true(diagnostics.contains("skipped: hidden=0 excluded=0 mount=0"))
+    }
+    _ => abort("expected verbose diagnostics with a warning")
+  }
+}
+
+///|
+async test "unreadable directories are reported in the summary and warnings" {
+  let dir = @fs.tmpdir(prefix="moonsearch-cli-perm")
+  let locked = "\{dir}/locked"
+  @fs.mkdir(locked)
+  @fs.write_text("\{locked}/secret", "x")
+  @fs.write_text("\{dir}/open.txt", "hi")
+  @fs.chmod(locked, 0o000)
+  let denied = !@fs.can_read(locked)
+  let result = @cli.run(["index", "--verbose", dir])
+  @fs.chmod(locked, 0o755)
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(out, diagnostics) =>
+      if denied {
+        assert_eq(out, "roots: 1\nfolders: 2\nfiles: 1\nbytes: 2\nissues: 1")
+        assert_true(diagnostics.contains("warning:"))
+        assert_true(diagnostics.contains("locked"))
+        assert_true(diagnostics.contains("permission denied"))
+      } else {
+        // Running as root: the directory stays readable.
+        assert_eq(out, "roots: 1\nfolders: 2\nfiles: 2\nbytes: 3")
+        assert_false(diagnostics.contains("warning:"))
+      }
+    _ => abort("expected a scan with diagnostics")
+  }
+}

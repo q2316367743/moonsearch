@@ -1,9 +1,11 @@
 ///|
 /// Per-root summary recorded in the store.
 ///
-/// `files`, `folders`, and `size` cover the subtree below `path`, including the
-/// root folder itself in `folders`. They are filled in once the scan of that
-/// root finishes and are what `index` reports without walking the entries again.
+/// `files`, `folders`, and `size` cover the subtree below `path`; the root
+/// folder itself is not included in `folders` (it is present in the folder
+/// array and counted by `Store::folder_count`). They are filled in once the
+/// scan of that root finishes and are what `index` reports without walking the
+/// entries again.
 pub(all) struct RootInfo {
   path : String
   one_file_system : Bool

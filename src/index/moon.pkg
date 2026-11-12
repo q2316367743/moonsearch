@@ -9,6 +9,7 @@ import {
 import {
   "moonbitlang/core/async",
   "moonbitlang/core/async/fs",
+  "moonbitlang/core/encoding/utf8",
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/platform",
 } for "test"

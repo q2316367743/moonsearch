@@ -135,6 +135,24 @@ pub fn PlatformError::access_denied(message : String) -> PlatformError {
 }
 
 ///|
+/// Build an `Io` error outside the platform package.
+pub fn PlatformError::io(message : String) -> PlatformError {
+  Io(message)
+}
+
+///|
+/// Build a `NotDirectory` error outside the platform package.
+pub fn PlatformError::not_directory(message : String) -> PlatformError {
+  NotDirectory(message)
+}
+
+///|
+/// Build an `Unsupported` error outside the platform package.
+pub fn PlatformError::unsupported(message : String) -> PlatformError {
+  Unsupported(message)
+}
+
+///|
 /// Human-readable text of a platform error.
 pub fn PlatformError::message(self : PlatformError) -> String {
   match self {

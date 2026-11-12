@@ -89,3 +89,92 @@ test "folder size accumulation saturates instead of overflowing" {
   folder.add_size(1L)
   assert_eq(folder.size(), 9223372036854775807L)
 }
+
+///|
+test "add_size ignores zero and accumulates negative deltas" {
+  let folder = @core.Entry::folder(
+    parent=@core.NO_PARENT,
+    name=name_ref(1),
+    mtime=0L,
+  )
+  folder.add_size(0L)
+  assert_eq(folder.size(), 0L)
+  folder.add_size(10L)
+  folder.add_size(-3L)
+  assert_eq(folder.size(), 7L)
+  folder.add_size(-7L)
+  assert_eq(folder.size(), 0L)
+}
+
+///|
+test "negative size accumulation saturates at the minimum" {
+  let folder = @core.Entry::folder(
+    parent=@core.NO_PARENT,
+    name=name_ref(1),
+    mtime=0L,
+  )
+  folder.add_size(-9223372036854775807L)
+  folder.add_size(-10L)
+  assert_eq(folder.size(), -9223372036854775807L - 1L)
+  // Once at the minimum, further negative deltas keep it there.
+  folder.add_size(-1L)
+  assert_eq(folder.size(), -9223372036854775807L - 1L)
+}
+
+///|
+test "a minimum-size delta on a positive entry is exact" {
+  let folder = @core.Entry::folder(
+    parent=@core.NO_PARENT,
+    name=name_ref(1),
+    mtime=0L,
+  )
+  folder.add_size(1L)
+  folder.add_size(-9223372036854775807L - 1L)
+  assert_eq(folder.size(), -9223372036854775807L)
+}
+
+///|
+test "the special flag is independent from hidden and symlink" {
+  let special = @core.Entry::file(
+    parent=0,
+    name=name_ref(1),
+    size=0L,
+    mtime=0L,
+    flags=@core.ENTRY_FLAG_SPECIAL,
+  )
+  assert_eq(special.flags(), @core.ENTRY_FLAG_SPECIAL)
+  assert_false(special.is_hidden())
+  assert_false(special.is_symlink())
+  // Flags are preserved verbatim, including unknown high bits.
+  let all = @core.Entry::file(
+    parent=0,
+    name=name_ref(1),
+    size=0L,
+    mtime=0L,
+    flags=0xFFFF,
+  )
+  assert_eq(all.flags(), 0xFFFF)
+  assert_true(all.is_hidden())
+  assert_true(all.is_symlink())
+}
+
+///|
+test "add_child counts each kind independently" {
+  let folder = @core.Entry::folder(
+    parent=@core.NO_PARENT,
+    name=name_ref(1),
+    mtime=0L,
+  )
+  for _ in 0..<10 {
+    folder.add_child(@core.EntryKind::File)
+  }
+  for _ in 0..<3 {
+    folder.add_child(@core.EntryKind::Folder)
+  }
+  assert_eq(folder.num_files(), 10U)
+  assert_eq(folder.num_folders(), 3U)
+  assert_eq(folder.child_count(), 13U)
+  // set_child_counts replaces rather than adds.
+  folder.set_child_counts(0U, 0U)
+  assert_eq(folder.child_count(), 0U)
+}

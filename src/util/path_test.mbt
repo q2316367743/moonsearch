@@ -111,3 +111,137 @@ test "cmp_paths is antisymmetric on a corpus" {
     }
   }
 }
+
+///|
+test "cmp_paths covers every digit-run state transition" {
+  // Normal -> Integer: the longer integral run is the larger number.
+  assert_true(cmp(b"a2", b"a10") < 0)
+  assert_true(cmp(b"a10", b"a2") > 0)
+  // Integer vs a non-digit on either side.
+  assert_true(cmp(b"10a", b"1b") > 0)
+  assert_true(cmp(b"1b", b"10a") < 0)
+  assert_true(cmp(b"10", b"1") > 0)
+  assert_true(cmp(b"1", b"10") < 0)
+  // Zeros -> Fraction when a nonzero digit appears.
+  assert_true(cmp(b"007", b"01") < 0)
+  assert_true(cmp(b"019", b"020") < 0)
+  assert_true(cmp(b"020", b"019") > 0)
+  // Zeros vs digits: byte order decides, not numeric length.
+  assert_true(cmp(b"00", b"01") < 0)
+  assert_true(cmp(b"0a", b"00a") > 0)
+  assert_true(cmp(b"000", b"00") < 0)
+  // Normal -> Zeros when the run starts with zero.
+  assert_true(cmp(b"0", b"00") > 0)
+  assert_true(cmp(b"00", b"0") < 0)
+  // Fraction state compares byte by byte.
+  assert_true(cmp(b"a01x", b"a02x") < 0)
+  assert_true(cmp(b"a01x", b"a010x") > 0)
+  // A separator always weighs less than any name byte.
+  assert_true(cmp(b"a/b", b"a_b") < 0)
+  assert_true(cmp(b"a/0", b"a.0") < 0)
+}
+
+///|
+/// Prefix a byte name with a fixed root, for path-level comparisons.
+fn under_root(name : Bytes) -> Bytes {
+  let out : Array[Byte] = [b'/', b'r', b'/']
+  for byte in name[:].iter() {
+    out.push(byte)
+  }
+  Bytes::from_array(out)
+}
+
+///|
+test "cmp_paths never collapses distinct names" {
+  // The upstream database relies on distinct names never comparing equal so
+  // that sibling ranges stay contiguous.
+  let names : Array[Bytes] = [
+    b"01", b"1", b"2", b"02", b"10", b"010", b"b", b"b.d", b"b2", b"bb",
+  ]
+  for i in 0..<names.length() {
+    for j in 0..<names.length() {
+      if i != j {
+        assert_true(cmp(names[i], names[j]) != 0)
+        assert_true(cmp(under_root(names[i]), under_root(names[j])) != 0)
+      }
+    }
+  }
+}
+
+///|
+/// Generate a deterministic corpus of short paths over bytes that exercise the
+/// digit states, separators, dots, and non-ASCII-free ordering.
+fn generated_corpus() -> Array[Bytes] {
+  let alphabet : Array[Byte] = [b'a', b'b', b'0', b'1', b'.', b'/', b'_']
+  let corpus : Array[Bytes] = [b""]
+  for length in 1..<5 {
+    let mut total = 1
+    for _ in 0..<length {
+      total = total * alphabet.length()
+    }
+    for code in 0..<total {
+      // Keep the corpus small: for length 4 take one combination in seven.
+      if length == 4 && code % 7 != 0 {
+        continue
+      }
+      let digits : Array[Int32] = []
+      let mut value = code
+      for _ in 0..<length {
+        digits.push(value % alphabet.length())
+        value = value / alphabet.length()
+      }
+      corpus.push(Bytes::makei(length, fn(index) { alphabet[digits[index]] }))
+    }
+  }
+  corpus
+}
+
+///|
+test "cmp_paths is a total order on a generated corpus" {
+  let corpus = generated_corpus()
+  // Antisymmetry and trichotomy on every pair.
+  for i in 0..<corpus.length() {
+    for j in 0..<corpus.length() {
+      let forward = cmp(corpus[i], corpus[j])
+      let backward = cmp(corpus[j], corpus[i])
+      assert_eq(forward, -backward)
+      assert_true(forward == -1 || forward == 0 || forward == 1)
+      // Equal comparison means equal bytes.
+      if forward == 0 {
+        assert_true(corpus[i] == corpus[j])
+      }
+    }
+  }
+  // Transitivity, sampled systematically to keep the test quadratic-ish.
+  let mut i = 0
+  while i < corpus.length() {
+    let mut j = 0
+    while j < corpus.length() {
+      let mut k = 0
+      while k < corpus.length() {
+        if cmp(corpus[i], corpus[j]) <= 0 && cmp(corpus[j], corpus[k]) <= 0 {
+          assert_true(cmp(corpus[i], corpus[k]) <= 0)
+        }
+        k = k + 43
+      }
+      j = j + 41
+    }
+    i = i + 37
+  }
+  // Sorting yields a sequence that is already in comparator order.
+  let sorted = corpus.copy()
+  sorted.sort_by(fn(left, right) { cmp(left, right) })
+  for index in 0..<(sorted.length() - 1) {
+    assert_true(cmp(sorted[index], sorted[index + 1]) <= 0)
+  }
+}
+
+///|
+test "is_within accepts the root and rejects lookalike prefixes" {
+  assert_true(@util.is_within("/", "/"))
+  assert_true(@util.is_within("/", "/anything/at/all"))
+  assert_true(@util.is_within("/a/b", "/a/b/c/d"))
+  assert_false(@util.is_within("/a/b", "/a/bc"))
+  assert_false(@util.is_within("/a/bc", "/a/b"))
+  assert_false(@util.is_within("/", "relative"))
+}

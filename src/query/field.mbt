@@ -227,12 +227,16 @@ fn Parser::next_value(self : Parser) -> RawValue? raise QueryError {
 /// Consume an optional comparison operator and value without interpreting it.
 ///
 /// Unknown fields still own the value written after their colon; consuming it
-/// keeps compat mode from turning that value into a stray name term.
+/// keeps compat mode from turning that value into a stray name term. A run of
+/// comparison operators is consumed as well, so malformed input such as
+/// `unknown:==x` still degrades to the empty set instead of failing.
 fn Parser::skip_field_value(self : Parser) -> Unit {
-  match self.peek().kind() {
-    Equal | Greater | GreaterEqual | Smaller | SmallerEqual =>
-      ignore(self.advance())
-    _ => ()
+  while true {
+    match self.peek().kind() {
+      Equal | Greater | GreaterEqual | Smaller | SmallerEqual =>
+        ignore(self.advance())
+      _ => break
+    }
   }
   match self.peek().kind() {
     Word(_) => ignore(self.advance())

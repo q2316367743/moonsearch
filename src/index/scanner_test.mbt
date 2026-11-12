@@ -9,12 +9,22 @@ struct FakeSource {
   stats : Map[String, @platform.NodeInfo]
   missing : Array[String]
   denied : Array[String]
+  io_errors : Map[String, String]
+  realpath_io_errors : Map[String, String]
   mut devices : Bool
 }
 
 ///|
 fn fake_source() -> FakeSource {
-  { dirs: Map([]), stats: Map([]), missing: [], denied: [], devices: true, }
+  {
+    dirs: Map([]),
+    stats: Map([]),
+    missing: [],
+    denied: [],
+    io_errors: Map([]),
+    realpath_io_errors: Map([]),
+    devices: true,
+  }
 }
 
 ///|
@@ -72,6 +82,26 @@ fn FakeSource::deny(self : FakeSource, path : String) -> FakeSource {
 }
 
 ///|
+fn FakeSource::fail_io(
+  self : FakeSource,
+  path : String,
+  message : String,
+) -> FakeSource {
+  self.io_errors.set(path, message)
+  self
+}
+
+///|
+fn FakeSource::fail_realpath_io(
+  self : FakeSource,
+  path : String,
+  message : String,
+) -> FakeSource {
+  self.realpath_io_errors.set(path, message)
+  self
+}
+
+///|
 fn FakeSource::without_devices(self : FakeSource) -> FakeSource {
   self.devices = false
   self
@@ -85,6 +115,10 @@ impl @platform.ScanSource for FakeSource with fn has_devices(self) -> Bool {
 ///|
 impl @platform.ScanSource for FakeSource with fn realpath(self, path) -> String raise @platform.PlatformError {
   let key = "\{path}"
+  match self.realpath_io_errors.get(key) {
+    Some(message) => raise @platform.PlatformError::io(message)
+    None => ()
+  }
   if self.missing.contains(key) {
     raise @platform.PlatformError::not_found(key)
   }
@@ -93,9 +127,14 @@ impl @platform.ScanSource for FakeSource with fn realpath(self, path) -> String 
 
 ///|
 impl @platform.ScanSource for FakeSource with fn stat(self, path) -> @platform.NodeInfo raise @platform.PlatformError {
-  match self.stats.get("\{path}") {
+  let key = "\{path}"
+  match self.io_errors.get(key) {
+    Some(message) => raise @platform.PlatformError::io(message)
+    None => ()
+  }
+  match self.stats.get(key) {
     Some(info) => info
-    None => raise @platform.PlatformError::not_found("\{path}")
+    None => raise @platform.PlatformError::not_found(key)
   }
 }
 
@@ -412,7 +451,8 @@ async test "nested roots are rejected by default" {
     .dir("/r/sub", [])
   let err = expect_error(config(["/r", "/r/sub"]), source)
   match err {
-    @index.NestedRoots(..) => ()
+    @index.NestedRoots(..) =>
+      assert_true(err.message().contains("--allow-nested-roots"))
     _ => abort("expected NestedRoots, got \{err.message()}")
   }
 }
@@ -440,7 +480,10 @@ async test "a missing root is a configuration error" {
   source.missing.push("/nope")
   let err = expect_error(config(["/nope"]), source)
   match err {
-    @index.RootMissing(path) => assert_eq(path, "/nope")
+    @index.RootMissing(path) => {
+      assert_eq(path, "/nope")
+      assert_eq(err.message(), "root does not exist: /nope")
+    }
     _ => abort("expected RootMissing, got \{err.message()}")
   }
 }
@@ -450,7 +493,10 @@ async test "a file used as a root is rejected" {
   let source = fake_source().file_root("/r/file")
   let err = expect_error(config(["/r/file"]), source)
   match err {
-    @index.RootNotDirectory(path) => assert_eq(path, "/r/file")
+    @index.RootNotDirectory(path) => {
+      assert_eq(path, "/r/file")
+      assert_true(err.message().contains("not a directory"))
+    }
     _ => abort("expected RootNotDirectory, got \{err.message()}")
   }
 }
@@ -480,4 +526,398 @@ async test "a directory with a failing entry reports an issue" {
   assert_eq(report.issues.length(), 1)
   assert_eq(report.issues[0].path, "/r/gone")
   assert_eq(report.store.file_count(), 1)
+}
+
+///|
+/// Build an ASCII name of exactly `length` bytes.
+fn long_name(length : Int32) -> String {
+  let chars : Array[Char] = []
+  for _ in 0..<length {
+    chars.push('n')
+  }
+  String::from_array(chars)
+}
+
+///|
+async test "names at the maximum indexable length are accepted" {
+  let name = long_name(@core.MAX_NAME_LEN)
+  let source = fake_source().dir("/r", [file_entry(name, 1L)])
+  let report = run(config(["/r"]), source)
+  assert_eq(report.store.file_count(), 1)
+  assert_eq(report.issues.length(), 0)
+  // The stored path is `/r/` followed by the name.
+  assert_eq(report.store.file_path(0).length(), 3 + @core.MAX_NAME_LEN)
+}
+
+///|
+async test "names longer than the index can hold become issues" {
+  let name = long_name(@core.MAX_NAME_LEN + 1)
+  let source = fake_source().dir("/r", [
+    file_entry(name, 1L),
+    file_entry("kept", 2L),
+  ])
+  let report = run(config(["/r"]), source)
+  assert_eq(report.store.file_count(), 1)
+  assert_eq(report.store.file_path(0), b"/r/kept")
+  assert_eq(report.issues.length(), 1)
+  assert_true(report.issues[0].message.contains("does not fit"))
+  assert_eq(report.issues[0].path.length(), 3 + @core.MAX_NAME_LEN + 1)
+}
+
+///|
+async test "hidden directories are skipped without descending" {
+  let source = fake_source().dir("/r", [
+    dir_entry(".git"),
+    file_entry(".env", 1L),
+    file_entry("a.b", 2L),
+  ])
+  // No listing for /r/.git: descending would raise a NotFound issue, so a
+  // clean report proves the subtree was never visited.
+  let config = @index.ScanConfig::new(
+    roots=[@index.RootSpec::new(path="/r")],
+    exclude_hidden=true,
+  )
+  let report = run(config, source)
+  assert_eq(report.skipped_hidden, 2)
+  assert_eq(report.issues.length(), 0)
+  assert_eq(report.store.folder_count(), 1)
+  assert_eq(report.store.file_count(), 1)
+  assert_eq(report.store.file_path(0), b"/r/a.b")
+}
+
+///|
+async test "an excluded directory is skipped without descending" {
+  let source = fake_source().dir("/r", [
+    dir_entry("build"),
+    file_entry("keep", 1L),
+  ])
+  let exclude = @index.ExcludeRule::new(
+    kind=Fixed,
+    pattern="build",
+    scope=Basename,
+    target=Folders,
+  )
+  let config = @index.ScanConfig::new(roots=[@index.RootSpec::new(path="/r")], excludes=[
+    exclude,
+  ])
+  let report = run(config, source)
+  assert_eq(report.skipped_excluded, 1)
+  assert_eq(report.issues.length(), 0)
+  assert_eq(report.store.folder_count(), 1)
+  assert_eq(report.store.file_count(), 1)
+}
+
+///|
+async test "full-path exclusion rules can prune whole subtrees" {
+  let source = fake_source().dir("/r", [
+    dir_entry("skip-this"),
+    dir_entry("keep"),
+    file_entry("keep.txt", 1L),
+  ])
+  let exclude = @index.ExcludeRule::new(
+    kind=Glob,
+    pattern="/r/skip-*",
+    scope=FullPath,
+    target=Folders,
+  )
+  let config = @index.ScanConfig::new(roots=[@index.RootSpec::new(path="/r")], excludes=[
+    exclude,
+  ])
+  let report = run(config, source)
+  assert_eq(report.skipped_excluded, 1)
+  assert_eq(report.store.folder_count(), 2)
+  assert_eq(report.store.file_count(), 1)
+}
+
+///|
+async test "a failing root listing leaves an empty root with stats of zero" {
+  // The root stat works but listing it fails.
+  let source = fake_source().root("/r")
+  let report = run(config(["/r"]), source)
+  assert_eq(report.issues.length(), 1)
+  assert_eq(report.issues[0].path, "/r")
+  assert_eq(report.store.folder_count(), 1)
+  assert_eq(report.store.file_count(), 0)
+  assert_eq(report.store.folder(0).unwrap().child_count(), 0U)
+  let root = report.store.roots()[0]
+  assert_eq(root.files, 0U)
+  assert_eq(root.folders, 0U)
+  assert_eq(root.size, 0L)
+}
+
+///|
+async test "a root that disappears between realpath and stat is missing" {
+  let source = fake_source()
+  // realpath succeeds because the path is not in `missing`, but stat has no
+  // metadata for it.
+  let err = expect_error(config(["/r"]), source)
+  match err {
+    @index.RootMissing(path) => assert_eq(path, "/r")
+    _ => abort("expected RootMissing, got \{err.message()}")
+  }
+}
+
+///|
+async test "a non-I/O stat failure is reported as an index error" {
+  let source = fake_source().fail_io("/r", "disk on fire")
+  let err = expect_error(config(["/r"]), source)
+  match err {
+    @index.Io(message) => {
+      assert_eq(message, "disk on fire")
+      assert_eq(err.message(), "disk on fire")
+    }
+    _ => abort("expected Io, got \{err.message()}")
+  }
+}
+
+///|
+async test "the root folder records the root mtime" {
+  let source = fake_source().dir("/r", [])
+  let report = run(config(["/r"]), source)
+  assert_eq(report.store.folder(0).unwrap().mtime(), 100L)
+  assert_eq(report.store.roots()[0].folder, 0)
+}
+
+///|
+async test "listing order never changes ids or paths" {
+  let entries_forward = [
+    dir_entry("a"),
+    dir_entry("m"),
+    file_entry("b.txt", 2L),
+    file_entry("z.txt", 1L),
+  ]
+  let entries_reverse = [
+    file_entry("z.txt", 1L),
+    file_entry("b.txt", 2L),
+    dir_entry("m"),
+    dir_entry("a"),
+  ]
+  let forward = run(
+    config(["/r"]),
+    fake_source()
+    .dir("/r", entries_forward)
+    .dir("/r/a", [file_entry("x", 3L)])
+    .dir("/r/m", []),
+  )
+  let reverse = run(
+    config(["/r"]),
+    fake_source()
+    .dir("/r", entries_reverse)
+    .dir("/r/m", [])
+    .dir("/r/a", [file_entry("x", 3L)]),
+  )
+  assert_eq(forward.store.folder_count(), reverse.store.folder_count())
+  assert_eq(forward.store.file_count(), reverse.store.file_count())
+  for id in 0..<forward.store.folder_count() {
+    assert_eq(forward.store.folder_path(id), reverse.store.folder_path(id))
+  }
+  for id in 0..<forward.store.file_count() {
+    assert_eq(forward.store.file_path(id), reverse.store.file_path(id))
+    assert_eq(
+      forward.store.file(id).unwrap().size(),
+      reverse.store.file(id).unwrap().size(),
+    )
+  }
+}
+
+///|
+async test "names are ordered by raw bytes, not by readdir order" {
+  let source = fake_source().dir("/r", [
+    file_entry("é", 1L),
+    file_entry("z", 2L),
+    file_entry("A", 3L),
+    file_entry("a", 4L),
+  ])
+  let report = run(config(["/r"]), source)
+  // 'A'(0x41) < 'a'(0x61) < 'z'(0x7A) < 'é'(0xC3 0xA9).
+  assert_eq(report.store.file_path(0), b"/r/A")
+  assert_eq(report.store.file_path(1), b"/r/a")
+  assert_eq(report.store.file_path(2), b"/r/z")
+  assert_eq(report.store.file_path(3), b"/r/é")
+}
+
+///|
+async test "deep directory chains preserve the parent chain" {
+  let depth = 400
+  let source = fake_source()
+  let root_path = StringBuilder()
+  root_path.write_string("/r")
+  let mut parent_path = "/r"
+  for _ in 0..<depth {
+    let child_path = "\{parent_path}/d"
+    source.dirs.set(
+      parent_path,
+      @platform.DirListing::new(entries=[dir_entry("d")]),
+    )
+    ignore(source.root(parent_path))
+    parent_path = child_path
+  }
+  source.dirs.set(
+    parent_path,
+    @platform.DirListing::new(entries=[file_entry("leaf", 1L)]),
+  )
+  ignore(source.root(parent_path))
+  let report = run(config(["/r"]), source)
+  assert_eq(report.issues.length(), 0)
+  assert_eq(report.store.folder_count(), depth + 1)
+  assert_eq(report.store.file_count(), 1)
+  let expected = StringBuilder()
+  expected.write_string("/r")
+  for _ in 0..<depth {
+    expected.write_string("/d")
+  }
+  expected.write_string("/leaf")
+  let expected_len = 2 + 2 * depth + 5
+  assert_eq(report.store.file_path(0).length(), expected_len)
+  assert_true(@util.starts_with(report.store.file_path(0)[:], b"/r/d"[:]))
+  assert_true(@util.ends_with(report.store.file_path(0)[:], b"/leaf"[:]))
+  assert_true(@util.contains_bytes(report.store.file_path(0)[:], b"/d/d/d"[:]))
+}
+
+///|
+async test "multiple roots are scanned independently and keep their order" {
+  let source = fake_source()
+    .dir("/first", [file_entry("a", 1L)])
+    .dir("/second", [dir_entry("sub"), file_entry("b", 2L)])
+    .dir("/second/sub", [file_entry("c", 4L)])
+  let report = run(config(["/second", "/first"]), source)
+  assert_eq(report.store.roots().length(), 2)
+  assert_eq(report.store.roots()[0].path, "/second")
+  assert_eq(report.store.roots()[1].path, "/first")
+  assert_eq(report.store.folder_count(), 3)
+  assert_eq(report.store.file_count(), 3)
+  assert_eq(report.store.total_size(), 7L)
+  // The first root's subtree is inserted before the second root's.
+  assert_eq(report.store.file_path(0), b"/second/b")
+  assert_eq(report.store.file_path(1), b"/second/sub/c")
+  assert_eq(report.store.file_path(2), b"/first/a")
+}
+
+///|
+async test "a child with an unknown device id disables the mount check" {
+  let source = fake_source()
+    .dir("/r", [dir_entry("unknown")])
+    .dir("/r/unknown", [file_entry("x", 1L)])
+    .root_on_device("/r", 1UL)
+  let config = @index.ScanConfig::new(roots=[
+    @index.RootSpec::new(path="/r", one_file_system=true),
+  ])
+  let report = run(config, source)
+  assert_eq(report.skipped_mount, 0)
+  assert_eq(report.store.file_count(), 1)
+}
+
+///|
+async test "the root device id is required for mount filtering" {
+  let source = fake_source()
+    .dir("/r", [dir_on_device("mnt", 2UL)])
+    .dir("/r/mnt", [file_entry("x", 1L)])
+  // The root metadata has no device id, so no entry can be compared.
+  let config = @index.ScanConfig::new(roots=[
+    @index.RootSpec::new(path="/r", one_file_system=true),
+  ])
+  let report = run(config, source)
+  assert_eq(report.skipped_mount, 0)
+  assert_eq(report.store.file_count(), 1)
+}
+
+///|
+async test "a realpath I/O failure is an index error" {
+  let source = fake_source().fail_realpath_io("/r", "mount vanished")
+  let err = expect_error(config(["/r"]), source)
+  match err {
+    @index.Io(message) => {
+      assert_eq(message, "mount vanished")
+      assert_eq(err.message(), "mount vanished")
+    }
+    _ => abort("expected Io, got \{err.message()}")
+  }
+}
+
+///|
+/// Advance a deterministic pseudo-random seed without relying on the platform
+/// random generator.
+fn tree_seed(seed : Int64) -> Int64 {
+  (seed * 1103515245L + 12345L) % 2147483648L
+}
+
+///|
+/// Populate a deterministic tree: up to three children per directory, with
+/// directories only in the first four levels. Returns the next seed.
+fn grow_tree(
+  source : FakeSource,
+  path : String,
+  depth : Int32,
+  seed : Int64,
+) -> Int64 {
+  let mut next = seed
+  let width = (next % 3L + 1L).to_int()
+  let entries : Array[@platform.NodeInfo] = []
+  for index in 0..<width {
+    next = tree_seed(next)
+    let make_dir = depth < 4 && next % 2L == 0L
+    if make_dir {
+      let name = "d\{index}"
+      entries.push(dir_entry(name))
+      next = grow_tree(
+        source,
+        @util.join_path(path, name),
+        depth + 1,
+        tree_seed(next),
+      )
+    } else {
+      let size = next % 100L
+      entries.push(file_entry("f\{index}", size))
+    }
+  }
+  ignore(source.dir(path, entries))
+  next
+}
+
+///|
+async test "scanner statistics are internally consistent on a generated tree" {
+  let source = fake_source()
+  ignore(grow_tree(source, "/r", 0, 42L))
+  let report = run(config(["/r"]), source)
+  assert_eq(report.issues.length(), 0)
+  let store = report.store
+  let direct_files : Map[Int32, UInt32] = Map([])
+  let direct_size : Map[Int32, Int64] = Map([])
+  for id in 0..<store.file_count() {
+    let entry = store.file(id).unwrap()
+    let parent = entry.parent()
+    direct_files.set(parent, direct_files.get_or_default(parent, 0U) + 1U)
+    direct_size.set(
+      parent,
+      direct_size.get_or_default(parent, 0L) + entry.size(),
+    )
+  }
+  let direct_folders : Map[Int32, UInt32] = Map([])
+  for id in 0..<store.folder_count() {
+    let entry = store.folder(id).unwrap()
+    if !entry.is_root() {
+      let parent = entry.parent()
+      direct_folders.set(parent, direct_folders.get_or_default(parent, 0U) + 1U)
+    }
+  }
+  for id in 0..<store.folder_count() {
+    let folder = store.folder(id).unwrap()
+    assert_eq(folder.num_files(), direct_files.get_or_default(id, 0U))
+    assert_eq(folder.num_folders(), direct_folders.get_or_default(id, 0U))
+    let mut expected = direct_size.get_or_default(id, 0L)
+    for child in 0..<store.folder_count() {
+      let child_entry = store.folder(child).unwrap()
+      if child_entry.parent() == id {
+        expected = expected + child_entry.size()
+      }
+    }
+    assert_eq(folder.size(), expected)
+  }
+  // With a single root, RootInfo covers the same subtree as the root folder.
+  let root_info = store.roots()[0]
+  let root_folder = store.folder(root_info.folder).unwrap()
+  assert_eq(root_info.size, root_folder.size())
+  assert_eq(root_info.files, store.file_count().reinterpret_as_uint())
+  assert_eq(root_info.folders, (store.folder_count() - 1).reinterpret_as_uint())
+  assert_eq(store.total_size(), root_info.size)
 }

@@ -143,15 +143,29 @@ fn contains_non_ascii_upper(text : StringView) -> Bool {
 }
 
 ///|
-/// Uppercase letters from the Latin, Greek, Cyrillic, and fullwidth blocks.
+/// Uppercase letters from the Latin, Greek, and Cyrillic blocks.
+///
+/// Latin Extended-A and the extended Cyrillic runs are not one simple
+/// alternating range: their case pairing switches direction part way through
+/// the block. The ranges below follow the actual Unicode pairings for the
+/// common blocks this version claims to detect.
 fn is_common_upper(code : Int32) -> Bool {
   // Latin-1 Supplement: À-Ö and Ø-Þ.
   if (code >= 0x00C0 && code <= 0x00D6) || (code >= 0x00D8 && code <= 0x00DE) {
     return true
   }
-  // Latin Extended-A: most pairs alternate lowercase/uppercase.
-  if code >= 0x0100 && code <= 0x017F {
-    return code % 2 == 0 || code == 0x0179 || code == 0x017B || code == 0x017D
+  // Latin Extended-A: even/odd runs, with ĸ, ŉ, and ſ left lowercase.
+  if code >= 0x0100 && code <= 0x0137 {
+    return code % 2 == 0
+  }
+  if code >= 0x0139 && code <= 0x0148 {
+    return code % 2 == 1
+  }
+  if code >= 0x014A && code <= 0x0177 {
+    return code % 2 == 0
+  }
+  if code == 0x0178 || code == 0x0179 || code == 0x017B || code == 0x017D {
+    return true
   }
   // Greek: Ά, Έ-Ί, Ό, Ύ-Ώ, Α-Ρ, Σ-Ϋ.
   if code == 0x0386 ||
@@ -162,11 +176,27 @@ fn is_common_upper(code : Int32) -> Bool {
     (code >= 0x03A3 && code <= 0x03AB) {
     return true
   }
-  // Cyrillic: А-Я, Ѐ-Џ, and the extended pairs.
+  // Cyrillic: А-Я, Ѐ-Џ.
   if code >= 0x0400 && code <= 0x042F {
     return true
   }
-  if (code >= 0x0460 && code <= 0x04FF) && code % 2 == 0 {
+  // Extended Cyrillic pairs; Ӂ-ӎ pair in the opposite direction.
+  if (code >= 0x0460 && code <= 0x0481) && code % 2 == 0 {
+    return true
+  }
+  if (code >= 0x048A && code <= 0x04BF) && code % 2 == 0 {
+    return true
+  }
+  if code == 0x04C0 {
+    return true
+  }
+  if (code >= 0x04C1 && code <= 0x04CE) && code % 2 == 1 {
+    return true
+  }
+  if (code >= 0x04D0 && code <= 0x04FF) && code % 2 == 0 {
+    return true
+  }
+  if (code >= 0x0500 && code <= 0x052F) && code % 2 == 0 {
     return true
   }
   // Fullwidth Latin capitals.

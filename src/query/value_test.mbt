@@ -138,3 +138,60 @@ test "date descriptions escape quotes and backslashes" {
     "= \"a\\\"b\\\\c\"",
   )
 }
+
+///|
+test "range symbols and comparisons describe themselves" {
+  assert_eq(@query.CmpOp::Range.symbol(), "..")
+  assert_eq(@query.Comparison::equal(3L).describe(), "= 3")
+  assert_eq(@query.Comparison::range(3L, 9L).describe(), ".. 3 9")
+  assert_eq(
+    @query.Comparison::compare(@query.CmpOp::Range, 5L).describe(),
+    ".. 5 5",
+  )
+}
+
+///|
+test "date comparisons describe every open-bound combination" {
+  assert_eq(@query.DateComparison::new(@query.CmpOp::Range).describe(), "..")
+  assert_eq(
+    @query.DateComparison::new(@query.CmpOp::Range, hi="b").describe(),
+    ".. \"b\"",
+  )
+  assert_eq(
+    @query.DateComparison::new(@query.CmpOp::Range, lo="a").describe(),
+    "\"a\" ..",
+  )
+  assert_eq(@query.DateComparison::new(@query.CmpOp::Greater).describe(), ">")
+  assert_eq(
+    @query.DateComparison::new(@query.CmpOp::Greater, lo="a").describe(),
+    "> \"a\"",
+  )
+  assert_eq(date_comparison(".."), "..")
+}
+
+///|
+test "sizes accept leading zeros and stop at the overflow boundary" {
+  assert_eq(@query.parse_size("000"), Some(0L))
+  assert_eq(@query.parse_size("007"), Some(7L))
+  // 9223372036854775 * 1000 still fits in Int64.
+  assert_eq(@query.parse_size("9223372036854775kb"), Some(9223372036854775000L))
+  assert_eq(@query.parse_size("9223372036854776kb"), None)
+  assert_eq(@query.parse_size("9223372036854775806tb"), None)
+  assert_eq(@query.parse_size(" 1"), None)
+  assert_eq(@query.parse_size("1 "), None)
+}
+
+///|
+test "counts accept leading plus and zeros, and reject overflow" {
+  assert_eq(@query.parse_count("0003"), Some(3L))
+  assert_eq(@query.parse_count("+000"), Some(0L))
+  assert_eq(@query.parse_count("++1"), None)
+  assert_eq(
+    @query.parse_count("9223372036854775807"),
+    Some(9223372036854775807L),
+  )
+  assert_eq(@query.parse_count("9223372036854775808"), None)
+  // A leading-zero range collapses to an exact value after parsing.
+  assert_eq(count_comparison("1..01"), "= 1")
+  assert_eq(size_comparison("1kb..1000"), "= 1000")
+}

@@ -173,3 +173,85 @@ test "error positions count UTF-16 code units" {
     err => abort("expected a lex error, got \{err.message()}")
   }
 }
+
+///|
+test "a lone ampersand or pipe is part of a word" {
+  assert_eq(tokens_of("&x"), "'&x' end of query")
+  assert_eq(tokens_of("|x"), "'|x' end of query")
+  assert_eq(tokens_of("&"), "'&' end of query")
+  assert_eq(tokens_of("|"), "'|' end of query")
+  assert_eq(tokens_of("a&&&b"), "'a' AND '&b' end of query")
+  assert_eq(tokens_of("a|||b"), "'a' OR '|b' end of query")
+  assert_eq(tokens_of("&&&"), "AND '&' end of query")
+  assert_eq(tokens_of("|||"), "OR '|' end of query")
+}
+
+///|
+test "escapes also work on reserved characters" {
+  assert_eq(tokens_of("\\:x"), "':x' end of query")
+  assert_eq(tokens_of("a\\:b"), "'a:b' end of query")
+  // Only the escaped colon is literal; the second one starts a field.
+  assert_eq(tokens_of("a\\:b:c"), "'a:b:' 'c' end of query")
+  assert_eq(tokens_of("\\!x"), "'!x' end of query")
+  assert_eq(tokens_of("\\&&"), "'&&' end of query")
+  assert_eq(tokens_of("\\(x\\)"), "'(x)' end of query")
+  assert_eq(tokens_of("\\A\\N\\D"), "'AND' end of query")
+  // A single escaped letter disables operator recognition for the word.
+  assert_eq(tokens_of("A\\ND"), "'AND' end of query")
+}
+
+///|
+test "quotes can start a word but not appear inside one" {
+  assert_eq(tokens_of("\"\""), "'' end of query")
+  assert_eq(tokens_of("\"a\"b"), "'a' 'b' end of query")
+  match lex_error("\"a\"b\"") {
+    @query.Lex(pos, message) => {
+      assert_eq(pos, 4)
+      assert_true(message.contains("inside a word"))
+    }
+    err => abort("expected a lex error, got \{err.message()}")
+  }
+  // A colon directly after a quoted word is not a field separator.
+  match lex_error("\"file\":x") {
+    @query.Lex(pos, _) => assert_eq(pos, 6)
+    err => abort("expected a lex error, got \{err.message()}")
+  }
+}
+
+///|
+test "reserved characters terminate a word without needing spaces" {
+  assert_eq(tokens_of("a(b)"), "'a' '(' 'b' ')' end of query")
+  assert_eq(tokens_of("a=b"), "'a' '=' 'b' end of query")
+  assert_eq(tokens_of("< ="), "'<' '=' end of query")
+  assert_eq(tokens_of("a<b>c"), "'a' '<' 'b' '>' 'c' end of query")
+}
+
+///|
+test "only ASCII whitespace separates tokens" {
+  assert_eq(tokens_of("a\u{0B}b\u{0C}c"), "'a' 'b' 'c' end of query")
+  // U+00A0 and U+2003 are ordinary word bytes.
+  assert_eq(tokens_of("a\u{00A0}b"), "'a\u{00A0}b' end of query")
+  assert_eq(tokens_of("a\u{2003}b"), "'a\u{2003}b' end of query")
+}
+
+///|
+test "a field token can end at a tab or a newline" {
+  assert_eq(tokens_of("file:\t"), "'file:' end of query")
+  assert_eq(tokens_of("file:\n"), "'file:' end of query")
+  assert_eq(tokens_of("file:\r\nx"), "'file:' 'x' end of query")
+}
+
+///|
+test "positions count escaped astral characters correctly" {
+  let tokens = @query.lex("\\🤣 x") catch { err => abort(err.message()) }
+  assert_eq(tokens[0].pos(), 0)
+  assert_eq(tokens[1].pos(), 4)
+  let field = @query.lex("size:>abc") catch { err => abort(err.message()) }
+  assert_eq(field[0].pos(), 0)
+  assert_eq(field[1].pos(), 5)
+  assert_eq(field[2].pos(), 6)
+  match lex_error("🤣\\") {
+    @query.Lex(pos, _) => assert_eq(pos, 2)
+    err => abort("expected a lex error, got \{err.message()}")
+  }
+}

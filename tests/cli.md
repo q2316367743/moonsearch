@@ -112,3 +112,29 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch count 'ext:mp4'
 error: 'count' is not implemented yet
 [2]
 ```
+
+End-to-end indexing against the committed fixture tree:
+
+```mooncram q2316367743/moonsearch
+$ moonx q2316367743/moonsearch/cmd/moonsearch index fixture
+roots: 1
+folders: 2
+files: 3
+bytes: 12
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch index --exclude-hidden -x '*.pdf' --exclude-scope basename fixture
+roots: 1
+folders: 2
+files: 1
+bytes: 5
+skipped: 2
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch index --quiet fixture
+@STDOUT (empty)
+@STDERR (empty)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch index --bogus fixture
+@STDOUT (empty)
+@STDERR (ignore)
+[2]
+```

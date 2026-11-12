@@ -426,3 +426,323 @@ test "the MVP query examples parse end to end" {
     "(and (dm = \"lastweek\") (ext \"mp4\"))",
   )
 }
+
+///|
+test "negation after a modifier keeps the modifier flags" {
+  assert_eq(parsed("file:!x"), "(not (name \"x\" kind=file))")
+  assert_eq(parsed("file:!!x"), "(name \"x\" kind=file)")
+  assert_eq(parsed("case:NOT x"), "(not (name \"x\" case))")
+  assert_eq(parsed("case:!!!x"), "(not (name \"x\" case))")
+}
+
+///|
+test "stray operators after a modifier are skipped" {
+  assert_eq(parsed("case:OR x"), "(name \"x\" case)")
+  assert_eq(parsed("case:AND x"), "(name \"x\" case)")
+  assert_eq(parsed("case:AND"), "*")
+  assert_eq(parsed("case:OR"), "*")
+}
+
+///|
+test "boolean constants fold during construction" {
+  assert_eq(parsed("NOT ()"), "none")
+  assert_eq(parsed("NOT NOT ()"), "*")
+  assert_eq(parsed("() OR a"), "*")
+  assert_eq(parsed("a OR ()"), "*")
+  assert_eq(parsed("() AND a"), "(name \"a\")")
+  assert_eq(parsed("a AND ()"), "(name \"a\")")
+}
+
+///|
+test "compat mode folds malformed fields into the empty set" {
+  assert_eq(parsed_compat("unknown:x OR a"), "(name \"a\")")
+  assert_eq(parsed_compat("unknown:x AND a"), "none")
+  assert_eq(parsed_compat("unknown:x size:>1"), "none")
+  assert_eq(parsed_compat("unknown:>x"), "none")
+  assert_eq(parsed_compat("unknown:=x"), "none")
+  assert_eq(parsed_compat("unknown:"), "none")
+  // Consecutive comparison operators must still be consumed without leaving a
+  // stray token behind.
+  assert_eq(parsed_compat("unknown:==x"), "none")
+}
+
+///|
+test "every modifier without a target is ignored except kind filters" {
+  assert_eq(parsed("regex:"), "*")
+  assert_eq(parsed("noregex:"), "*")
+  assert_eq(parsed("case:"), "*")
+  assert_eq(parsed("nocase:"), "*")
+  assert_eq(parsed("exact:"), "*")
+  assert_eq(parsed("path:"), "*")
+  assert_eq(parsed("nopath:"), "*")
+  assert_eq(parsed("files:"), "(kind file)")
+  assert_eq(parsed("folders:"), "(kind folder)")
+}
+
+///|
+test "modifiers chain and explicit negatives override caller flags" {
+  assert_eq(parsed("regex:^a"), "(name \"^a\" regex)")
+  assert_eq(
+    parsed("case:exact:path:regex:file:x"),
+    "(name \"x\" case exact path regex kind=file)",
+  )
+  assert_eq(
+    parsed_with("noregex:a", @query.Flags::new(regex=true)),
+    "(name \"a\")",
+  )
+  assert_eq(parsed_with("case:a", @query.Flags::new()), "(name \"a\" case)")
+  assert_eq(
+    parsed_with("nocase:a", @query.Flags::new(case_sensitive=true)),
+    "(name \"a\")",
+  )
+}
+
+///|
+test "modifiers on a group stay inside the group" {
+  assert_eq(
+    parsed("case:(a OR b) c"),
+    "(and (or (name \"a\" case) (name \"b\" case)) (name \"c\"))",
+  )
+  assert_eq(
+    parsed("!case:(A || B) c"),
+    "(and (not (or (name \"A\" case) (name \"B\" case))) (name \"c\"))",
+  )
+  assert_eq(parsed("case:(a) nocase:b"), "(and (name \"a\" case) (name \"b\"))")
+}
+
+///|
+test "fields reject values they cannot interpret" {
+  match parse_error("parent:") {
+    @query.BadValue(_, field, value, _) => {
+      assert_eq(field, "parent")
+      assert_eq(value, "")
+    }
+    err => abort("expected a bad value, got \{err.message()}")
+  }
+  match parse_error("parent:>x") {
+    @query.BadValue(pos, field, value, message) => {
+      assert_eq(pos, 8)
+      assert_eq(field, "parent")
+      assert_eq(value, "x")
+      assert_true(message.contains("operator"))
+    }
+    err => abort("expected a bad value, got \{err.message()}")
+  }
+  match parse_error("contenttype:>x") {
+    @query.BadValue(_, field, _, _) => assert_eq(field, "contenttype")
+    err => abort("expected a bad value, got \{err.message()}")
+  }
+  match parse_error("ext:>jpg") {
+    @query.BadValue(_, field, value, message) => {
+      assert_eq(field, "ext")
+      assert_eq(value, "jpg")
+      assert_true(message.contains("operator"))
+    }
+    err => abort("expected a bad value, got \{err.message()}")
+  }
+  match parse_error("empty:>x") {
+    @query.Parse(_, message) => assert_true(message.contains("unexpected"))
+    err => abort("expected a parse error, got \{err.message()}")
+  }
+}
+
+///|
+test "counting and size values cover their numeric edges" {
+  assert_eq(parsed("depth:+3"), "(depth = 3)")
+  assert_eq(parsed("depth:0003"), "(depth = 3)")
+  assert_eq(parsed("depth:>=3"), "(depth >= 3)")
+  assert_eq(parsed("depth:.."), "(depth .. 0 9223372036854775807)")
+  assert_eq(parsed("childcount:3..3"), "(childcount = 3)")
+  assert_eq(parsed("size:.."), "(size .. 0 9223372036854775807)")
+  assert_eq(parsed("size:0005"), "(size = 5)")
+  match parse_error("size:+3") {
+    @query.BadValue(_, field, _, _) => assert_eq(field, "size")
+    err => abort("expected a bad value, got \{err.message()}")
+  }
+  match parse_error("size:9223372036854776kb") {
+    @query.BadValue(_, field, _, _) => assert_eq(field, "size")
+    err => abort("expected a bad value, got \{err.message()}")
+  }
+}
+
+///|
+test "date values cover open, closed, and invalid ranges" {
+  assert_eq(parsed("dm:.."), "(dm ..)")
+  assert_eq(parsed("dm:>=today"), "(dm >= \"today\")")
+  assert_eq(parsed("dm:today..today"), "(dm = \"today\")")
+  match parse_error("dm:..x..y") {
+    @query.BadValue(_, field, _, _) => assert_eq(field, "dm")
+    err => abort("expected a bad value, got \{err.message()}")
+  }
+}
+
+///|
+test "extension lists preserve empty entries" {
+  assert_eq(parsed("ext:jpg;;png"), "(ext \"jpg\" \"\" \"png\")")
+  assert_eq(parsed("ext:;"), "(ext \"\" \"\")")
+  assert_eq(parsed("ext:\"\""), "(ext \"\")")
+  assert_eq(parsed("ext:PDF;TXT"), "(ext \"pdf\" \"txt\")")
+}
+
+///|
+test "field names are ASCII case-insensitive in every spelling" {
+  assert_eq(parsed("SiZe:>1Kb"), "(size > 1000)")
+  assert_eq(parsed("DaTeMoDiFiEd:today"), "(dm = \"today\")")
+  assert_eq(parsed("PARENT:/x"), "(parent \"/x\")")
+  assert_eq(parsed("PARENTS:2"), "(depth = 2)")
+  assert_eq(parsed("ChildFileCount:0"), "(childfilecount = 0)")
+}
+
+///|
+test "describe escapes quotes and backslashes in names" {
+  assert_eq(parsed("a\\\"b"), "(name \"a\\\"b\")")
+  assert_eq(parsed("a\\\\b"), "(name \"a\\\\b\")")
+}
+
+///|
+test "the group depth limit is exactly 256" {
+  let allowed = StringBuilder()
+  for _ in 0..<256 {
+    allowed.write_string("(")
+  }
+  allowed.write_string("x")
+  for _ in 0..<256 {
+    allowed.write_string(")")
+  }
+  assert_eq(parsed(allowed.to_string()), "(name \"x\")")
+
+  let rejected = StringBuilder()
+  for _ in 0..<257 {
+    rejected.write_string("(")
+  }
+  rejected.write_string("x")
+  for _ in 0..<257 {
+    rejected.write_string(")")
+  }
+  match parse_error(rejected.to_string()) {
+    @query.Parse(_, message) => assert_true(message.contains("deeply"))
+    err => abort("expected a nesting error, got \{err.message()}")
+  }
+}
+
+///|
+test "error offsets survive an astral character before the field" {
+  match parse_error("🤣 size:>") {
+    @query.Parse(pos, message) => {
+      assert_eq(pos, 8)
+      assert_true(message.contains("expected a value"))
+    }
+    err => abort("expected a parse error, got \{err.message()}")
+  }
+}
+
+///|
+test "a term exposes its flags and body" {
+  let flags = @query.Flags::new(case_sensitive=true, kind=@query.FilesOnly)
+  let query = @query.parse("ext:pdf", flags~) catch {
+    err => abort(err.message())
+  }
+  match query {
+    @query.Term(term) => {
+      assert_eq(term.flags().describe(), "case kind=file")
+      match term.body() {
+        @query.Extensions(list) => assert_eq(list.length(), 1)
+        _ => abort("expected an extension term")
+      }
+    }
+    _ => abort("expected a single term")
+  }
+}
+
+///|
+test "every value-taking field rejects a missing value" {
+  for
+    input in [
+      "dm:", "contenttype:", "depth:", "childcount:", "childfilecount:", "childfoldercount:",
+    ] {
+    match parse_error(input) {
+      @query.BadValue(_, field, value, _) => {
+        assert_eq(value, "")
+        assert_false(field.is_empty())
+      }
+      err => abort("expected a bad value for \{input}, got \{err.message()}")
+    }
+  }
+  assert_eq(parsed_compat("dm:"), "none")
+  assert_eq(parsed_compat("depth:"), "none")
+}
+
+///|
+test "a group reports the token it found instead of a closing parenthesis" {
+  match parse_error("(a = b)") {
+    @query.Parse(pos, message) => {
+      assert_eq(pos, 3)
+      assert_true(message.contains("expected ')'"))
+      assert_true(message.contains("'='"))
+    }
+    err => abort("expected a parse error, got \{err.message()}")
+  }
+}
+
+///|
+test "unexpected tokens after a modifier are reported at their position" {
+  match parse_error("case:=x") {
+    @query.Parse(pos, message) => {
+      assert_eq(pos, 5)
+      assert_true(message.contains("unexpected '='"))
+    }
+    err => abort("expected a parse error, got \{err.message()}")
+  }
+}
+
+///|
+test "a negated modifier with no target is ignored" {
+  assert_eq(parsed("file:!"), "*")
+  assert_eq(parsed("file:!!"), "*")
+  assert_eq(parsed("case:!"), "*")
+}
+
+///|
+test "compat constants fold from either side of a binary operator" {
+  assert_eq(parsed_compat("a OR unknown:x"), "(name \"a\")")
+  assert_eq(parsed_compat("a AND unknown:x"), "none")
+  assert_eq(parsed_compat("NOT unknown:x"), "*")
+}
+
+///|
+test "binary operators are left-associative" {
+  assert_eq(
+    parsed("a OR b OR c"),
+    "(or (or (name \"a\") (name \"b\")) (name \"c\"))",
+  )
+  assert_eq(
+    parsed("a b c"),
+    "(and (and (name \"a\") (name \"b\")) (name \"c\"))",
+  )
+  assert_eq(
+    parsed("a AND b AND c"),
+    "(and (and (name \"a\") (name \"b\")) (name \"c\"))",
+  )
+}
+
+///|
+test "NOT binds tighter than both binary operators" {
+  assert_eq(parsed("NOT a AND b"), "(and (not (name \"a\")) (name \"b\"))")
+  assert_eq(parsed("NOT a OR b"), "(or (not (name \"a\")) (name \"b\"))")
+  assert_eq(
+    parsed("NOT (a OR b) AND c"),
+    "(and (not (or (name \"a\") (name \"b\"))) (name \"c\"))",
+  )
+}
+
+///|
+test "a modifier inside an OR branch affects only its next primary" {
+  assert_eq(
+    parsed("a OR case:b c"),
+    "(or (name \"a\") (and (name \"b\" case) (name \"c\")))",
+  )
+  assert_eq(
+    parsed("a case:b OR c"),
+    "(or (and (name \"a\") (name \"b\" case)) (name \"c\"))",
+  )
+}

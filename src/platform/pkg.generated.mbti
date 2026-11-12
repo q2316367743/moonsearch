@@ -13,8 +13,11 @@ pub suberror PlatformError {
   Io(String)
 }
 pub fn PlatformError::access_denied(String) -> Self
+pub fn PlatformError::io(String) -> Self
 pub fn PlatformError::message(Self) -> String
+pub fn PlatformError::not_directory(String) -> Self
 pub fn PlatformError::not_found(String) -> Self
+pub fn PlatformError::unsupported(String) -> Self
 
 // Types and methods
 pub(all) struct DirFailure {
