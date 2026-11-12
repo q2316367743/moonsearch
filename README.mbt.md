@@ -9,14 +9,16 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S05 — scan engine and predicates**. `index` and `update` walk real
-> directory trees and build an in-memory `Store` with post-order statistics.
-> `src/query` parses the full field/modifier macro syntax into a typed `Query`
-> tree, and `src/exec` evaluates it against a store with a streaming linear scan:
-> `search --live --root <PATH>` and `count --live --root <PATH>` work end to end.
-> This scan engine is the semantic oracle every later index structure is checked
-> against. The index is not persisted yet and the bitmap engine arrives with S06;
-> `info` remains pending.
+> Status: **S06 — id sets and compressed bitmaps**. `index` and `update` walk
+> real directory trees and build an in-memory `Store` with post-order
+> statistics. `src/query` parses the full field/modifier macro syntax into a
+> typed `Query` tree, and `src/exec` evaluates it against a store with a
+> streaming linear scan: `search --live --root <PATH>` and
+> `count --live --root <PATH>` work end to end. This scan engine is the semantic
+> oracle every later index structure is checked against. `src/ids` now provides
+> the `Ids` set algebra and compressed bitmap containers the index will use. The
+> index is not persisted yet and the bitmap engine still waits for the field
+> indexes (S07/S08); `info` remains pending.
 
 ## Build and run
 
@@ -252,13 +254,46 @@ saving transitions, and tests pin the zone to UTC for determinism.
 
 ### Current CLI surface
 
-The scan engine is the only engine until S06, so `--engine` defaults to `scan`
-and `--engine bitmap` reports that it is not implemented yet. Search output is
-the default full-path-per-line format plus `-n/--limit`; `--sort` (other than
-`name`), `--reverse`, `--folders-first`, `--null`, `--json`, `--format`,
-`--relative-to`, and `--basename` belong to S11 and are rejected explicitly
-rather than silently ignored. `--explain` prints the parsed query and compiled
-plan to stderr; `--stats` adds entry, match, and timing lines.
+The scan engine is still the only selectable engine: the bitmap engine needs the
+field dictionaries and range indexes from S07/S08, so `--engine` defaults to
+`scan` and `--engine bitmap` reports that it is not implemented yet. Search
+output is the default full-path-per-line format plus `-n/--limit`; `--sort`
+(other than `name`), `--reverse`, `--folders-first`, `--null`, `--json`,
+`--format`, `--relative-to`, and `--basename` belong to S11 and are rejected
+explicitly rather than silently ignored. `--explain` prints the parsed query and
+compiled plan to stderr; `--stats` adds entry, match, and timing lines.
+
+## Id sets and compressed bitmaps (S06)
+
+`src/ids` is the set layer the indexed executor will evaluate on. It depends
+only on the core buffer package, so its algebra can be tested with plain arrays
+and checked against an independent membership-mask implementation. See
+[`docs/modules/ids.md`](docs/modules/ids.md) for the full design.
+
+- **`Ids`** — either `Sorted`, a strictly ascending duplicate-free `Int32`
+  array, or `Bitmap`, a compressed bitmap with an O(1) cached cardinality.
+  Sparse results stay arrays; dense results become bitmaps.
+- **Shape thresholds** — a set becomes a bitmap when its cardinality exceeds
+  4096 or, once the index size is known, when `cardinality * 32 > total`.
+  Exactly 4096 ids and exactly 1/32 density stay sorted; `normalize(total)`
+  re-applies the density rule after a range query.
+- **`Bitmap` / `Container`** — ids are split into 65536-id blocks. A block is an
+  ascending `UInt16` array while it holds at most 4096 ids and a 1024-word
+  `UInt64` bitmap above that; both forms occupy 8 KiB at the threshold. Inserts
+  and removes flip the container, and emptied blocks are trimmed.
+- **Set algebra** — bitmap×bitmap uses word-parallel operations, sorted×sorted
+  merges, and mixed pairs probe the bitmap with the smaller sorted side. A
+  sorted side larger than 4096 is converted first. `Ids::filter` narrows a
+  candidate set and re-normalizes the result.
+- **Serialization** — the plan's `IdsRef` layout: bitmap block streams with
+  explicit container tags, or delta-LEB128 sorted ids. Decoding validates tags,
+  block order, container contents, cardinality, and trailing bytes, and returns
+  `IdsError` instead of panicking on corrupted input.
+
+The bitmap engine is not wired into the CLI yet: `--engine bitmap` still reports
+that it is not implemented, and the default remains the S05 scan engine. S07
+will build the field dictionaries on top of `Bitmap`, S08 the range indexes on
+top of `Ids::Sorted`, and S10 will compile queries into these sets.
 
 ## Exit codes
 
@@ -288,6 +323,7 @@ src/platform/      ScanSource trait and the async/fs backend
 src/index/         exclude rules, builder, recursive scanner, in-memory store
 src/query/         lexer, parser, query AST, flags, values, macros
 src/exec/          scan engine: compiled predicates, exec_scan, exec_count
+src/ids/           Ids set algebra, compressed bitmap containers, serialization
 src/cli/           command specification, invocation, index/search commands
 src/               public facade
 cmd/moonsearch/    executable entry point
@@ -295,8 +331,8 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S05; later steps add bitmap sets, dictionaries, range indexes, trigram postings,
-execution plans, persistence, and benchmarks.
+S06; later steps add field dictionaries, range indexes, trigram postings,
+execution plans, persistence, and benchmarks. Module notes live in `docs/modules/`.
 
 ## License
 

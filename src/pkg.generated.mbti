@@ -5,6 +5,7 @@ import {
   "moonbitlang/x/time",
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/exec",
+  "q2316367743/moonsearch/src/ids",
   "q2316367743/moonsearch/src/index",
   "q2316367743/moonsearch/src/platform",
   "q2316367743/moonsearch/src/query",
@@ -12,6 +13,20 @@ import {
 }
 
 // Values
+pub const BITMAP_BLOCK_MASK : Int32 = 0xFFFF
+
+pub const BITMAP_BLOCK_SHIFT : Int32 = 16
+
+pub const BITMAP_BLOCK_SIZE : Int32 = 65536
+
+pub const BITMAP_MAX_BLOCK : Int32 = 32767
+
+pub const BITMAP_WORDS : Int32 = 1024
+
+pub const BITMAP_WORD_BITS : Int32 = 64
+
+pub const CONTAINER_ARRAY_MAX : Int32 = 4096
+
 pub const ENTRY_FLAG_HIDDEN : UInt16 = 0x0001
 
 pub const ENTRY_FLAG_SPECIAL : UInt16 = 0x0004
@@ -25,6 +40,10 @@ pub const EXIT_INTERRUPTED : Int32 = 130
 pub const EXIT_NO_MATCH : Int32 = 1
 
 pub const EXIT_OK : Int32 = 0
+
+pub const IDS_DENSITY_DIVISOR : Int32 = 32
+
+pub const IDS_SORTED_MAX : Int32 = 4096
 
 pub const MAX_NAME_LEN : Int32 = 65535
 
@@ -125,6 +144,8 @@ pub fn system_source() -> @platform.SystemScanSource
 // Types and methods
 
 // Type aliases
+pub using @ids {type Bitmap}
+
 pub using @index {type Builder}
 
 pub using @query {type CmpOp}
@@ -158,6 +179,10 @@ pub using @index {type ExcludeTarget}
 pub using @query {type Flags}
 
 pub type FolderId = Int32
+
+pub using @ids {type Ids}
+
+pub using @ids {type IdsError}
 
 pub using @index {type IndexError}
 

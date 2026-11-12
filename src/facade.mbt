@@ -5,7 +5,9 @@
 /// precedence-climbing parser, the typed `Query` tree, term flags, value
 /// parsing, and macro expansion. S05 adds the scan engine that evaluates a
 /// compiled query against a store, including date resolution in the local time
-/// zone. Later steps add the bitmap engine and persistence.
+/// zone. S06 adds the `Ids` set algebra and the compressed bitmap containers
+/// that the bitmap engine will evaluate on. Later steps add the field indexes
+/// and persistence.
 pub using @core {
   VERSION,
   VERSION_TEXT,
@@ -28,6 +30,22 @@ pub using @core {
   type NameRef,
   type RootInfo,
   type Store,
+}
+
+///|
+pub using @ids {
+  BITMAP_BLOCK_SIZE,
+  BITMAP_BLOCK_SHIFT,
+  BITMAP_BLOCK_MASK,
+  BITMAP_WORDS,
+  BITMAP_WORD_BITS,
+  BITMAP_MAX_BLOCK,
+  CONTAINER_ARRAY_MAX,
+  IDS_SORTED_MAX,
+  IDS_DENSITY_DIVISOR,
+  type Bitmap,
+  type Ids,
+  type IdsError,
 }
 
 ///|

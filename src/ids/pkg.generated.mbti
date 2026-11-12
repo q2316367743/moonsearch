@@ -1,0 +1,74 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/ids"
+
+// Values
+pub const BITMAP_BLOCK_MASK : Int32 = 0xFFFF
+
+pub const BITMAP_BLOCK_SHIFT : Int32 = 16
+
+pub const BITMAP_BLOCK_SIZE : Int32 = 65536
+
+pub const BITMAP_MAX_BLOCK : Int32 = 32767
+
+pub const BITMAP_WORDS : Int32 = 1024
+
+pub const BITMAP_WORD_BITS : Int32 = 64
+
+pub const CONTAINER_ARRAY_MAX : Int32 = 4096
+
+pub const IDS_DENSITY_DIVISOR : Int32 = 32
+
+pub const IDS_SORTED_MAX : Int32 = 4096
+
+// Errors
+pub suberror IdsError {
+  Truncated
+  Corrupt(String)
+}
+pub fn IdsError::message(Self) -> String
+
+// Types and methods
+pub struct Bitmap {
+  // private fields
+}
+pub fn Bitmap::add(Self, Int32) -> Unit
+pub fn Bitmap::cardinality(Self) -> Int32
+pub fn Bitmap::clone(Self) -> Self
+pub fn Bitmap::contains(Self, Int32) -> Bool
+pub fn Bitmap::difference(Self, Self) -> Self
+pub fn Bitmap::from_ids(Array[Int32]) -> Self
+pub fn Bitmap::intersect(Self, Self) -> Self
+pub fn Bitmap::is_empty(Self) -> Bool
+pub fn Bitmap::new() -> Self
+pub fn Bitmap::remove(Self, Int32) -> Unit
+pub fn Bitmap::to_sorted_ids(Self) -> Array[Int32]
+pub fn Bitmap::union(Self, Self) -> Self
+
+pub enum Container {
+  Array(Array[UInt16])
+  Bits(Array[UInt64])
+}
+
+pub enum Ids {
+  Bitmap(Bitmap)
+  Sorted(Array[Int32])
+}
+pub fn Ids::cardinality(Self) -> Int32
+pub fn Ids::contains(Self, Int32) -> Bool
+pub fn Ids::difference(Self, Self) -> Self
+pub fn Ids::empty() -> Self
+pub fn Ids::filter(Self, (Int32) -> Bool) -> Self
+pub fn Ids::from_bitmap(Bitmap) -> Self
+pub fn Ids::from_bytes(BytesView) -> Self raise IdsError
+pub fn Ids::from_sorted(Array[Int32], total? : Int32) -> Self
+pub fn Ids::intersect(Self, Self) -> Self
+pub fn Ids::is_empty(Self) -> Bool
+pub fn Ids::normalize(Self, Int32) -> Self
+pub fn Ids::to_bitmap(Self) -> Bitmap
+pub fn Ids::to_bytes(Self) -> Bytes
+pub fn Ids::to_sorted_ids(Self) -> Array[Int32]
+pub fn Ids::union(Self, Self) -> Self
+
+// Type aliases
+
+// Traits
