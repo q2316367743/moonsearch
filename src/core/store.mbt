@@ -72,6 +72,38 @@ pub fn Store::entry_count(self : Store) -> Int32 {
 }
 
 ///|
+/// Map an entry reference into the store-wide id space.
+///
+/// Folders occupy `0 .. folder_count - 1` and files continue from there, so the
+/// result is unique across both arrays. Out-of-range references are not checked;
+/// `entry_at` is the validating reverse direction.
+pub fn Store::global_id(self : Store, entry : EntryRef) -> GlobalId {
+  match entry.kind {
+    Folder => entry.id
+    File => self.folders.length() + entry.id
+  }
+}
+
+///|
+/// Resolve a store-wide id back to the folder or file it names.
+///
+/// Returns `None` for negative ids and ids at or past `entry_count`, which is
+/// what a corrupted posting or bitmap must degrade to instead of indexing out
+/// of bounds.
+pub fn Store::entry_at(self : Store, id : GlobalId) -> EntryRef? {
+  let folder_count = self.folders.length()
+  if id < 0 {
+    None
+  } else if id < folder_count {
+    Some(EntryRef::new(Folder, id))
+  } else if id < folder_count + self.files.length() {
+    Some(EntryRef::new(File, id - folder_count))
+  } else {
+    None
+  }
+}
+
+///|
 /// Unix time at which the store was built.
 pub fn Store::built_at(self : Store) -> Int64 {
   self.built_at

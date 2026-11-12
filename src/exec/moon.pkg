@@ -8,5 +8,6 @@ import {
 }
 
 import {
+  "q2316367743/moonsearch/src/ids",
   "q2316367743/moonsearch/src/index",
 } for "test"

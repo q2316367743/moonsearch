@@ -1,6 +1,10 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "q2316367743/moonsearch/src/query"
 
+import {
+  "q2316367743/moonsearch/src/util",
+}
+
 // Values
 pub fn bad_regex(StringView) -> QueryError
 
@@ -71,15 +75,17 @@ pub(all) struct Flags {
   search_path : Bool
   regex : Bool
   kind : KindFilter
+  visibility : VisibilityFilter
 }
 pub fn Flags::describe(Self) -> String
 pub fn Flags::is_default(Self) -> Bool
-pub fn Flags::new(case_sensitive? : Bool, exact? : Bool, search_path? : Bool, regex? : Bool, kind? : KindFilter) -> Self
+pub fn Flags::new(case_sensitive? : Bool, exact? : Bool, search_path? : Bool, regex? : Bool, kind? : KindFilter, visibility? : VisibilityFilter) -> Self
 pub fn Flags::with_case_sensitive(Self, Bool) -> Self
 pub fn Flags::with_exact(Self, Bool) -> Self
 pub fn Flags::with_kind(Self, KindFilter) -> Self
 pub fn Flags::with_regex(Self, Bool) -> Self
 pub fn Flags::with_search_path(Self, Bool) -> Self
+pub fn Flags::with_visibility(Self, VisibilityFilter) -> Self
 
 pub(all) enum KindFilter {
   AnyKind
@@ -125,6 +131,8 @@ pub fn Term::new(TermBody, flags? : Flags) -> Self
 pub enum TermBody {
   Name(String)
   Kind(KindFilter)
+  Visibility(VisibilityFilter)
+  TypeCategory(@util.TypeCategory)
   Extensions(Array[String])
   Size(Comparison)
   Modified(DateComparison)
@@ -162,6 +170,13 @@ pub(all) enum TokenKind {
 pub fn TokenKind::describe(Self) -> String
 pub fn TokenKind::is_binary_operator(Self) -> Bool
 pub fn TokenKind::starts_primary(Self) -> Bool
+
+pub(all) enum VisibilityFilter {
+  AnyVisibility
+  HiddenOnly
+  VisibleOnly
+}
+pub fn VisibilityFilter::describe(Self) -> String
 
 // Type aliases
 

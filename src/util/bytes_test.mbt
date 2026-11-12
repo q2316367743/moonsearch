@@ -140,6 +140,22 @@ test "folded search and equality" {
 }
 
 ///|
+test "extension extraction handles multi-dot, hidden, and trailing dots" {
+  assert_eq(@util.extension_of(b"a.txt"[:]), b"txt"[:])
+  assert_eq(@util.extension_of(b"archive.tar.gz"[:]), b"gz"[:])
+  assert_eq(@util.extension_of(b"UPPER.PDF"[:]), b"PDF"[:])
+  // A hidden file has no extension even if it contains a dot.
+  assert_eq(@util.extension_of(b".bashrc"[:]), b""[:])
+  assert_eq(@util.extension_of(b".config.json"[:]), b""[:])
+  // A trailing dot does not start an extension.
+  assert_eq(@util.extension_of(b"trailing."[0:9]), b""[:])
+  assert_eq(@util.extension_of(b"noext"[0:5]), b""[:])
+  assert_eq(@util.extension_of(b""[0:0]), b""[:])
+  // Bytes after the dot are preserved, including non-ASCII ones.
+  assert_eq(@util.extension_of(b"a.\xC3\x89"[0:4]), b"\xC3\x89"[0:2])
+}
+
+///|
 test "glob meta detection skips escaped metacharacters" {
   assert_true(@util.has_glob_meta(b"*.txt"[0:5]))
   assert_true(@util.has_glob_meta(b"a?b"[0:3]))

@@ -74,7 +74,7 @@ fn match_content_type(
   if entry.kind is @core.Folder {
     return false
   }
-  let mime = mime_of_extension(extension_of(store.entry_name(entry)))
+  let mime = mime_of_extension(@util.extension_of(store.entry_name(entry)))
   if value.contains_char('/') {
     mime == value
   } else {

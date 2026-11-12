@@ -8,6 +8,15 @@ pub type EntryId = Int32
 pub type FolderId = Int32
 
 ///|
+/// Store-wide id of an entry.
+///
+/// Folder ids keep their value and file ids are shifted past the last folder,
+/// so every entry in a store occupies a distinct non-negative number. The
+/// bitmap engine and every field dictionary use this space; `FolderId` and
+/// `EntryId` stay local to their arrays.
+pub type GlobalId = Int32
+
+///|
 /// Parent value used by root folder entries.
 pub const NO_PARENT : FolderId = -1
 

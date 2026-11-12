@@ -183,6 +183,49 @@ test "multiple roots keep their order and paths" {
 }
 
 ///|
+test "global ids put folders before files and round-trip" {
+  let store = fixture_store()
+  assert_eq(store.global_id(@core.EntryRef::new(@core.Folder, 0)), 0)
+  assert_eq(store.global_id(@core.EntryRef::new(@core.Folder, 2)), 2)
+  // The first file follows the last folder: fixture_store has three folders.
+  assert_eq(store.global_id(@core.EntryRef::new(@core.File, 0)), 3)
+  assert_eq(store.global_id(@core.EntryRef::new(@core.File, 1)), 4)
+  let seen : Array[Bool] = []
+  for _ in 0..<store.entry_count() {
+    seen.push(false)
+  }
+  for entry in store.entries_in_order() {
+    let id = store.global_id(entry)
+    assert_true(id >= 0 && id < store.entry_count())
+    assert_false(seen[id])
+    seen[id] = true
+    match store.entry_at(id) {
+      Some(back) => {
+        match (back.kind, entry.kind) {
+          (@core.Folder, @core.Folder) | (@core.File, @core.File) => ()
+          _ => abort("global id \{id} changed the entry kind")
+        }
+        assert_eq(back.id, entry.id)
+      }
+      None => abort("global id \{id} did not resolve")
+    }
+  }
+  for id in 0..<store.entry_count() {
+    assert_true(seen[id])
+  }
+}
+
+///|
+test "entry_at rejects ids outside the store" {
+  let store = fixture_store()
+  assert_true(store.entry_at(-1) is None)
+  assert_true(store.entry_at(5) is None)
+  let last = store.entry_at(4).unwrap()
+  assert_true(last.kind is @core.File)
+  assert_eq(last.id, 1)
+}
+
+///|
 test "a file without a parent uses its own name as path" {
   let names = @core.NamePool::new()
   let orphan = names.add(b"orphan"[:])

@@ -124,6 +124,7 @@ fn summary_of(report : @index.ScanReport) -> String {
 fn diagnostics_of(
   invocation : Invocation,
   report : @index.ScanReport,
+  dict : @index.Dict,
   elapsed_ms : Int64,
 ) -> String {
   let matches = invocation.matches
@@ -146,6 +147,9 @@ fn diagnostics_of(
       "names: \{report.store.name_count()} names, \{report.store.name_bytes()} bytes\n",
     )
     out.write_string(
+      "dict: \{dict.extension_count()} extensions, \{dict.type_category_count()} categories, \{dict.hidden().cardinality()} hidden\n",
+    )
+    out.write_string(
       "skipped: hidden=\{report.skipped_hidden} excluded=\{report.skipped_excluded} mount=\{report.skipped_mount}\n",
     )
     out.write_string("issues: \{report.issues.length()}\n")
@@ -166,9 +170,9 @@ fn trim_trailing_newline(text : String) -> String {
 ///|
 /// Run `index` or `update`.
 ///
-/// S03 builds the store in memory only; writing it to disk arrives with the
-/// persistence step. The command's job here is to prove that scanning,
-/// filtering, and statistics are correct end to end.
+/// The store lives in memory until the persistence step; S07 materializes the
+/// field dictionary as part of the build even though nothing consumes it yet.
+/// Writing both to disk arrives with S12.
 async fn run_index(invocation : Invocation) -> CliResult {
   let config = match scan_config_of(invocation) {
     Ok(config) => config
@@ -184,11 +188,14 @@ async fn run_index(invocation : Invocation) -> CliResult {
   match outcome {
     Err(message) => Failure(message)
     Ok(report) => {
+      // Materialize the dictionary as part of the index build; S10 evaluates
+      // queries on it and S12 persists it.
+      let dict = @index.Dict::build(report.store)
       let quiet = flag_set(invocation.matches, "quiet")
       let mut diagnostics = if quiet {
         ""
       } else {
-        diagnostics_of(invocation, report, elapsed_ms)
+        diagnostics_of(invocation, report, dict, elapsed_ms)
       }
       if flag_set(invocation.matches, "one-file-system") &&
         !report.device_ids_available {

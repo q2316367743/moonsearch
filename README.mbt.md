@@ -9,16 +9,20 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S06 — id sets and compressed bitmaps**. `index` and `update` walk
-> real directory trees and build an in-memory `Store` with post-order
+> Status: **S07 — field dictionaries and bitmap fields**. `index` and `update`
+> walk real directory trees and build an in-memory `Store` with post-order
 > statistics. `src/query` parses the full field/modifier macro syntax into a
 > typed `Query` tree, and `src/exec` evaluates it against a store with a
 > streaming linear scan: `search --live --root <PATH>` and
 > `count --live --root <PATH>` work end to end. This scan engine is the semantic
-> oracle every later index structure is checked against. `src/ids` now provides
-> the `Ids` set algebra and compressed bitmap containers the index will use. The
-> index is not persisted yet and the bitmap engine still waits for the field
-> indexes (S07/S08); `info` remains pending.
+> oracle every later index structure is checked against. Every entry now has one
+> store-wide id, and `src/index` builds a `Dict` over it: extension buckets,
+> `files_all`/`folders_all`, hidden/visible, root subtrees, and the built-in
+> category macros (`app:`, `archive:`, `audio:`, `doc:`, `pic:`, `video:`).
+> Queries can use `hidden:` / `nohidden:` and the category macros on the scan
+> engine, and each dictionary set is cross-checked against it. The index is still
+> in memory only; range indexes (S08), the query compiler (S10), and persistence
+> (S12) come next.
 
 ## Build and run
 
@@ -138,8 +142,9 @@ files: 3
 bytes: 6
 ```
 
-`skipped:` and `issues:` lines appear when non-zero. `--stats` adds timing and
-name-pool sizes to stderr. Until S12 the store exists only for the duration of
+`skipped:` and `issues:` lines appear when non-zero. `--stats` adds timing,
+name-pool sizes, and the dictionary shape (extension count, category count,
+hidden entries) to stderr. Until S12 the store exists only for the duration of
 the command; nothing is written to `--database` yet.
 
 ### Scanner backend limits
@@ -168,15 +173,21 @@ by the scan engine in S05; this layer only fixes the language.
   consecutive `NOT`s cancel in pairs, and `--compat` turns an unknown field, a
   malformed value, or a stray `)` into an empty set instead of an error.
 - **AST** — `Query { MatchAll, MatchNone, Term, And, Or, Not }` over
-  `TermBody { Name, Kind, Extensions, Size, Modified, Depth, ChildCount,
-  ChildFileCount, ChildFolderCount, Parent, Empty, ContentType }`. `AND` and
-  `OR` fold their neutral elements while the tree is built.
+  `TermBody { Name, Kind, Visibility, TypeCategory, Extensions, Size, Modified,
+  Depth, ChildCount, ChildFileCount, ChildFolderCount, Parent, Empty,
+  ContentType }`. `AND` and `OR` fold their neutral elements while the tree is
+  built.
 - **Modifiers** — `case:`/`nocase:`, `exact:`, `file:`/`files:`,
-  `folder:`/`folders:`, `path:`/`nopath:`, and `regex:`/`noregex:` are prefix
-  modifiers scoped to one following term or group. `file:(a OR b)` applies to
-  both sides; `file:a OR b` does not leak past `a`. A standalone `file:` or
-  `folder:` becomes a `Kind` term, which is also how the CLI's `--type` option
-  filters an empty query.
+  `folder:`/`folders:`, `hidden:`, `nohidden:`/`visible:`, `path:`/`nopath:`,
+  and `regex:`/`noregex:` are prefix modifiers scoped to one following term or
+  group. `file:(a OR b)` applies to both sides; `file:a OR b` does not leak past
+  `a`. A standalone `file:`, `folder:`, `hidden:`, or `nohidden:` becomes a
+  `Kind`/`Visibility` term, which is also how the CLI's `--type` option filters
+  an empty query.
+- **Built-in categories** — `app:`, `archive:`, `audio:`, `doc:`, `pic:`, and
+  `video:` parse to a `TypeCategory` term instead of expanding to an `ext:`
+  list. The field dictionary materializes each category as one set, while the
+  scan engine matches the same extension list directly.
 - **Term heuristics** — a needle containing `/` searches the full path, and a
   needle containing a non-ASCII uppercase letter becomes case-sensitive, unless
   the matching modifier was written explicitly.
@@ -187,8 +198,9 @@ by the scan engine in S05; this layer only fixes the language.
   zone.
 - **Macros** (`Macros`, `Macro`) — named query fragments expanded on `name:`,
   looked up ASCII case-insensitively. Expansion uses an independent parser and
-  reports direct and indirect cycles. The built-in category macros are
-  materialized with the dictionary in S07.
+  reports direct and indirect cycles. A user macro overrides the built-in
+  category of the same name. The built-in categories are not text macros: they
+  stay as `TypeCategory` terms and are materialized by the dictionary.
 
 `Query::describe()` renders a compact, stable tree, which the parser tests use
 for assertions:
@@ -255,8 +267,8 @@ saving transitions, and tests pin the zone to UTC for determinism.
 ### Current CLI surface
 
 The scan engine is still the only selectable engine: the bitmap engine needs the
-field dictionaries and range indexes from S07/S08, so `--engine` defaults to
-`scan` and `--engine bitmap` reports that it is not implemented yet. Search
+range indexes from S08 and the query compiler from S10, so `--engine` defaults
+to `scan` and `--engine bitmap` reports that it is not implemented yet. Search
 output is the default full-path-per-line format plus `-n/--limit`; `--sort`
 (other than `name`), `--reverse`, `--folders-first`, `--null`, `--json`,
 `--format`, `--relative-to`, and `--basename` belong to S11 and are rejected
@@ -291,9 +303,41 @@ and checked against an independent membership-mask implementation. See
   `IdsError` instead of panicking on corrupted input.
 
 The bitmap engine is not wired into the CLI yet: `--engine bitmap` still reports
-that it is not implemented, and the default remains the S05 scan engine. S07
-will build the field dictionaries on top of `Bitmap`, S08 the range indexes on
-top of `Ids::Sorted`, and S10 will compile queries into these sets.
+that it is not implemented, and the default remains the S05 scan engine. S08
+builds the range indexes on top of `Ids::Sorted`, and S10 compiles queries into
+these sets.
+
+## Field dictionary (S07)
+
+`src/index/dict.mbt` builds the low-cardinality field dictionary after the scan.
+It is the first real consumer of `Ids` and the source of candidate sets the
+indexed executor will use in S10.
+
+- **One id space** — `Store::global_id` numbers folders `0 .. folder_count - 1`
+  and files from `folder_count` upward. Every dictionary set uses it, so
+  `files_all ∪ folders_all` and `ext:pdf OR folder:docs` are ordinary set
+  algebra. `Store::entry_at` is the validating reverse mapping.
+- **`Dict`** — built once from an immutable store:
+  - `extensions` — one bucket per ASCII-folded extension, sorted by bytes; the
+    empty extension is a real bucket for `ext:` with no extension;
+  - `files_all`, `folders_all`, `all`, `hidden`, `visible`;
+  - `roots` — one subtree set per configured root, in `Store::roots()` order;
+  - `categories` — one materialized set per built-in category, so `pic:` costs
+    an array index rather than a per-query union.
+- **Shared rules** — `util.extension_of` is the only extension extractor;
+  `util.TypeCategory::extensions` is the only category data. The scan predicate
+  and the dictionary therefore cannot disagree about which file is a `pdf` or a
+  `pic`.
+- **Cross-check** — `exec/dict_compat_test.mbt` expands each dictionary set back
+  to paths and compares it with the S05 scan engine for `file:`, `folder:`,
+  `hidden:`, `nohidden:`, `file:hidden:`, `folder:hidden:`, `ext:`, the empty
+  extension, and all six built-in macros.
+- **CLI** — `index` and `update` materialize the dictionary as part of the
+  build. `--stats` also prints its shape:
+  `dict: <extensions> extensions, 6 categories, <hidden> hidden`.
+
+The dictionary is not persisted yet; S12 writes it as the `DICT` section. Until
+S10 the scan engine remains the only query path.
 
 ## Exit codes
 
@@ -317,11 +361,11 @@ moon testcli test tests/cli.md --target native
 Layout:
 
 ```text
-src/util/          byte helpers, natural path ordering, glob/date parsing
-src/core/          version, exit codes, name pool, entry/store model, canonical order
+src/util/          byte helpers, extension/category rules, path/glob/date parsing
+src/core/          version, exit codes, name pool, entry/store model, global ids
 src/platform/      ScanSource trait and the async/fs backend
-src/index/         exclude rules, builder, recursive scanner, in-memory store
-src/query/         lexer, parser, query AST, flags, values, macros
+src/index/         excludes, builder, scanner, in-memory store, field dictionary
+src/query/         lexer, parser, query AST, flags, values, macros, categories
 src/exec/          scan engine: compiled predicates, exec_scan, exec_count
 src/ids/           Ids set algebra, compressed bitmap containers, serialization
 src/cli/           command specification, invocation, index/search commands
@@ -331,8 +375,8 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S06; later steps add field dictionaries, range indexes, trigram postings,
-execution plans, persistence, and benchmarks. Module notes live in `docs/modules/`.
+S07; later steps add range indexes, trigram postings, execution plans,
+persistence, and benchmarks. Module notes live in `docs/modules/`.
 
 ## License
 

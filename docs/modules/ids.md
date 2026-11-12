@@ -9,8 +9,9 @@
 - 提供集合代数：交、并、差、过滤、基数、成员判断。
 - 提供确定性序列化与带边界校验的反序列化，为 S12 的数据库 section 做准备。
 
-id 空间是 `Int32`，非负；文件夹 id 与文件 id 在 S07 之后会映射到同一个位图 id
-空间（S06 本身只处理裸 id，不关心条目类型）。
+id 空间是 `Int32`，非负。S06 本身只处理裸 id，不关心条目类型；S07 起所有集合使用
+`core.GlobalId`：文件夹占 `0 .. folder_count - 1`，文件从 `folder_count` 开始，
+详见 [core](core.md) 与 [index](index.md)。
 
 ## 文件
 
@@ -151,9 +152,10 @@ sorted: len 个无符号 LEB128 增量；首个值为绝对 id，后续为与前
 - 序列化往返（空集、小 Sorted、稠密 Bits、跨块 mixed），编码稳定性；
 - 损坏输入：截断、未知 tag、未知容器、基数不符、非升序、尾随字节、Int32 溢出。
 
-## 尚未接入
+## 接入状态
 
-S06 只提供库层。CLI 的 `--engine bitmap` 仍然报“未实现”，因为位图执行器需要
-S07 的字段字典与 S08 的范围索引作为候选集来源；S10 再把 `Query` 编译到这些集合上。
-S07 将使用 `Bitmap`/`Ids` 存储 `ext`、`kind`、`hidden`、`root` 和 `TypeCat` 位图，
-S08 将把范围查询结果构造成 `Ids::Sorted`，并按总条目数调用 `normalize`。
+S07 已把 `Ids` 用作字段字典 `index::Dict` 的存储：`ext`、`files_all`/`folders_all`、
+`hidden`/`visible`、`root`、`TypeCat` 都是 `Ids`，构建时按总条目数调用
+`normalize(total)` 选择形态。CLI 的 `--engine bitmap` 仍然报“未实现”，因为位图执行器
+还需要 S08 的范围索引，并由 S10 把 `Query` 编译到这些集合上。S08 将把范围查询结果
+构造成 `Ids::Sorted`。

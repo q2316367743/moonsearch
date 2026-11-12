@@ -16,9 +16,10 @@ priv enum ScanExpr {
 }
 
 ///|
-/// One leaf predicate plus the kind filter that applies to it.
+/// One leaf predicate plus the kind and visibility filters that apply to it.
 priv struct ScanTerm {
   kind : @query.KindFilter
+  visibility : @query.VisibilityFilter
   body : ScanTest
 }
 
@@ -27,6 +28,10 @@ priv struct ScanTerm {
 priv enum ScanTest {
   Name(NameMatcher)
   Kind(@query.KindFilter)
+  Visibility(@query.VisibilityFilter)
+  /// A built-in category macro together with its extension list, prepared once
+  /// so evaluation does not rebuild the list per entry.
+  Category(@util.TypeCategory, Array[Bytes])
   Extensions(Array[Bytes])
   Size(@query.Comparison)
   Depth(@query.Comparison)
@@ -111,6 +116,9 @@ fn compile_term(
   let body = match term.body() {
     @query.Name(text) => ScanTest::Name(compile_name(text, flags))
     @query.Kind(kind) => ScanTest::Kind(kind)
+    @query.Visibility(filter) => ScanTest::Visibility(filter)
+    @query.TypeCategory(category) =>
+      ScanTest::Category(category, category_extensions(category))
     @query.Extensions(list) => {
       let extensions : Array[Bytes] = []
       for extension in list {
@@ -130,7 +138,17 @@ fn compile_term(
     @query.Empty => ScanTest::Empty
     @query.ContentType(text) => ScanTest::ContentType(text)
   }
-  { kind: flags.kind, body, }
+  { kind: flags.kind, visibility: flags.visibility, body, }
+}
+
+///|
+/// Encode a category's extension list once for the scan predicate.
+fn category_extensions(category : @util.TypeCategory) -> Array[Bytes] {
+  let extensions : Array[Bytes] = []
+  for extension in category.extensions() {
+    extensions.push(@utf8.encode(extension))
+  }
+  extensions
 }
 
 ///|
@@ -283,6 +301,8 @@ fn explain_term(term : ScanTerm) -> String {
           "(regex \{quote_bytes(matcher.needle)} \{matcher_flags(matcher)})"
       }
     Kind(kind) => "(kind \{kind.describe()})"
+    Visibility(filter) => "(visibility \{filter.describe()})"
+    Category(category, _) => "(type \{category.name()})"
     Extensions(list) => {
       let parts : Array[String] = []
       for extension in list {
@@ -301,10 +321,17 @@ fn explain_term(term : ScanTerm) -> String {
     Empty => "(empty)"
     ContentType(text) => "(contenttype \{quote_text(text)})"
   }
-  if term.kind is @query.AnyKind {
+  let prefix : Array[String] = []
+  if !(term.kind is @query.AnyKind) {
+    prefix.push(term.kind.describe())
+  }
+  if !(term.visibility is @query.AnyVisibility) {
+    prefix.push(term.visibility.describe())
+  }
+  if prefix.is_empty() {
     body
   } else {
-    "(\{term.kind.describe()} \{body})"
+    "(\{prefix.join(" ")} \{body})"
   }
 }
 

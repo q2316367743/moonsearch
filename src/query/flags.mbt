@@ -21,6 +21,29 @@ pub fn KindFilter::describe(self : KindFilter) -> String {
 }
 
 ///|
+/// Which entries a term is allowed to match by visibility.
+///
+/// `AnyVisibility` is the default. `hidden:` and `nohidden:` narrow a term or a
+/// parenthesized group, mirroring the `file:` / `folder:` kind modifiers. The
+/// field dictionary stores the hidden entries as one bitmap, so the indexed
+/// engine can turn the filter into an intersection or a difference.
+pub(all) enum VisibilityFilter {
+  AnyVisibility
+  HiddenOnly
+  VisibleOnly
+}
+
+///|
+/// Canonical text of a visibility filter, used by `describe` and diagnostics.
+pub fn VisibilityFilter::describe(self : VisibilityFilter) -> String {
+  match self {
+    AnyVisibility => "any"
+    HiddenOnly => "hidden"
+    VisibleOnly => "visible"
+  }
+}
+
+///|
 /// Term-level matching options.
 ///
 /// The parser starts from the flags supplied by the caller (the CLI's
@@ -43,19 +66,21 @@ pub(all) struct Flags {
   search_path : Bool
   regex : Bool
   kind : KindFilter
+  visibility : VisibilityFilter
 }
 
 ///|
 /// Build a flag set, defaulting to case-insensitive substring search over
-/// names of any kind.
+/// names of any kind and visibility.
 pub fn Flags::new(
   case_sensitive~ : Bool = false,
   exact~ : Bool = false,
   search_path~ : Bool = false,
   regex~ : Bool = false,
   kind~ : KindFilter = AnyKind,
+  visibility~ : VisibilityFilter = AnyVisibility,
 ) -> Flags {
-  { case_sensitive, exact, search_path, regex, kind, }
+  { case_sensitive, exact, search_path, regex, kind, visibility, }
 }
 
 ///|
@@ -89,13 +114,20 @@ pub fn Flags::with_kind(self : Flags, value : KindFilter) -> Flags {
 }
 
 ///|
+/// Copy with a different visibility filter.
+pub fn Flags::with_visibility(self : Flags, value : VisibilityFilter) -> Flags {
+  { ..self, visibility: value, }
+}
+
+///|
 /// Whether every flag is at its default value.
 pub fn Flags::is_default(self : Flags) -> Bool {
   !self.case_sensitive &&
   !self.exact &&
   !self.search_path &&
   !self.regex &&
-  self.kind is AnyKind
+  self.kind is AnyKind &&
+  self.visibility is AnyVisibility
 }
 
 ///|
@@ -119,6 +151,9 @@ pub fn Flags::describe(self : Flags) -> String {
   }
   if !(self.kind is AnyKind) {
     parts.push("kind=\{self.kind.describe()}")
+  }
+  if !(self.visibility is AnyVisibility) {
+    parts.push(self.visibility.describe())
   }
   parts.join(" ")
 }

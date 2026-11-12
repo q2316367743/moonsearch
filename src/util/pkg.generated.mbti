@@ -26,6 +26,8 @@ pub fn eq_bytes(BytesView, BytesView, Bool) -> Bool
 
 pub fn eq_ignore_ascii_case(BytesView, BytesView) -> Bool
 
+pub fn extension_of(BytesView) -> BytesView
+
 pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
 
 pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
@@ -64,6 +66,20 @@ pub(all) struct DateSpan {
   end : Int64
 }
 pub fn DateSpan::new(Int64, Int64) -> Self
+
+pub(all) enum TypeCategory {
+  App
+  Archive
+  Audio
+  Doc
+  Pic
+  Video
+}
+pub fn TypeCategory::all() -> Array[Self]
+pub fn TypeCategory::extensions(Self) -> Array[String]
+pub fn TypeCategory::from_name(StringView) -> Self?
+pub fn TypeCategory::index(Self) -> Int32
+pub fn TypeCategory::name(Self) -> String
 
 // Type aliases
 

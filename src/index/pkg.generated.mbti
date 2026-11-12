@@ -3,7 +3,9 @@ package "q2316367743/moonsearch/src/index"
 
 import {
   "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/ids",
   "q2316367743/moonsearch/src/platform",
+  "q2316367743/moonsearch/src/util",
 }
 
 // Values
@@ -37,6 +39,27 @@ pub fn Builder::root_count(Self) -> Int32
 pub fn Builder::set_child_counts(Self, Int32, UInt32, UInt32) -> Unit
 pub fn Builder::set_root_stats(Self, Int32, UInt32, UInt32, Int64) -> Unit
 
+pub struct Dict {
+  // private fields
+}
+pub fn Dict::all(Self) -> @ids.Ids
+pub fn Dict::build(@core.Store) -> Self
+pub fn Dict::builtin_macro(Self, StringView) -> @ids.Ids?
+pub fn Dict::entry_count(Self) -> Int32
+pub fn Dict::extension(Self, BytesView) -> @ids.Ids
+pub fn Dict::extension_count(Self) -> Int32
+pub fn Dict::extensions(Self) -> ArrayView[ExtensionEntry]
+pub fn Dict::files_all(Self) -> @ids.Ids
+pub fn Dict::folders_all(Self) -> @ids.Ids
+pub fn Dict::hidden(Self) -> @ids.Ids
+pub fn Dict::lookup_extensions(Self, Array[Bytes]) -> @ids.Ids
+pub fn Dict::root(Self, Int32) -> @ids.Ids?
+pub fn Dict::root_count(Self) -> Int32
+pub fn Dict::roots(Self) -> ArrayView[@ids.Ids]
+pub fn Dict::type_category(Self, @util.TypeCategory) -> @ids.Ids
+pub fn Dict::type_category_count(Self) -> Int32
+pub fn Dict::visible(Self) -> @ids.Ids
+
 pub(all) enum ExcludeKind {
   Fixed
   Glob
@@ -65,6 +88,12 @@ pub(all) enum ExcludeTarget {
   Files
   Folders
 }
+
+pub struct ExtensionEntry {
+  // private fields
+}
+pub fn ExtensionEntry::extension(Self) -> BytesView
+pub fn ExtensionEntry::ids(Self) -> @ids.Ids
 
 pub(all) struct RootSpec {
   path : String

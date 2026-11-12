@@ -249,6 +249,32 @@ pub fn contains_bytes_with(
 }
 
 ///|
+/// Extension bytes of a name, or an empty view for names without one.
+///
+/// The extension is the run after the last dot. A name starting with `.` is a
+/// hidden file, not an extension, and a trailing dot does not start one either.
+/// The bytes are returned exactly as stored; callers fold ASCII case when
+/// needed. The scan predicate and the field dictionary share this function, so
+/// `ext:` matches the same files in both engines.
+pub fn extension_of(name : BytesView) -> BytesView {
+  let length = name.length()
+  if length == 0 || name[0] == b'.' {
+    return b""[0:0]
+  }
+  let mut index = length - 1
+  while index >= 0 {
+    if name[index] == b'.' {
+      if index == length - 1 {
+        return b""[0:0]
+      }
+      return name[index + 1:]
+    }
+    index = index - 1
+  }
+  b""[0:0]
+}
+
+///|
 /// Whether a glob pattern contains an unescaped `*` or `?`.
 ///
 /// The query layer uses this to decide between substring matching and the glob

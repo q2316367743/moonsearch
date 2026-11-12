@@ -591,6 +591,8 @@ async test "stats and verbose write diagnostics to stderr" {
       assert_eq(out, "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
       assert_true(diagnostics.contains("scan:"))
       assert_true(diagnostics.contains("names:"))
+      assert_true(diagnostics.contains("dict: "))
+      assert_true(diagnostics.contains("categories"))
       assert_true(diagnostics.contains("skipped: hidden=0 excluded=0 mount=0"))
       assert_true(diagnostics.contains("issues: 0"))
       // Without --verbose the per-root line is absent.

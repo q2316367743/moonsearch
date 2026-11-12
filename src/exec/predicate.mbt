@@ -32,9 +32,14 @@ fn eval_term(
   if !kind_allows(term.kind, entry.kind) {
     return false
   }
+  if !visibility_allows(term.visibility, store, entry) {
+    return false
+  }
   match term.body {
     Name(matcher) => match_name(store, entry, matcher)
     Kind(kind) => kind_allows(kind, entry.kind)
+    Visibility(filter) => visibility_allows(filter, store, entry)
+    Category(_, extensions) => match_extensions(store, entry, extensions)
     Extensions(list) => match_extensions(store, entry, list)
     Size(comparison) => compare_number(comparison, entry_size(store, entry))
     Depth(comparison) =>
@@ -66,6 +71,41 @@ fn kind_allows(filter : @query.KindFilter, kind : @core.EntryKind) -> Bool {
     @query.AnyKind => true
     @query.FilesOnly => kind is @core.File
     @query.FoldersOnly => kind is @core.Folder
+  }
+}
+
+///|
+/// Whether a visibility filter admits an entry.
+///
+/// Hidden means the dot-prefixed name flag recorded by the scanner; the field
+/// dictionary builds the same set from the same flag.
+fn visibility_allows(
+  filter : @query.VisibilityFilter,
+  store : @core.Store,
+  entry : @core.EntryRef,
+) -> Bool {
+  match filter {
+    @query.AnyVisibility => true
+    @query.HiddenOnly => entry_is_hidden(store, entry)
+    @query.VisibleOnly => !entry_is_hidden(store, entry)
+  }
+}
+
+///|
+/// Whether the entry carries the hidden flag, defaulting to `false` when the
+/// id is out of range.
+fn entry_is_hidden(store : @core.Store, entry : @core.EntryRef) -> Bool {
+  match entry.kind {
+    @core.Folder =>
+      match store.folder(entry.id) {
+        Some(folder) => folder.is_hidden()
+        None => false
+      }
+    @core.File =>
+      match store.file(entry.id) {
+        Some(file) => file.is_hidden()
+        None => false
+      }
   }
 }
 
@@ -130,37 +170,13 @@ fn match_extensions(
   if entry.kind is @core.Folder {
     return false
   }
-  let extension = extension_of(store.entry_name(entry))
+  let extension = @util.extension_of(store.entry_name(entry))
   for candidate in list {
     if @util.eq_bytes(extension, candidate[:], true) {
       return true
     }
   }
   false
-}
-
-///|
-/// Extension bytes of a name, or an empty view for names without one.
-///
-/// A name starting with `.` is a hidden file, not an extension; a trailing dot
-/// does not start an extension either. Everything after the last remaining dot
-/// is the extension, returned exactly as stored (callers fold case).
-fn extension_of(name : BytesView) -> BytesView {
-  let length = name.length()
-  if length == 0 || name[0] == b'.' {
-    return b""[0:0]
-  }
-  let mut index = length - 1
-  while index >= 0 {
-    if name[index] == b'.' {
-      if index == length - 1 {
-        return b""[0:0]
-      }
-      return name[index + 1:]
-    }
-    index = index - 1
-  }
-  b""[0:0]
 }
 
 ///|

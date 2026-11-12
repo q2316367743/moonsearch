@@ -60,11 +60,7 @@ fn ModifierState::with_case(
   self : ModifierState,
   value : Bool,
 ) -> ModifierState {
-  {
-    flags: self.flags.with_case_sensitive(value),
-    case_explicit: true,
-    path_explicit: self.path_explicit,
-  }
+  { ..self, flags: self.flags.with_case_sensitive(value), case_explicit: true, }
 }
 
 ///|
@@ -72,11 +68,7 @@ fn ModifierState::with_exact(
   self : ModifierState,
   value : Bool,
 ) -> ModifierState {
-  {
-    flags: self.flags.with_exact(value),
-    case_explicit: self.case_explicit,
-    path_explicit: self.path_explicit,
-  }
+  { ..self, flags: self.flags.with_exact(value), }
 }
 
 ///|
@@ -84,11 +76,7 @@ fn ModifierState::with_path(
   self : ModifierState,
   value : Bool,
 ) -> ModifierState {
-  {
-    flags: self.flags.with_search_path(value),
-    case_explicit: self.case_explicit,
-    path_explicit: true,
-  }
+  { ..self, flags: self.flags.with_search_path(value), path_explicit: true, }
 }
 
 ///|
@@ -96,11 +84,7 @@ fn ModifierState::with_regex(
   self : ModifierState,
   value : Bool,
 ) -> ModifierState {
-  {
-    flags: self.flags.with_regex(value),
-    case_explicit: self.case_explicit,
-    path_explicit: self.path_explicit,
-  }
+  { ..self, flags: self.flags.with_regex(value), }
 }
 
 ///|
@@ -108,11 +92,15 @@ fn ModifierState::with_kind(
   self : ModifierState,
   value : KindFilter,
 ) -> ModifierState {
-  {
-    flags: self.flags.with_kind(value),
-    case_explicit: self.case_explicit,
-    path_explicit: self.path_explicit,
-  }
+  { ..self, flags: self.flags.with_kind(value), }
+}
+
+///|
+fn ModifierState::with_visibility(
+  self : ModifierState,
+  value : VisibilityFilter,
+) -> ModifierState {
+  { ..self, flags: self.flags.with_visibility(value), }
 }
 
 ///|
@@ -421,6 +409,11 @@ fn name_flags(text : String, state : ModifierState) -> Flags {
 ///|
 /// Dispatch a `name:` token to a macro, a modifier, or a field function, in
 /// that order.
+///
+/// A user macro wins over a built-in category macro, which in turn wins over
+/// the modifiers and field functions. Built-in categories stay in the tree as
+/// `TypeCategory` terms so the indexed engine can replace them with one
+/// dictionary lookup.
 fn Parser::parse_field_or_modifier(
   self : Parser,
   name : String,
@@ -432,12 +425,21 @@ fn Parser::parse_field_or_modifier(
     Some(entry) => return self.expand_macro(lower, entry, name_pos)
     None => ()
   }
+  match @util.TypeCategory::from_name(lower) {
+    Some(category) =>
+      return Query::Term(
+        Term::new(TermBody::TypeCategory(category), flags=state.flags),
+      )
+    None => ()
+  }
   match lower {
     "case" => self.parse_primary(state.with_case(true))
     "nocase" => self.parse_primary(state.with_case(false))
     "exact" => self.parse_primary(state.with_exact(true))
     "file" | "files" => self.kind_modifier(FilesOnly, state)
     "folder" | "folders" => self.kind_modifier(FoldersOnly, state)
+    "hidden" => self.visibility_modifier(HiddenOnly, state)
+    "nohidden" | "visible" => self.visibility_modifier(VisibleOnly, state)
     "path" => self.parse_primary(state.with_path(true))
     "nopath" => self.parse_primary(state.with_path(false))
     "regex" => self.parse_primary(state.with_regex(true))
@@ -451,7 +453,9 @@ fn Parser::parse_field_or_modifier(
 ///
 /// With a following term or group the kind becomes a term flag. With nothing to
 /// apply to, as in a bare `file:`, it becomes a standalone kind term so the
-/// filter still means something.
+/// filter still means something. A visibility filter written earlier in the
+/// chain is kept on that standalone term; the kind filter itself is dropped
+/// from the flags because the term body already states it.
 fn Parser::kind_modifier(
   self : Parser,
   kind : KindFilter,
@@ -460,7 +464,32 @@ fn Parser::kind_modifier(
   if self.peek().kind().starts_primary() {
     self.parse_primary(state.with_kind(kind))
   } else {
-    Query::Term(Term::new(TermBody::Kind(kind)))
+    Query::Term(
+      Term::new(TermBody::Kind(kind), flags=state.flags.with_kind(AnyKind)),
+    )
+  }
+}
+
+///|
+/// Apply `hidden:` or `nohidden:`.
+///
+/// Like the kind modifiers, a following term or group carries the filter in its
+/// flags. With nothing to apply to, the filter becomes a standalone visibility
+/// term. A kind filter written earlier in the chain stays on that term.
+fn Parser::visibility_modifier(
+  self : Parser,
+  filter : VisibilityFilter,
+  state : ModifierState,
+) -> Query raise QueryError {
+  if self.peek().kind().starts_primary() {
+    self.parse_primary(state.with_visibility(filter))
+  } else {
+    Query::Term(
+      Term::new(
+        TermBody::Visibility(filter),
+        flags=state.flags.with_visibility(AnyVisibility),
+      ),
+    )
   }
 }
 

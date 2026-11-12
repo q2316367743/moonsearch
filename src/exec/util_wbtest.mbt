@@ -1,15 +1,15 @@
 ///|
 test "extension extraction handles multi-dot, hidden, and trailing dots" {
-  assert_eq(extension_of(b"a.txt"[:]), b"txt"[:])
-  assert_eq(extension_of(b"archive.tar.gz"[:]), b"gz"[:])
-  assert_eq(extension_of(b"UPPER.PDF"[:]), b"PDF"[:])
+  assert_eq(@util.extension_of(b"a.txt"[:]), b"txt"[:])
+  assert_eq(@util.extension_of(b"archive.tar.gz"[:]), b"gz"[:])
+  assert_eq(@util.extension_of(b"UPPER.PDF"[:]), b"PDF"[:])
   // A hidden file has no extension even if it contains a dot.
-  assert_eq(extension_of(b".bashrc"[:]), b""[:])
-  assert_eq(extension_of(b".config.json"[:]), b""[:])
+  assert_eq(@util.extension_of(b".bashrc"[:]), b""[:])
+  assert_eq(@util.extension_of(b".config.json"[:]), b""[:])
   // A trailing dot does not start an extension.
-  assert_eq(extension_of(b"trailing."[0:9]), b""[:])
-  assert_eq(extension_of(b"noext"[0:5]), b""[:])
-  assert_eq(extension_of(b""[0:0]), b""[:])
+  assert_eq(@util.extension_of(b"trailing."[0:9]), b""[:])
+  assert_eq(@util.extension_of(b"noext"[0:5]), b""[:])
+  assert_eq(@util.extension_of(b""[0:0]), b""[:])
 }
 
 ///|

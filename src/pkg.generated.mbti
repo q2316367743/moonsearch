@@ -87,6 +87,8 @@ pub fn exec_scan_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -
 
 pub fn explain_query(@query.Query, options? : @exec.ScanOptions) -> String raise @query.QueryError
 
+pub fn extension_of(BytesView) -> BytesView
+
 pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
 
 pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
@@ -156,6 +158,8 @@ pub using @query {type DateComparison}
 
 pub using @util {type DateSpan}
 
+pub using @index {type Dict}
+
 pub using @platform {type DirFailure}
 
 pub using @platform {type DirListing}
@@ -176,9 +180,13 @@ pub using @index {type ExcludeScope}
 
 pub using @index {type ExcludeTarget}
 
+pub using @index {type ExtensionEntry}
+
 pub using @query {type Flags}
 
 pub type FolderId = Int32
+
+pub type GlobalId = Int32
 
 pub using @ids {type Ids}
 
@@ -231,6 +239,10 @@ pub using @query {type TermBody}
 pub using @query {type Token}
 
 pub using @query {type TokenKind}
+
+pub using @util {type TypeCategory}
+
+pub using @query {type VisibilityFilter}
 
 pub using @platform {trait ScanSource}
 

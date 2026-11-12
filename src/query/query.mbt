@@ -72,6 +72,13 @@ pub enum TermBody {
   /// A standalone kind filter, produced by `file:` or `folder:` with no
   /// following term. Any other term carries its kind in its flags instead.
   Kind(KindFilter)
+  /// A standalone visibility filter, produced by `hidden:` or `nohidden:` with
+  /// no following term. Any other term carries its visibility in its flags.
+  Visibility(VisibilityFilter)
+  /// A built-in category macro (`app:`, `archive:`, `audio:`, `doc:`, `pic:`,
+  /// `video:`). It stands for a fixed extension set, which the field dictionary
+  /// materializes as one bitmap at build time.
+  TypeCategory(@util.TypeCategory)
   /// `ext:` — a list of extensions, ASCII-lowercased. An empty entry stands
   /// for a file without an extension.
   Extensions(Array[String])
@@ -118,6 +125,8 @@ pub fn Term::describe(self : Term) -> String {
   let parts : Array[String] = match self.body {
     Name(text) => ["name", quote_text(text)]
     Kind(kind) => ["kind", kind.describe()]
+    Visibility(filter) => ["visibility", filter.describe()]
+    TypeCategory(category) => ["type", category.name()]
     Extensions(list) => {
       let parts = ["ext"]
       for extension in list {

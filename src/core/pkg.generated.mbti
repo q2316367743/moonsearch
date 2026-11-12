@@ -101,6 +101,7 @@ pub struct Store {
 }
 pub fn Store::built_at(Self) -> Int64
 pub fn Store::entries_in_order(Self) -> ArrayView[EntryRef]
+pub fn Store::entry_at(Self, Int32) -> EntryRef?
 pub fn Store::entry_count(Self) -> Int32
 pub fn Store::entry_mtime(Self, EntryRef) -> Int64?
 pub fn Store::entry_name(Self, EntryRef) -> BytesView
@@ -112,6 +113,7 @@ pub fn Store::file_path(Self, Int32) -> Bytes
 pub fn Store::folder(Self, Int32) -> Entry?
 pub fn Store::folder_count(Self) -> Int32
 pub fn Store::folder_path(Self, Int32) -> Bytes
+pub fn Store::global_id(Self, EntryRef) -> Int32
 pub fn Store::name(Self, NameRef) -> BytesView
 pub fn Store::name_bytes(Self) -> Int32
 pub fn Store::name_count(Self) -> Int32
@@ -123,5 +125,7 @@ pub fn Store::total_size(Self) -> Int64
 pub type EntryId = Int32
 
 pub type FolderId = Int32
+
+pub type GlobalId = Int32
 
 // Traits
