@@ -1,10 +1,10 @@
 ///|
 /// Public facade for the `moonsearch` library.
 ///
-/// S03 adds the scanner stack on top of the S02 byte-level model: the platform
-/// abstraction over the async file system, and the index builder/scanner that
-/// turns a directory tree into an immutable in-memory `Store`. Later steps add
-/// the query, execution, and persistence APIs.
+/// S04 adds the query language on top of the scanner stack: the lexer, the
+/// precedence-climbing parser, the typed `Query` tree, term flags, value
+/// parsing, and macro expansion. Later steps add the execution engines and
+/// persistence.
 pub using @core {
   VERSION,
   VERSION_TEXT,
@@ -74,4 +74,28 @@ pub using @index {
   type ScanIssue,
   type ScanReport,
   scan,
+}
+
+///|
+pub using @query {
+  type CmpOp,
+  type Comparison,
+  type DateComparison,
+  type Flags,
+  type KindFilter,
+  type Macro,
+  type Macros,
+  type Query,
+  type QueryError,
+  type Term,
+  type TermBody,
+  type Token,
+  type TokenKind,
+  lex,
+  parse,
+  parse_count,
+  parse_count_comparison,
+  parse_date_comparison,
+  parse_size,
+  parse_size_comparison,
 }

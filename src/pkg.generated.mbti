@@ -5,6 +5,7 @@ import {
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/index",
   "q2316367743/moonsearch/src/platform",
+  "q2316367743/moonsearch/src/query",
 }
 
 // Values
@@ -62,6 +63,20 @@ pub fn is_within(StringView, StringView) -> Bool
 
 pub fn join_path(StringView, StringView) -> String
 
+pub fn lex(StringView) -> Array[@query.Token] raise @query.QueryError
+
+pub fn parse(StringView, flags? : @query.Flags, macros? : @query.Macros, compat? : Bool) -> @query.Query raise @query.QueryError
+
+pub fn parse_count(StringView) -> Int64?
+
+pub fn parse_count_comparison(StringView) -> @query.Comparison?
+
+pub fn parse_date_comparison(StringView) -> @query.DateComparison?
+
+pub fn parse_size(StringView) -> Int64?
+
+pub fn parse_size_comparison(StringView) -> @query.Comparison?
+
 pub async fn[Source : @platform.ScanSource] scan(@index.ScanConfig, Source) -> @index.ScanReport raise @index.IndexError
 
 pub fn starts_with(BytesView, BytesView) -> Bool
@@ -74,6 +89,12 @@ pub fn system_source() -> @platform.SystemScanSource
 
 // Type aliases
 pub using @index {type Builder}
+
+pub using @query {type CmpOp}
+
+pub using @query {type Comparison}
+
+pub using @query {type DateComparison}
 
 pub using @platform {type DirFailure}
 
@@ -93,9 +114,17 @@ pub using @index {type ExcludeScope}
 
 pub using @index {type ExcludeTarget}
 
+pub using @query {type Flags}
+
 pub type FolderId = Int32
 
 pub using @index {type IndexError}
+
+pub using @query {type KindFilter}
+
+pub using @query {type Macro}
+
+pub using @query {type Macros}
 
 pub using @core {type NamePool}
 
@@ -108,6 +137,10 @@ pub using @platform {type NodeInfo}
 pub using @platform {type NodeKind}
 
 pub using @platform {type PlatformError}
+
+pub using @query {type Query}
+
+pub using @query {type QueryError}
 
 pub using @core {type RootInfo}
 
@@ -122,6 +155,14 @@ pub using @index {type ScanReport}
 pub using @core {type Store}
 
 pub using @platform {type SystemScanSource}
+
+pub using @query {type Term}
+
+pub using @query {type TermBody}
+
+pub using @query {type Token}
+
+pub using @query {type TokenKind}
 
 pub using @platform {trait ScanSource}
 

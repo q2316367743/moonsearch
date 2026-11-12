@@ -9,10 +9,12 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S03 — scanner and in-memory store**. `index` and `update` now walk
-> real directory trees, apply exclusion rules, and build an in-memory `Store`
-> with post-order statistics. The index is not persisted yet (S12), `search` and
-> `count` still report that they are pending, and the query engine is S04–S11.
+> Status: **S04 — query lexer and AST**. `index` and `update` walk real
+> directory trees and build an in-memory `Store` with post-order statistics.
+> `src/query` now parses the full field/modifier macro syntax into a typed
+> `Query` tree, but nothing executes it yet: `search` and `count` still report
+> that they are pending until S05 wires the scan oracle. The index is not
+> persisted yet (S12).
 
 ## Build and run
 
@@ -35,7 +37,7 @@ moonsearch <command> [options] [query...]
 | --- | --- | --- |
 | `index` | Scan roots into an in-memory index and print a summary | works (in memory; persistence is S12) |
 | `update` | Rescan the roots and rebuild the index | works (same as `index` until S12) |
-| `search` | Query the index (default subcommand) | pending (S04–S11) |
+| `search` | Query the index (default subcommand) | pending (query parses; execution is S05–S11) |
 | `count` | Print the number of matches | pending (S11) |
 | `info` | Show index statistics | pending (S12) |
 
@@ -137,6 +139,51 @@ implemented and tested through injected `ScanSource` implementations. The POSIX
 FFI backend that fixes all three limitations is a later step and does not change
 the scanner API.
 
+## Query language and AST (S04)
+
+`src/query` turns a query string into a typed `Query` tree. Execution arrives
+with S05; this step only fixes the language.
+
+- **Lexer** (`lex`) — tracks UTF-16 offsets for error positions. `"..."` quotes
+  text verbatim (so a regular expression keeps `\.`), `\` escapes the next
+  character outside quotes, `name:` becomes a field token, and only uppercase
+  whole words are operators (`AND` / `OR` / `NOT`, plus `&&` / `||` / `!`).
+  Field names are ASCII case-insensitive.
+- **Parser** (`parse`) — a precedence climber: `NOT` binds tighter than the
+  implicit or explicit `AND`, which binds tighter than `OR`. It follows the
+  upstream recovery rules: a binary operator with no operand is ignored,
+  consecutive `NOT`s cancel in pairs, and `--compat` turns an unknown field, a
+  malformed value, or a stray `)` into an empty set instead of an error.
+- **AST** — `Query { MatchAll, MatchNone, Term, And, Or, Not }` over
+  `TermBody { Name, Kind, Extensions, Size, Modified, Depth, ChildCount,
+  ChildFileCount, ChildFolderCount, Parent, Empty, ContentType }`. `AND` and
+  `OR` fold their neutral elements while the tree is built.
+- **Modifiers** — `case:`/`nocase:`, `exact:`, `file:`/`files:`,
+  `folder:`/`folders:`, `path:`/`nopath:`, and `regex:`/`noregex:` are prefix
+  modifiers scoped to one following term or group. `file:(a OR b)` applies to
+  both sides; `file:a OR b` does not leak past `a`. A standalone `file:` or
+  `folder:` becomes a `Kind` term, which is also how the CLI's `--type` option
+  filters an empty query.
+- **Term heuristics** — a needle containing `/` searches the full path, and a
+  needle containing a non-ASCII uppercase letter becomes case-sensitive, unless
+  the matching modifier was written explicitly.
+- **Values** — `size:` accepts decimal units (`1kb` = 1000 bytes), comparisons
+  (`>1mb`), and half-open ranges (`1kb..2mb` = `[1000, 2000000)`); counting
+  fields accept integers; `ext:` splits on `;` and folds ASCII case; `dm:`
+  keeps its date text for the predicate layer, which owns the calendar and time
+  zone.
+- **Macros** (`Macros`, `Macro`) — named query fragments expanded on `name:`,
+  looked up ASCII case-insensitively. Expansion uses an independent parser and
+  reports direct and indirect cycles. The built-in category macros are
+  materialized with the dictionary in S07.
+
+`Query::describe()` renders a compact, stable tree, which the parser tests use
+for assertions:
+
+```text
+(and (ext "pdf" kind=file) (size > 1000000))
+```
+
 ## Exit codes
 
 | Code | Meaning |
@@ -163,6 +210,7 @@ src/util/          byte helpers, natural path ordering, glob matching
 src/core/          version, exit codes, name pool, entry/store model
 src/platform/      ScanSource trait and the async/fs backend
 src/index/         exclude rules, builder, recursive scanner, in-memory store
+src/query/         lexer, parser, query AST, flags, values, macros
 src/cli/           command specification, invocation, index command
 src/               public facade
 cmd/moonsearch/    executable entry point
@@ -170,9 +218,8 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S03; later steps add the query language, scan oracle, bitmap sets,
-dictionaries, range indexes, trigram postings, execution plans, persistence, and
-benchmarks.
+S04; later steps add the scan oracle, bitmap sets, dictionaries, range indexes,
+trigram postings, execution plans, persistence, and benchmarks.
 
 ## License
 

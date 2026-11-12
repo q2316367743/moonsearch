@@ -1,0 +1,159 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/query"
+
+// Values
+pub fn lex(StringView) -> Array[Token] raise QueryError
+
+pub fn parse(StringView, flags? : Flags, macros? : Macros, compat? : Bool) -> Query raise QueryError
+
+pub fn parse_count(StringView) -> Int64?
+
+pub fn parse_count_comparison(StringView) -> Comparison?
+
+pub fn parse_date_comparison(StringView) -> DateComparison?
+
+pub fn parse_size(StringView) -> Int64?
+
+pub fn parse_size_comparison(StringView) -> Comparison?
+
+// Errors
+pub suberror QueryError {
+  Lex(Int32, String)
+  Parse(Int32, String)
+  BadValue(Int32, String, String, String)
+  MacroCycle(Int32, String)
+  MacroError(Int32, String, String)
+}
+pub fn QueryError::message(Self) -> String
+pub fn QueryError::position(Self) -> Int32
+
+// Types and methods
+pub(all) enum CmpOp {
+  Equal
+  Greater
+  GreaterEqual
+  Smaller
+  SmallerEqual
+  Range
+}
+pub fn CmpOp::symbol(Self) -> String
+
+pub(all) struct Comparison {
+  op : CmpOp
+  lo : Int64
+  hi : Int64
+}
+pub fn Comparison::compare(CmpOp, Int64) -> Self
+pub fn Comparison::describe(Self) -> String
+pub fn Comparison::equal(Int64) -> Self
+pub fn Comparison::range(Int64, Int64) -> Self
+
+pub(all) struct DateComparison {
+  op : CmpOp
+  lo : String
+  hi : String
+}
+pub fn DateComparison::describe(Self) -> String
+pub fn DateComparison::new(CmpOp, lo? : StringView, hi? : StringView) -> Self
+
+pub(all) struct Flags {
+  case_sensitive : Bool
+  exact : Bool
+  search_path : Bool
+  regex : Bool
+  kind : KindFilter
+}
+pub fn Flags::describe(Self) -> String
+pub fn Flags::is_default(Self) -> Bool
+pub fn Flags::new(case_sensitive? : Bool, exact? : Bool, search_path? : Bool, regex? : Bool, kind? : KindFilter) -> Self
+pub fn Flags::with_case_sensitive(Self, Bool) -> Self
+pub fn Flags::with_exact(Self, Bool) -> Self
+pub fn Flags::with_kind(Self, KindFilter) -> Self
+pub fn Flags::with_regex(Self, Bool) -> Self
+pub fn Flags::with_search_path(Self, Bool) -> Self
+
+pub(all) enum KindFilter {
+  AnyKind
+  FilesOnly
+  FoldersOnly
+}
+pub fn KindFilter::describe(Self) -> String
+
+pub(all) struct Macro {
+  name : String
+  query : String
+  flags : Flags
+}
+pub fn Macro::new(name~ : StringView, query~ : StringView, flags? : Flags) -> Self
+
+pub struct Macros {
+  // private fields
+}
+pub fn Macros::from_array(Array[Macro]) -> Self
+pub fn Macros::get(Self, StringView) -> Macro?
+pub fn Macros::is_empty(Self) -> Bool
+pub fn Macros::new() -> Self
+pub fn Macros::set(Self, Macro) -> Unit
+
+pub enum Query {
+  MatchAll
+  MatchNone
+  Term(Term)
+  And(Query, Query)
+  Or(Query, Query)
+  Not(Query)
+}
+pub fn Query::describe(Self) -> String
+
+pub struct Term {
+  // private fields
+}
+pub fn Term::body(Self) -> TermBody
+pub fn Term::describe(Self) -> String
+pub fn Term::flags(Self) -> Flags
+pub fn Term::new(TermBody, flags? : Flags) -> Self
+
+pub enum TermBody {
+  Name(String)
+  Kind(KindFilter)
+  Extensions(Array[String])
+  Size(Comparison)
+  Modified(DateComparison)
+  Depth(Comparison)
+  ChildCount(Comparison)
+  ChildFileCount(Comparison)
+  ChildFolderCount(Comparison)
+  Parent(String)
+  Empty
+  ContentType(String)
+}
+
+pub struct Token {
+  // private fields
+}
+pub fn Token::kind(Self) -> TokenKind
+pub fn Token::pos(Self) -> Int32
+
+pub(all) enum TokenKind {
+  Word(String)
+  Field(String)
+  FieldEmpty(String)
+  And
+  Or
+  Not
+  Equal
+  Greater
+  GreaterEqual
+  Smaller
+  SmallerEqual
+  LParen
+  RParen
+  Eos
+}
+pub fn TokenKind::describe(Self) -> String
+pub fn TokenKind::is_binary_operator(Self) -> Bool
+pub fn TokenKind::starts_primary(Self) -> Bool
+
+// Type aliases
+
+// Traits
