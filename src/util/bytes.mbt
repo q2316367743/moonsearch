@@ -179,3 +179,91 @@ pub fn find_bytes(
 pub fn contains_bytes(view : BytesView, needle : BytesView) -> Bool {
   find_bytes(view, needle) is Some(_)
 }
+
+///|
+/// Whether two byte sequences are equal, optionally folding ASCII case.
+pub fn eq_bytes(left : BytesView, right : BytesView, fold : Bool) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  if !fold {
+    return left == right
+  }
+  eq_ignore_ascii_case(left, right)
+}
+
+///|
+/// Index of the first occurrence of `needle` at or after `from`, optionally
+/// folding ASCII case.
+///
+/// The matcher is deliberately the same straightforward scan as `find_bytes`:
+/// candidates have already been narrowed by the index, and keeping the two
+/// implementations identical makes the oracle and the verification path agree
+/// byte for byte.
+pub fn find_bytes_with(
+  view : BytesView,
+  needle : BytesView,
+  fold : Bool,
+  from~ : Int32 = 0,
+) -> Int32? {
+  if !fold {
+    return find_bytes(view, needle, from~)
+  }
+  let start = if from < 0 {
+    0
+  } else if from > view.length() {
+    view.length()
+  } else {
+    from
+  }
+  let needle_len = needle.length()
+  if needle_len == 0 {
+    return Some(start)
+  }
+  let last_start = view.length() - needle_len
+  let mut i = start
+  while i <= last_start {
+    if ascii_lower(view[i]) == ascii_lower(needle[0]) {
+      let mut matched = 1
+      while matched < needle_len &&
+            ascii_lower(view[i + matched]) == ascii_lower(needle[matched]) {
+        matched = matched + 1
+      }
+      if matched == needle_len {
+        return Some(i)
+      }
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+/// Whether `needle` occurs anywhere in `view`, optionally folding ASCII case.
+pub fn contains_bytes_with(
+  view : BytesView,
+  needle : BytesView,
+  fold : Bool,
+) -> Bool {
+  find_bytes_with(view, needle, fold) is Some(_)
+}
+
+///|
+/// Whether a glob pattern contains an unescaped `*` or `?`.
+///
+/// The query layer uses this to decide between substring matching and the glob
+/// matcher. A backslash escapes the next byte, so `\*` is a literal asterisk.
+pub fn has_glob_meta(pattern : BytesView) -> Bool {
+  let mut i = 0
+  while i < pattern.length() {
+    let byte = pattern[i]
+    if byte == b'\\' {
+      i = i + 2
+    } else if byte == b'*' || byte == b'?' {
+      return true
+    } else {
+      i = i + 1
+    }
+  }
+  false
+}

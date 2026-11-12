@@ -14,6 +14,8 @@ pub suberror QueryError {
   /// A field value could not be interpreted: a size without digits, an
   /// overflowing count, or an empty date.
   BadValue(Int32, String, String, String)
+  /// A regular expression could not be compiled.
+  BadRegex(String)
   /// A macro expands to itself, directly or through other macros.
   MacroCycle(Int32, String)
   /// A macro failed to parse. The inner message keeps its own offset inside
@@ -23,12 +25,33 @@ pub suberror QueryError {
 }
 
 ///|
+/// Build a `BadRegex` error.
+///
+/// Suberror constructors are read-only outside their defining package, so the
+/// predicate layer creates query errors through these helpers.
+pub fn bad_regex(pattern : StringView) -> QueryError {
+  BadRegex("\{pattern}")
+}
+
+///|
+/// Build a `BadValue` error.
+pub fn bad_value(
+  pos : Int32,
+  field : StringView,
+  value : StringView,
+  message : StringView,
+) -> QueryError {
+  BadValue(pos, "\{field}", "\{value}", "\{message}")
+}
+
+///|
 /// Offset of the token that caused the error.
 pub fn QueryError::position(self : QueryError) -> Int32 {
   match self {
     Lex(pos, _) => pos
     Parse(pos, _) => pos
     BadValue(pos, _, _, _) => pos
+    BadRegex(_) => 0
     MacroCycle(pos, _) => pos
     MacroError(pos, _, _) => pos
   }
@@ -44,6 +67,7 @@ pub fn QueryError::message(self : QueryError) -> String {
     Parse(pos, message) => "query error at \{pos}: \{message}"
     BadValue(pos, field, value, message) =>
       "query error at \{pos}: \{field}:\{value}: \{message}"
+    BadRegex(pattern) => "query error: invalid regular expression '\{pattern}'"
     MacroCycle(pos, name) =>
       "query error at \{pos}: macro '\{name}' expands to itself"
     MacroError(pos, name, message) =>

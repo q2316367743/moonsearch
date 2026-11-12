@@ -1,6 +1,10 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "q2316367743/moonsearch/src/util"
 
+import {
+  "moonbitlang/x/time",
+}
+
 // Values
 pub fn ascii_fold(BytesView) -> Bytes
 
@@ -12,7 +16,13 @@ pub fn cmp_paths(BytesView, BytesView) -> Int32
 
 pub fn contains_bytes(BytesView, BytesView) -> Bool
 
+pub fn contains_bytes_with(BytesView, BytesView, Bool) -> Bool
+
+pub fn current_unix_seconds() -> Int64
+
 pub fn ends_with(BytesView, BytesView) -> Bool
+
+pub fn eq_bytes(BytesView, BytesView, Bool) -> Bool
 
 pub fn eq_ignore_ascii_case(BytesView, BytesView) -> Bool
 
@@ -20,7 +30,13 @@ pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
 
 pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
 
+pub fn find_bytes_with(BytesView, BytesView, Bool, from? : Int32) -> Int32?
+
 pub fn glob_match(BytesView, BytesView) -> Bool
+
+pub fn glob_match_with(BytesView, BytesView, Bool) -> Bool
+
+pub fn has_glob_meta(BytesView) -> Bool
 
 pub fn is_ascii_alpha(Byte) -> Bool
 
@@ -34,11 +50,20 @@ pub fn is_within(StringView, StringView) -> Bool
 
 pub fn join_path(StringView, StringView) -> String
 
+pub fn local_zone() -> @time.Zone
+
+pub fn resolve_date_span(StringView, Int64, @time.Zone) -> DateSpan?
+
 pub fn starts_with(BytesView, BytesView) -> Bool
 
 // Errors
 
 // Types and methods
+pub(all) struct DateSpan {
+  start : Int64
+  end : Int64
+}
+pub fn DateSpan::new(Int64, Int64) -> Self
 
 // Type aliases
 

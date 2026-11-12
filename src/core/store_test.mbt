@@ -239,3 +239,53 @@ test "names are readable through the references entries store" {
   let deep = store.folder(2).unwrap()
   assert_eq(store.name(deep.name()), b"deep"[:])
 }
+
+///|
+test "entries follow the canonical name then path order" {
+  let store = fixture_store()
+  let entries = store.entries_in_order()
+  assert_eq(entries.length(), 5)
+  // Names: "/r", "a.txt", "b.bin", "deep", "sub".
+  assert_true(entries[0].kind is @core.Folder)
+  assert_eq(entries[0].id, 0)
+  assert_true(entries[1].kind is @core.File)
+  assert_eq(entries[1].id, 0)
+  assert_true(entries[2].kind is @core.File)
+  assert_eq(entries[2].id, 1)
+  assert_true(entries[3].kind is @core.Folder)
+  assert_eq(entries[3].id, 2)
+  assert_true(entries[4].kind is @core.Folder)
+  assert_eq(entries[4].id, 1)
+  assert_eq(store.entry_name(entries[1]), b"a.txt"[:])
+  assert_eq(store.entry_path(entries[2]), b"/r/sub/deep/b.bin")
+  assert_eq(store.entry_size(entries[2]), Some(4L))
+  assert_eq(store.entry_mtime(entries[2]), Some(21L))
+}
+
+///|
+test "equal names are ordered by full path" {
+  let names = @core.NamePool::new()
+  let root_name = names.add(b"/r"[:])
+  let sub_name = names.add(b"sub"[:])
+  let a_root = names.add(b"a.txt"[:])
+  let a_sub = names.add(b"a.txt"[:])
+  let store = @core.Store::new(
+    names~,
+    folders=[
+      @core.Entry::folder(parent=@core.NO_PARENT, name=root_name, mtime=0L),
+      @core.Entry::folder(parent=0, name=sub_name, mtime=0L),
+    ],
+    files=[
+      @core.Entry::file(parent=1, name=a_sub, size=1L, mtime=0L),
+      @core.Entry::file(parent=0, name=a_root, size=1L, mtime=0L),
+    ],
+    roots=[],
+    built_at=0L,
+  )
+  let entries = store.entries_in_order()
+  assert_eq(entries.length(), 4)
+  assert_eq(store.entry_path(entries[0]), b"/r")
+  assert_eq(store.entry_path(entries[1]), b"/r/a.txt")
+  assert_eq(store.entry_path(entries[2]), b"/r/sub/a.txt")
+  assert_eq(store.entry_path(entries[3]), b"/r/sub")
+}

@@ -119,3 +119,31 @@ test "ascii case folding leaves non-ASCII bytes alone" {
   assert_eq(@util.find_byte(b"abc"[0:3], b'c', from=2), Some(2))
   assert_eq(@util.find_byte(b"abc"[0:3], b'a', from=3), None)
 }
+
+///|
+test "folded search and equality" {
+  assert_true(
+    @util.contains_bytes_with(b"Report.PDF"[0:10], b"report"[0:6], true),
+  )
+  assert_false(
+    @util.contains_bytes_with(b"Report.PDF"[0:10], b"report"[0:6], false),
+  )
+  assert_true(@util.contains_bytes_with(b"Report.PDF"[0:10], b"PDF"[0:3], true))
+  assert_eq(@util.find_bytes_with(b"aaaa"[0:4], b"AA"[0:2], true), Some(0))
+  assert_eq(
+    @util.find_bytes_with(b"aaaa"[0:4], b"AA"[0:2], true, from=1),
+    Some(1),
+  )
+  assert_true(@util.eq_bytes(b"ABC"[0:3], b"abc"[0:3], true))
+  assert_false(@util.eq_bytes(b"ABC"[0:3], b"abd"[0:3], true))
+  assert_false(@util.eq_bytes(b"ABC"[0:3], b"abc"[0:3], false))
+}
+
+///|
+test "glob meta detection skips escaped metacharacters" {
+  assert_true(@util.has_glob_meta(b"*.txt"[0:5]))
+  assert_true(@util.has_glob_meta(b"a?b"[0:3]))
+  assert_false(@util.has_glob_meta(b"plain.txt"[0:9]))
+  assert_false(@util.has_glob_meta(b"a\\*b"[0:4]))
+  assert_true(@util.has_glob_meta(b"a\\*b*"[0:5]))
+}

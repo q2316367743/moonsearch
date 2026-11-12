@@ -4,7 +4,7 @@ fn stdout_of(result : @cli.CliResult) -> String {
   match result {
     @cli.Success(text) => text
     @cli.SuccessWith(out, _) => out
-    @cli.NoMatch => abort("expected success, got NoMatch")
+    @cli.NoMatch(_, _) => abort("expected success, got NoMatch")
     @cli.Failure(text) => abort("expected success, got: \{text}")
   }
 }
@@ -167,7 +167,8 @@ async test "search help is stable" {
       #|  --json                       Print one JSON object per result
       #|  --basename                   Print only the entry name
       #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>            Execution engine: bitmap (default) or scan [default: bitmap]
+      #|  --engine <engine>            Execution engine: scan; the bitmap engine arrives with S06 [default: scan]
+      #|  --root <root>                Root directory for a live scan; may be repeated
       #|  --sort <sort>                Result order: name, path, size, mtime, ext, or type [default: name]
       #|  -n, --limit <limit>          Maximum number of results; 0 means unlimited [default: 0]
       #|  --format <format>            Custom output template for each match
@@ -206,7 +207,8 @@ async test "count help is stable" {
       #|  --auto-index               Build the index first when the database is missing
       #|  --compat                   Reproduce upstream query error recovery
       #|  --type <type>              Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>          Execution engine: bitmap (default) or scan [default: bitmap]
+      #|  --engine <engine>          Execution engine: scan; the bitmap engine arrives with S06 [default: scan]
+      #|  --root <root>              Root directory for a live scan; may be repeated
     ),
   )
 }
@@ -331,16 +333,19 @@ async test "count rejects search-only ordering options" {
 ///|
 async test "exit code mapping" {
   assert_eq(@cli.Success("").exit_code(), 0)
-  assert_eq(@cli.NoMatch.exit_code(), 1)
+  assert_eq(@cli.NoMatch("", "").exit_code(), 1)
   assert_eq(@cli.Failure("error").exit_code(), 2)
 }
 
 ///|
-async test "pending subcommands report a usage error" {
+async test "search without a store explains how to run live" {
   let result = @cli.run(["search", "report"])
   assert_eq(result.exit_code(), 2)
   match result {
-    @cli.Failure(text) => assert_true(text.contains("not implemented"))
+    @cli.Failure(text) => {
+      assert_true(text.contains("persisted"))
+      assert_true(text.contains("--live"))
+    }
     _ => abort("expected a failure")
   }
 }
@@ -421,7 +426,7 @@ fn index_stdout(result : @cli.CliResult) -> String {
     @cli.Success(text) => text
     @cli.SuccessWith(_, diagnostics) =>
       abort("unexpected diagnostics: \{diagnostics}")
-    @cli.NoMatch => abort("index must not return NoMatch")
+    @cli.NoMatch(_, _) => abort("index must not return NoMatch")
     @cli.Failure(text) => abort("index failed: \{text}")
   }
 }
@@ -682,16 +687,21 @@ async test "parse results distinguish help, version, and runs" {
 }
 
 ///|
-async test "pending subcommands report usage errors" {
+async test "commands without a store or implementation report errors" {
   let search = @cli.run(["search", "report"])
   let count = @cli.run(["count", "report"])
   let info = @cli.run(["info"])
-  for result in [search, count, info] {
+  for result in [search, count] {
     assert_eq(result.exit_code(), 2)
     match result {
-      @cli.Failure(text) => assert_true(text.contains("not implemented"))
+      @cli.Failure(text) => assert_true(text.contains("--live"))
       _ => abort("expected a failure")
     }
+  }
+  assert_eq(info.exit_code(), 2)
+  match info {
+    @cli.Failure(text) => assert_true(text.contains("not implemented"))
+    _ => abort("expected a failure")
   }
 }
 
@@ -772,5 +782,159 @@ async test "unreadable directories are reported in the summary and warnings" {
         assert_false(diagnostics.contains("warning:"))
       }
     _ => abort("expected a scan with diagnostics")
+  }
+}
+
+///|
+/// The scanner normalises roots with `realpath`; on macOS `/tmp` becomes
+/// `/private/tmp`, so expected paths must use the same form.
+async fn real_dir(dir : String) -> String {
+  @fs.realpath(dir) catch {
+    _ => dir
+  }
+}
+
+///|
+async test "search --live runs the scan engine end to end" {
+  let dir = make_fixture("moonsearch-search")
+  let real = real_dir(dir)
+  let result = @cli.run(["search", "--live", "--root", dir, "a.txt"])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    _ => abort("expected a match")
+  }
+}
+
+///|
+async test "search --live reports hits, misses, and counts" {
+  let dir = make_fixture("moonsearch-search-count")
+  let real = real_dir(dir)
+  let pdf = @cli.run(["search", "--live", "--root", dir, "ext:pdf"])
+  let missing = @cli.run(["search", "--live", "--root", dir, "ext:mp4"])
+  let count = @cli.run(["count", "--live", "--root", dir, "ext:pdf"])
+  let zero = @cli.run(["count", "--live", "--root", dir, "ext:mp4"])
+  @fs.rmdir(dir, recursive=true)
+  match pdf {
+    @cli.Success(text) => assert_eq(text, "\{real}/sub/b.pdf")
+    _ => abort("expected the pdf to match")
+  }
+  assert_eq(missing.exit_code(), 1)
+  match missing {
+    @cli.NoMatch(out, err) => {
+      assert_eq(out, "")
+      assert_eq(err, "")
+    }
+    _ => abort("expected a no-match result")
+  }
+  match count {
+    @cli.Success(text) => assert_eq(text, "1")
+    _ => abort("expected a count")
+  }
+  assert_eq(zero.exit_code(), 1)
+  match zero {
+    @cli.NoMatch(out, _) => assert_eq(out, "0")
+    _ => abort("expected a zero count with no-match exit code")
+  }
+}
+
+///|
+async test "search --live supports limits, node kinds, and regex mode" {
+  let dir = make_fixture("moonsearch-search-modes")
+  let real = real_dir(dir)
+  let limited = @cli.run(["search", "--live", "--root", dir, "-n", "2"])
+  let folders = @cli.run(["search", "--live", "--root", dir, "--type", "folder"])
+  let regex = @cli.run(["search", "--live", "--root", dir, "--regex", "^a"])
+  @fs.rmdir(dir, recursive=true)
+  match limited {
+    @cli.Success(text) => assert_eq(text.split("\n").count(), 2)
+    _ => abort("expected a limited result")
+  }
+  match folders {
+    @cli.Success(text) => {
+      assert_true(text.contains("\{real}/sub"))
+      assert_true(!text.contains("a.txt"))
+    }
+    _ => abort("expected folder results")
+  }
+  match regex {
+    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    _ => abort("expected the regex to match a.txt")
+  }
+}
+
+///|
+async test "search --live explains the plan and prints statistics" {
+  let dir = make_fixture("moonsearch-search-explain")
+  let real = real_dir(dir)
+  let result = @cli.run([
+    "search", "--live", "--root", dir, "--explain", "--stats", "ext:pdf",
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(out, diagnostics) => {
+      assert_eq(out, "\{real}/sub/b.pdf")
+      assert_true(diagnostics.contains("query: (ext \"pdf\")"))
+      assert_true(diagnostics.contains("plan: (ext \"pdf\")"))
+      assert_true(diagnostics.contains("entries: "))
+      assert_true(diagnostics.contains("matches: 1"))
+      assert_true(diagnostics.contains("search: "))
+    }
+    _ => abort("expected search output with diagnostics")
+  }
+}
+
+///|
+async test "search rejects options that arrive with later steps" {
+  let dir = make_fixture("moonsearch-search-unsupported")
+  let bitmap = @cli.run([
+    "search", "--live", "--root", dir, "--engine", "bitmap", "x",
+  ])
+  let sort = @cli.run(["search", "--live", "--root", dir, "--sort", "size"])
+  let json = @cli.run(["search", "--live", "--root", dir, "--json", "x"])
+  let missing_root = @cli.run(["search", "--live", "x"])
+  @fs.rmdir(dir, recursive=true)
+  match bitmap {
+    @cli.Failure(text) => assert_true(text.contains("bitmap engine"))
+    _ => abort("expected the bitmap engine to be rejected")
+  }
+  match sort {
+    @cli.Failure(text) => assert_true(text.contains("--sort size"))
+    _ => abort("expected the sort to be rejected")
+  }
+  match json {
+    @cli.Failure(text) => assert_true(text.contains("--json"))
+    _ => abort("expected json to be rejected")
+  }
+  match missing_root {
+    @cli.Failure(text) => assert_true(text.contains("no roots configured"))
+    _ => abort("expected the missing root to be rejected")
+  }
+}
+
+///|
+async test "search --live accepts repeated roots and auto-index" {
+  let first = @fs.tmpdir(prefix="moonsearch-root-a")
+  let second = @fs.tmpdir(prefix="moonsearch-root-b")
+  @fs.write_text("\{first}/one.txt", "1")
+  @fs.write_text("\{second}/two.txt", "2")
+  let first_real = real_dir(first)
+  let second_real = real_dir(second)
+  let result = @cli.run([
+    "search", "--live", "--root", first, "--root", second, "*.txt",
+  ])
+  let auto = @cli.run([
+    "search", "--auto-index", "--root", first, "--root", second, "*.txt",
+  ])
+  @fs.rmdir(first, recursive=true)
+  @fs.rmdir(second, recursive=true)
+  let expected = "\{first_real}/one.txt\n\{second_real}/two.txt"
+  match result {
+    @cli.Success(text) => assert_eq(text, expected)
+    _ => abort("expected both roots to be searched")
+  }
+  match auto {
+    @cli.Success(text) => assert_eq(text, expected)
+    _ => abort("expected --auto-index to scan the roots")
   }
 }

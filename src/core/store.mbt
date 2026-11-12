@@ -29,6 +29,9 @@ pub struct Store {
   priv files : Array[Entry]
   priv roots : Array[RootInfo]
   priv built_at : Int64
+  /// The single canonical order: `(name, path)` natural order over folders and
+  /// files together. Built once, immutable afterwards.
+  priv order : Array[EntryRef]
 }
 
 ///|
@@ -36,7 +39,9 @@ pub struct Store {
 ///
 /// The builder in the `index` package is the intended producer. The constructor
 /// validates nothing beyond what the parts already guarantee; ids in `entries`
-/// are interpreted as indexes into the two arrays.
+/// are interpreted as indexes into the two arrays. It also computes the
+/// canonical order, which is the only pre-sorted sequence the query engine
+/// keeps.
 pub fn Store::new(
   names~ : NamePool,
   folders~ : Array[Entry],
@@ -44,7 +49,8 @@ pub fn Store::new(
   roots~ : Array[RootInfo],
   built_at~ : Int64,
 ) -> Store {
-  { names, folders, files, roots, built_at, }
+  let order = build_order(names, folders, files)
+  { names, folders, files, roots, built_at, order, }
 }
 
 ///|
@@ -104,6 +110,82 @@ pub fn Store::name(self : Store, name_ref : NameRef) -> BytesView {
 }
 
 ///|
+/// Entries in canonical order: folders and files merged by name, then path.
+///
+/// This is the order the scan engine evaluates in, and the order `--sort name`
+/// prints without any additional work. It is built once when the store is
+/// created, so a query never sorts the whole index.
+pub fn Store::entries_in_order(self : Store) -> ArrayView[EntryRef] {
+  self.order
+}
+
+///|
+/// Name bytes of one entry, or an empty view when the id is out of range.
+pub fn Store::entry_name(self : Store, entry : EntryRef) -> BytesView {
+  match entry.kind {
+    Folder =>
+      if entry.id < 0 || entry.id >= self.folders.length() {
+        b""[0:0]
+      } else {
+        self.names.view(self.folders[entry.id].name())
+      }
+    File =>
+      if entry.id < 0 || entry.id >= self.files.length() {
+        b""[0:0]
+      } else {
+        self.names.view(self.files[entry.id].name())
+      }
+  }
+}
+
+///|
+/// Full path bytes of one entry, or an empty value when the id is out of range.
+pub fn Store::entry_path(self : Store, entry : EntryRef) -> Bytes {
+  match entry.kind {
+    Folder => self.folder_path(entry.id)
+    File => self.file_path(entry.id)
+  }
+}
+
+///|
+/// Modification time of one entry, or `None` when the id is out of range.
+pub fn Store::entry_mtime(self : Store, entry : EntryRef) -> Int64? {
+  match entry.kind {
+    Folder =>
+      if entry.id < 0 || entry.id >= self.folders.length() {
+        None
+      } else {
+        Some(self.folders[entry.id].mtime())
+      }
+    File =>
+      if entry.id < 0 || entry.id >= self.files.length() {
+        None
+      } else {
+        Some(self.files[entry.id].mtime())
+      }
+  }
+}
+
+///|
+/// Size of one entry, or `None` when the id is out of range.
+pub fn Store::entry_size(self : Store, entry : EntryRef) -> Int64? {
+  match entry.kind {
+    Folder =>
+      if entry.id < 0 || entry.id >= self.folders.length() {
+        None
+      } else {
+        Some(self.folders[entry.id].size())
+      }
+    File =>
+      if entry.id < 0 || entry.id >= self.files.length() {
+        None
+      } else {
+        Some(self.files[entry.id].size())
+      }
+  }
+}
+
+///|
 /// Number of distinct names in the pool.
 pub fn Store::name_count(self : Store) -> Int32 {
   self.names.count()
@@ -137,7 +219,12 @@ pub fn Store::folder_path(self : Store, id : FolderId) -> Bytes {
   if id < 0 || id >= self.folders.length() {
     return b""
   }
-  self.join_chain(self.folders[id].name(), self.folders[id].parent())
+  join_chain(
+    self.names,
+    self.folders,
+    self.folders[id].name(),
+    self.folders[id].parent(),
+  )
 }
 
 ///|
@@ -147,7 +234,7 @@ pub fn Store::file_path(self : Store, id : EntryId) -> Bytes {
     return b""
   }
   let entry = self.files[id]
-  self.join_chain(entry.name(), entry.parent())
+  join_chain(self.names, self.folders, entry.name(), entry.parent())
 }
 
 ///|
@@ -155,11 +242,16 @@ pub fn Store::file_path(self : Store, id : EntryId) -> Bytes {
 ///
 /// The chain is walked from the parent up to the root, then written in reverse.
 /// A root name of `/` must not produce a doubled separator.
-fn Store::join_chain(self : Store, name : NameRef, parent : FolderId) -> Bytes {
+fn join_chain(
+  names : NamePool,
+  folders : Array[Entry],
+  name : NameRef,
+  parent : FolderId,
+) -> Bytes {
   let refs : Array[NameRef] = [name]
   let mut current = parent
-  while current >= 0 && current < self.folders.length() {
-    let entry = self.folders[current]
+  while current >= 0 && current < folders.length() {
+    let entry = folders[current]
     refs.push(entry.name())
     current = entry.parent()
   }
@@ -168,7 +260,7 @@ fn Store::join_chain(self : Store, name : NameRef, parent : FolderId) -> Bytes {
   let mut root_is_slash = false
   let mut first = true
   while index >= 0 {
-    let component = self.names.view(refs[index])
+    let component = names.view(refs[index])
     if first {
       root_is_slash = component.length() > 0 &&
         component[component.length() - 1] == b'/'
@@ -180,4 +272,69 @@ fn Store::join_chain(self : Store, name : NameRef, parent : FolderId) -> Bytes {
     index = index - 1
   }
   buffer.to_bytes()
+}
+
+///|
+/// Compute the canonical order of all entries.
+///
+/// Names are the primary key and full paths the secondary key, with the entry's
+/// position in the input as a final tie-breaker. Both keys use the natural path
+/// ordering from `@util.cmp_paths`, so `file2` sorts before `file10`.
+fn build_order(
+  names : NamePool,
+  folders : Array[Entry],
+  files : Array[Entry],
+) -> Array[EntryRef] {
+  let folder_count = folders.length()
+  let total = folder_count + files.length()
+  let refs : Array[EntryRef] = []
+  let paths : Array[Bytes] = []
+  for id in 0..<folder_count {
+    let entry = folders[id]
+    refs.push(EntryRef::new(Folder, id))
+    paths.push(join_chain(names, folders, entry.name(), entry.parent()))
+  }
+  for id in 0..<files.length() {
+    let entry = files[id]
+    refs.push(EntryRef::new(File, id))
+    paths.push(join_chain(names, folders, entry.name(), entry.parent()))
+  }
+  let indices : Array[Int32] = []
+  for index in 0..<total {
+    indices.push(index)
+  }
+  indices.sort_by(fn(left, right) {
+    let left_name = ref_name(names, folders, files, refs[left])
+    let right_name = ref_name(names, folders, files, refs[right])
+    let name_order = @util.cmp_paths(left_name, right_name)
+    if name_order != 0 {
+      name_order
+    } else {
+      let path_order = @util.cmp_paths(paths[left][:], paths[right][:])
+      if path_order != 0 {
+        path_order
+      } else {
+        left - right
+      }
+    }
+  })
+  let ordered : Array[EntryRef] = []
+  for index in indices {
+    ordered.push(refs[index])
+  }
+  ordered
+}
+
+///|
+/// Name bytes behind an entry reference. Only called for ids built above.
+fn ref_name(
+  names : NamePool,
+  folders : Array[Entry],
+  files : Array[Entry],
+  entry : EntryRef,
+) -> BytesView {
+  match entry.kind {
+    Folder => names.view(folders[entry.id].name())
+    File => names.view(files[entry.id].name())
+  }
 }

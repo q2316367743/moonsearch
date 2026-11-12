@@ -32,6 +32,22 @@ pub fn Term::new(body : TermBody, flags~ : Flags = Flags::new()) -> Term {
 }
 
 ///|
+/// Build a query consisting of one name term.
+///
+/// `Query` and `TermBody` constructors are read-only outside this package, so
+/// the CLI and the execution layer build the few trees they need through
+/// helpers such as this one.
+pub fn name_query(text : StringView, flags~ : Flags = Flags::new()) -> Query {
+  Query::Term(Term::new(TermBody::Name("\{text}"), flags~))
+}
+
+///|
+/// Build a query consisting of one standalone kind term.
+pub fn kind_query(kind : KindFilter) -> Query {
+  Query::Term(Term::new(TermBody::Kind(kind)))
+}
+
+///|
 /// Flags that apply to this term.
 pub fn Term::flags(self : Term) -> Flags {
   self.flags

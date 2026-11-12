@@ -9,7 +9,10 @@
 pub(all) enum CliResult {
   Success(String)
   SuccessWith(String, String)
-  NoMatch
+  /// The command matched nothing. The payloads are written to stdout (a count
+  /// for `count`, empty for `search`) and stderr (diagnostics), and the exit
+  /// code is 1.
+  NoMatch(String, String)
   Failure(String)
 }
 
@@ -19,7 +22,7 @@ pub fn CliResult::exit_code(self : CliResult) -> Int32 {
   match self {
     Success(_) => @core.EXIT_OK
     SuccessWith(_, _) => @core.EXIT_OK
-    NoMatch => @core.EXIT_NO_MATCH
+    NoMatch(_, _) => @core.EXIT_NO_MATCH
     Failure(_) => @core.EXIT_ERROR
   }
 }
@@ -30,8 +33,8 @@ async fn execute(invocation : Invocation) -> CliResult {
   match invocation.command {
     Index => run_index(invocation)
     Update => run_index(invocation)
-    Search => Failure("error: 'search' is not implemented yet")
-    Count => Failure("error: 'count' is not implemented yet")
+    Search => run_search(invocation)
+    Count => run_count(invocation)
     Info => Failure("error: 'info' is not implemented yet")
   }
 }

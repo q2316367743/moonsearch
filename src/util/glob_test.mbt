@@ -170,3 +170,18 @@ test "glob_match agrees with an independent reference matcher" {
     }
   }
 }
+
+///|
+test "glob_match_with folds ASCII case" {
+  let folded = fn(text : Bytes, pattern : Bytes) {
+    @util.glob_match_with(text[:], pattern[:], true)
+  }
+  assert_true(folded(b"README.MD", b"*.md"))
+  assert_true(folded(b"Report.PDF", b"report.pdf"))
+  assert_true(folded(b"REPORT.PDF", b"*.pd?"))
+  assert_false(folded(b"report.pdf", b"*.txt"))
+  // The literal after a backslash is folded as well.
+  assert_true(folded(b"A*B", b"a\\*b"))
+  // Non-ASCII bytes are never folded.
+  assert_false(folded(b"\xC3\x89", b"\xC3\xA9"))
+}

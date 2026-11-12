@@ -25,7 +25,15 @@ async fn main {
       }
       @env.exit(result.exit_code())
     }
-    @cli.NoMatch => @env.exit(result.exit_code())
+    @cli.NoMatch(out, err) => {
+      if out.length() > 0 {
+        println(out)
+      }
+      if err.length() > 0 {
+        eprintln(err)
+      }
+      @env.exit(result.exit_code())
+    }
     @cli.Failure(text) => {
       eprintln(text)
       @env.exit(result.exit_code())

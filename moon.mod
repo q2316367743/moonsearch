@@ -13,3 +13,7 @@ keywords = [ "search", "index", "cli", "filesystem" ]
 preferred_target = "native"
 
 description = "Fast file search over a persistent inverted index"
+
+import {
+  "moonbitlang/x@0.5.7",
+}

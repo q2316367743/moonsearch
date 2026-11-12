@@ -18,7 +18,7 @@ pub async fn run(ArrayView[String], env? : Map[String, String]) -> CliResult
 pub(all) enum CliResult {
   Success(String)
   SuccessWith(String, String)
-  NoMatch
+  NoMatch(String, String)
   Failure(String)
 }
 pub fn CliResult::exit_code(Self) -> Int32

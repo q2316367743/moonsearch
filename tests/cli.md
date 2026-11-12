@@ -40,7 +40,7 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch search --bogus
 $ moonx q2316367743/moonsearch/cmd/moonsearch 'ext:pdf'
 @STDOUT (empty)
 @STDERR
-error: 'search' is not implemented yet
+error: the index is not persisted yet (S12); pass --live --root <PATH> to scan roots for this query
 [2]
 $ moonx q2316367743/moonsearch/cmd/moonsearch index --help
 Usage: moonsearch index [options] [roots...]
@@ -109,7 +109,7 @@ error: no roots configured; pass --root <PATH> or a root argument
 $ moonx q2316367743/moonsearch/cmd/moonsearch count 'ext:mp4'
 @STDOUT (empty)
 @STDERR
-error: 'count' is not implemented yet
+error: the index is not persisted yet (S12); pass --live --root <PATH> to scan roots for this query
 [2]
 ```
 
@@ -136,5 +136,41 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch index --quiet fixture
 $ moonx q2316367743/moonsearch/cmd/moonsearch index --bogus fixture
 @STDOUT (empty)
 @STDERR (ignore)
+[2]
+```
+
+The scan engine reads the same fixture through `--live`, so no database is
+needed:
+
+```mooncram q2316367743/moonsearch
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture a.txt
+*/fixture/a.txt (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture ext:pdf
+*/fixture/sub/b.pdf (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture folder:
+*/fixture (glob)
+*/fixture/sub (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture -n 1
+*/fixture (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch count --live --root fixture ext:pdf
+1
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch count --live --root fixture ext:mp4
+0
+[1]
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture ext:mp4
+@STDOUT (empty)
+@STDERR (empty)
+[1]
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --engine bitmap x
+@STDOUT (empty)
+@STDERR
+error: the bitmap engine is not implemented yet; pass --engine scan
 [2]
 ```

@@ -22,6 +22,36 @@ pub(all) enum EntryKind {
 }
 
 ///|
+/// A reference to one entry: the array it lives in and its id.
+///
+/// Folder ids and file ids are independent spaces, so a bare `Int32` cannot
+/// identify an entry on its own. Query results and iteration over the canonical
+/// order use `EntryRef` until the bitmap id space of S06 gives every entry a
+/// single number.
+pub(all) struct EntryRef {
+  kind : EntryKind
+  id : Int32
+}
+
+///|
+/// Build an entry reference.
+pub fn EntryRef::new(kind : EntryKind, id : Int32) -> EntryRef {
+  { kind, id, }
+}
+
+///|
+/// Whether the reference points at a file.
+pub fn EntryRef::is_file(self : EntryRef) -> Bool {
+  self.kind is File
+}
+
+///|
+/// Whether the reference points at a folder.
+pub fn EntryRef::is_folder(self : EntryRef) -> Bool {
+  self.kind is Folder
+}
+
+///|
 /// Bit 0 of `Entry::flags`: the name starts with a dot.
 pub const ENTRY_FLAG_HIDDEN : UInt16 = 0x0001
 

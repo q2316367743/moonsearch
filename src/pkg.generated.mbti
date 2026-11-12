@@ -2,10 +2,13 @@
 package "q2316367743/moonsearch/src"
 
 import {
+  "moonbitlang/x/time",
   "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/exec",
   "q2316367743/moonsearch/src/index",
   "q2316367743/moonsearch/src/platform",
   "q2316367743/moonsearch/src/query",
+  "q2316367743/moonsearch/src/util",
 }
 
 // Values
@@ -37,19 +40,45 @@ pub fn ascii_lower(Byte) -> Byte
 
 pub fn ascii_upper(Byte) -> Byte
 
+pub fn bad_regex(StringView) -> @query.QueryError
+
+pub fn bad_value(Int32, StringView, StringView, StringView) -> @query.QueryError
+
 pub fn cmp_paths(BytesView, BytesView) -> Int32
 
 pub fn contains_bytes(BytesView, BytesView) -> Bool
 
+pub fn contains_bytes_with(BytesView, BytesView, Bool) -> Bool
+
+pub fn current_unix_seconds() -> Int64
+
 pub fn ends_with(BytesView, BytesView) -> Bool
 
+pub fn eq_bytes(BytesView, BytesView, Bool) -> Bool
+
 pub fn eq_ignore_ascii_case(BytesView, BytesView) -> Bool
+
+pub fn exec_count(@core.Store, @query.Query) -> Int32 raise @query.QueryError
+
+pub fn exec_count_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -> Int32 raise @query.QueryError
+
+pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
+
+pub fn exec_scan_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+
+pub fn explain_query(@query.Query, options? : @exec.ScanOptions) -> String raise @query.QueryError
 
 pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
 
 pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
 
+pub fn find_bytes_with(BytesView, BytesView, Bool, from? : Int32) -> Int32?
+
 pub fn glob_match(BytesView, BytesView) -> Bool
+
+pub fn glob_match_with(BytesView, BytesView, Bool) -> Bool
+
+pub fn has_glob_meta(BytesView) -> Bool
 
 pub fn is_ascii_alpha(Byte) -> Bool
 
@@ -63,7 +92,13 @@ pub fn is_within(StringView, StringView) -> Bool
 
 pub fn join_path(StringView, StringView) -> String
 
+pub fn kind_query(@query.KindFilter) -> @query.Query
+
 pub fn lex(StringView) -> Array[@query.Token] raise @query.QueryError
+
+pub fn local_zone() -> @time.Zone
+
+pub fn name_query(StringView, flags? : @query.Flags) -> @query.Query
 
 pub fn parse(StringView, flags? : @query.Flags, macros? : @query.Macros, compat? : Bool) -> @query.Query raise @query.QueryError
 
@@ -76,6 +111,8 @@ pub fn parse_date_comparison(StringView) -> @query.DateComparison?
 pub fn parse_size(StringView) -> Int64?
 
 pub fn parse_size_comparison(StringView) -> @query.Comparison?
+
+pub fn resolve_date_span(StringView, Int64, @time.Zone) -> @util.DateSpan?
 
 pub async fn[Source : @platform.ScanSource] scan(@index.ScanConfig, Source) -> @index.ScanReport raise @index.IndexError
 
@@ -96,6 +133,8 @@ pub using @query {type Comparison}
 
 pub using @query {type DateComparison}
 
+pub using @util {type DateSpan}
+
 pub using @platform {type DirFailure}
 
 pub using @platform {type DirListing}
@@ -105,6 +144,8 @@ pub using @core {type Entry}
 pub type EntryId = Int32
 
 pub using @core {type EntryKind}
+
+pub using @core {type EntryRef}
 
 pub using @index {type ExcludeKind}
 
@@ -149,6 +190,8 @@ pub using @index {type RootSpec}
 pub using @index {type ScanConfig}
 
 pub using @index {type ScanIssue}
+
+pub using @exec {type ScanOptions}
 
 pub using @index {type ScanReport}
 

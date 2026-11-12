@@ -76,8 +76,13 @@ fn filter_options() -> Array[@argparse.OptionArg] {
     ),
     @argparse.OptionArg(
       "engine",
-      about="Execution engine: bitmap (default) or scan",
-      default_values=["bitmap"],
+      about="Execution engine: scan; the bitmap engine arrives with S06",
+      default_values=["scan"],
+    ),
+    @argparse.OptionArg(
+      "root",
+      about="Root directory for a live scan; may be repeated",
+      action=Append,
     ),
   ]
 }

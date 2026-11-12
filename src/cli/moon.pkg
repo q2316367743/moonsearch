@@ -1,9 +1,12 @@
 import {
   "moonbitlang/core/argparse",
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/exec",
   "q2316367743/moonsearch/src/index",
   "q2316367743/moonsearch/src/platform",
+  "q2316367743/moonsearch/src/query",
 }
 
 import {

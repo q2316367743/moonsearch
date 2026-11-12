@@ -1,0 +1,33 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/exec"
+
+import {
+  "moonbitlang/x/time",
+  "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/query",
+}
+
+// Values
+pub fn exec_count(@core.Store, @query.Query) -> Int32 raise @query.QueryError
+
+pub fn exec_count_with(@core.Store, @query.Query, options? : ScanOptions) -> Int32 raise @query.QueryError
+
+pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
+
+pub fn exec_scan_with(@core.Store, @query.Query, options? : ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+
+pub fn explain_query(@query.Query, options? : ScanOptions) -> String raise @query.QueryError
+
+// Errors
+
+// Types and methods
+pub(all) struct ScanOptions {
+  limit : Int32
+  now : Int64?
+  zone : @time.Zone?
+}
+pub fn ScanOptions::new(limit? : Int32, now? : Int64?, zone? : @time.Zone?) -> Self
+
+// Type aliases
+
+// Traits

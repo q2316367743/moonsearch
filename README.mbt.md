@@ -9,12 +9,14 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S04 — query lexer and AST**. `index` and `update` walk real
+> Status: **S05 — scan engine and predicates**. `index` and `update` walk real
 > directory trees and build an in-memory `Store` with post-order statistics.
-> `src/query` now parses the full field/modifier macro syntax into a typed
-> `Query` tree, but nothing executes it yet: `search` and `count` still report
-> that they are pending until S05 wires the scan oracle. The index is not
-> persisted yet (S12).
+> `src/query` parses the full field/modifier macro syntax into a typed `Query`
+> tree, and `src/exec` evaluates it against a store with a streaming linear scan:
+> `search --live --root <PATH>` and `count --live --root <PATH>` work end to end.
+> This scan engine is the semantic oracle every later index structure is checked
+> against. The index is not persisted yet and the bitmap engine arrives with S06;
+> `info` remains pending.
 
 ## Build and run
 
@@ -25,6 +27,7 @@ moon build --target native
 moon run cmd/moonsearch -- --help
 moon run cmd/moonsearch -- --version
 moon run cmd/moonsearch -- index -r /tmp/some-tree
+moon run cmd/moonsearch -- search --live --root /tmp/some-tree 'ext:pdf size:>1mb'
 ```
 
 ## Commands
@@ -37,14 +40,22 @@ moonsearch <command> [options] [query...]
 | --- | --- | --- |
 | `index` | Scan roots into an in-memory index and print a summary | works (in memory; persistence is S12) |
 | `update` | Rescan the roots and rebuild the index | works (same as `index` until S12) |
-| `search` | Query the index (default subcommand) | pending (query parses; execution is S05–S11) |
-| `count` | Print the number of matches | pending (S11) |
+| `search` | Query the index (default subcommand) | works with `--live --root <PATH>` (scan engine) |
+| `count` | Print the number of matches | works with `--live --root <PATH>` |
 | `info` | Show index statistics | pending (S12) |
 
 `search` is the default, so a bare query works without the subcommand:
 
 ```bash
-moonsearch 'ext:pdf size:>1mb' --sort size --reverse -n 20
+moonsearch 'ext:pdf size:>1mb'
+```
+
+Until persistence lands in S12 a search needs an in-memory store, which
+`--live --root <PATH>` builds from a directory scan:
+
+```bash
+moonsearch search --live --root /home/user 'ext:jpg;png size:>1mb' -n 20
+moonsearch count --live --root /home/user 'dm:lastweek ext:mp4'
 ```
 
 Global options are accepted before or after the subcommand:
@@ -141,8 +152,8 @@ the scanner API.
 
 ## Query language and AST (S04)
 
-`src/query` turns a query string into a typed `Query` tree. Execution arrives
-with S05; this step only fixes the language.
+`src/query` turns a query string into a typed `Query` tree. Execution is handled
+by the scan engine in S05; this layer only fixes the language.
 
 - **Lexer** (`lex`) — tracks UTF-16 offsets for error positions. `"..."` quotes
   text verbatim (so a regular expression keeps `\.`), `\` escapes the next
@@ -184,6 +195,71 @@ for assertions:
 (and (ext "pdf" kind=file) (size > 1000000))
 ```
 
+## Scan engine and predicates (S05)
+
+`src/exec` is the baseline execution engine and, from S06 on, the oracle the
+bitmap engine is compared against. It walks the store once, per entry, and
+applies a compiled predicate:
+
+```text
+Query AST
+  → compile: flags → matchers, regex compiled once, dates resolved against now
+  → ScanExpr { All, None, Test, And, Or, Not }
+  → for entry in Store::entries_in_order():
+        eval(expr, store, entry)   → keep, stop at --limit
+```
+
+- **Canonical order** — the store builds one immutable order at construction:
+  folders and files merged by name, then full path, both in `cmp_paths` natural
+  order. `search` therefore prints name order with no per-query sort, and
+  `--limit` stops the walk early instead of collecting every hit first.
+- **Predicates** — name substring, exact match, glob (`*` / `?` / `\`; `?`
+  matches one byte in this version), and regex (MoonBit's `@string.Regex`,
+  case-insensitive via `(?i:...)`); `ext:`, `size:`, `dm:`, `depth:`,
+  `childcount:`, `childfilecount:`, `childfoldercount:`, `parent:`, `empty:`,
+  and `contenttype:`. `ext:` and `contenttype:` apply to files only; child
+  counts and `empty:` apply to folders only.
+- **Boolean algebra** — `AND` short-circuits at the first false branch, `OR` at
+  the first true one, and `NOT` complements over every entry (the plan's `Both`
+  domain). Kind filters from `file:` / `folder:` narrow any term, including a
+  parenthesized group.
+- **Paths** — name matching uses raw name bytes; `path:` (or a needle containing
+  `/`) uses the full path built from the parent chain. `parent:` compares the
+  parent folder path byte for byte, with trailing slashes normalized.
+- **Content types** — v1 maps common extensions to MIME types; a value without
+  `/` matches either the main type (`text` → every `text/*`) or the subtype
+  (`pdf` → `application/pdf`). A magic-based lookup is a later step.
+- **Unicode** — only ASCII case is folded. Invalid UTF-8 names still match byte
+  patterns, but are treated as non-matches by the regex predicate because they
+  cannot be decoded into a `String`.
+
+### Dates
+
+`dm:` is resolved by `src/util/time.mbt` in local time, with testable injection
+of the clock and zone:
+
+- `today`, `yesterday`, weekday names (`mon` / `monday`), and month names
+  (`jan` / `january`, the most recent occurrence);
+- `last` / `inthelast` / `prev` / `previous` + unit, optionally with a count as
+  digits or words (`lastfiveweeks`, `last3days`) — rolling windows ending now;
+- `this` + unit — the current calendar unit (week starts on Monday);
+- explicit `YYYY[-MM[-DD[THH[:MM[:SS]]]]]`, with two-digit years.
+
+A bare date names a whole unit, so `dm:2024-03` is the whole month; `>`, `>=`,
+`<`, and `<=` apply to that unit's half-open interval. Ranges stay half-open, so
+`dm:2020..2021` covers 2020 but not 2021. Calendar arithmetic follows daylight
+saving transitions, and tests pin the zone to UTC for determinism.
+
+### Current CLI surface
+
+The scan engine is the only engine until S06, so `--engine` defaults to `scan`
+and `--engine bitmap` reports that it is not implemented yet. Search output is
+the default full-path-per-line format plus `-n/--limit`; `--sort` (other than
+`name`), `--reverse`, `--folders-first`, `--null`, `--json`, `--format`,
+`--relative-to`, and `--basename` belong to S11 and are rejected explicitly
+rather than silently ignored. `--explain` prints the parsed query and compiled
+plan to stderr; `--stats` adds entry, match, and timing lines.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -206,23 +282,25 @@ moon testcli test tests/cli.md --target native
 Layout:
 
 ```text
-src/util/          byte helpers, natural path ordering, glob matching
-src/core/          version, exit codes, name pool, entry/store model
+src/util/          byte helpers, natural path ordering, glob/date parsing
+src/core/          version, exit codes, name pool, entry/store model, canonical order
 src/platform/      ScanSource trait and the async/fs backend
 src/index/         exclude rules, builder, recursive scanner, in-memory store
 src/query/         lexer, parser, query AST, flags, values, macros
-src/cli/           command specification, invocation, index command
+src/exec/          scan engine: compiled predicates, exec_scan, exec_count
+src/cli/           command specification, invocation, index/search commands
 src/               public facade
 cmd/moonsearch/    executable entry point
 tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S04; later steps add the scan oracle, bitmap sets, dictionaries, range indexes,
-trigram postings, execution plans, persistence, and benchmarks.
+S05; later steps add bitmap sets, dictionaries, range indexes, trigram postings,
+execution plans, persistence, and benchmarks.
 
 ## License
 
 Apache-2.0. This is an independent implementation: no FSearch code, comments,
 constant tables, or test text are copied. FSearch and Everything are credited as
-behavioral references only.
+behavioral references only. The pinned runtime dependencies are
+`moonbitlang/core` and `moonbitlang/x` (Apache-2.0).

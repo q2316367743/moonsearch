@@ -57,6 +57,14 @@ pub(all) enum EntryKind {
   Folder
 }
 
+pub(all) struct EntryRef {
+  kind : EntryKind
+  id : Int32
+}
+pub fn EntryRef::is_file(Self) -> Bool
+pub fn EntryRef::is_folder(Self) -> Bool
+pub fn EntryRef::new(EntryKind, Int32) -> Self
+
 pub struct NamePool {
   // private fields
 }
@@ -92,7 +100,12 @@ pub struct Store {
   // private fields
 }
 pub fn Store::built_at(Self) -> Int64
+pub fn Store::entries_in_order(Self) -> ArrayView[EntryRef]
 pub fn Store::entry_count(Self) -> Int32
+pub fn Store::entry_mtime(Self, EntryRef) -> Int64?
+pub fn Store::entry_name(Self, EntryRef) -> BytesView
+pub fn Store::entry_path(Self, EntryRef) -> Bytes
+pub fn Store::entry_size(Self, EntryRef) -> Int64?
 pub fn Store::file(Self, Int32) -> Entry?
 pub fn Store::file_count(Self) -> Int32
 pub fn Store::file_path(Self, Int32) -> Bytes

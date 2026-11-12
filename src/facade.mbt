@@ -1,10 +1,11 @@
 ///|
 /// Public facade for the `moonsearch` library.
 ///
-/// S04 adds the query language on top of the scanner stack: the lexer, the
+/// S04 added the query language on top of the scanner stack: the lexer, the
 /// precedence-climbing parser, the typed `Query` tree, term flags, value
-/// parsing, and macro expansion. Later steps add the execution engines and
-/// persistence.
+/// parsing, and macro expansion. S05 adds the scan engine that evaluates a
+/// compiled query against a store, including date resolution in the local time
+/// zone. Later steps add the bitmap engine and persistence.
 pub using @core {
   VERSION,
   VERSION_TEXT,
@@ -15,6 +16,7 @@ pub using @core {
   type Entry,
   type EntryKind,
   type EntryId,
+  type EntryRef,
   type FolderId,
   NO_PARENT,
   ENTRY_FLAG_HIDDEN,
@@ -43,10 +45,19 @@ pub using @util {
   ends_with,
   find_byte,
   find_bytes,
+  find_bytes_with,
   contains_bytes,
+  contains_bytes_with,
+  eq_bytes,
+  has_glob_meta,
   join_path,
   is_within,
   glob_match,
+  glob_match_with,
+  type DateSpan,
+  current_unix_seconds,
+  local_zone,
+  resolve_date_span,
 }
 
 ///|
@@ -91,11 +102,25 @@ pub using @query {
   type TermBody,
   type Token,
   type TokenKind,
+  bad_regex,
+  bad_value,
+  kind_query,
   lex,
+  name_query,
   parse,
   parse_count,
   parse_count_comparison,
   parse_date_comparison,
   parse_size,
   parse_size_comparison,
+}
+
+///|
+pub using @exec {
+  type ScanOptions,
+  exec_count,
+  exec_count_with,
+  exec_scan,
+  exec_scan_with,
+  explain_query,
 }

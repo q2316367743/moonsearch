@@ -1,0 +1,12 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/string",
+  "moonbitlang/x/time",
+  "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/query",
+  "q2316367743/moonsearch/src/util",
+}
+
+import {
+  "q2316367743/moonsearch/src/index",
+} for "test"

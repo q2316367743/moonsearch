@@ -2,7 +2,15 @@
 package "q2316367743/moonsearch/src/query"
 
 // Values
+pub fn bad_regex(StringView) -> QueryError
+
+pub fn bad_value(Int32, StringView, StringView, StringView) -> QueryError
+
+pub fn kind_query(KindFilter) -> Query
+
 pub fn lex(StringView) -> Array[Token] raise QueryError
+
+pub fn name_query(StringView, flags? : Flags) -> Query
 
 pub fn parse(StringView, flags? : Flags, macros? : Macros, compat? : Bool) -> Query raise QueryError
 
@@ -21,6 +29,7 @@ pub suberror QueryError {
   Lex(Int32, String)
   Parse(Int32, String)
   BadValue(Int32, String, String, String)
+  BadRegex(String)
   MacroCycle(Int32, String)
   MacroError(Int32, String, String)
 }
