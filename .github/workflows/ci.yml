@@ -19,6 +19,11 @@ jobs:
       - name: Show toolchain versions
         run: moon version --all
 
+      # On a fresh runner the registry index is not cloned yet: without this,
+      # dependency resolution fails with "module was not found in the registry".
+      - name: Update MoonBit dependencies
+        run: moon update
+
       - name: Check
         run: moon check --target native --deny-warn
 
