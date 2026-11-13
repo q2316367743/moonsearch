@@ -168,9 +168,17 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture ext:m
 @STDERR (empty)
 [1]
 
-$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --engine bitmap x
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --engine bitmap a.txt
+*/fixture/a.txt (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --engine bitmap ext:pdf
+*/fixture/sub/b.pdf (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch count --live --root fixture --engine bitmap ext:pdf
+1
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --engine bitmap ext:mp4
 @STDOUT (empty)
-@STDERR
-error: the bitmap engine is not implemented yet; pass --engine scan
-[2]
+@STDERR (empty)
+[1]
 ```

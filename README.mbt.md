@@ -9,23 +9,20 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S09 — trigram inverted index**. `index` and `update`
+> Status: **S10 — indexed query compiler**. `index` and `update`
 > walk real directory trees and build an in-memory `Store` with post-order
 > statistics. `src/query` parses the full field/modifier macro syntax into a
-> typed `Query` tree, and `src/exec` evaluates it against a store with a
-> streaming linear scan: `search --live --root <PATH>` and
-> `count --live --root <PATH>` work end to end. This scan engine is the semantic
-> oracle every later index structure is checked against. Every entry now has one
-> store-wide id, and `src/index` builds both the S07 `Dict` — extension buckets,
-> `files_all`/`folders_all`, hidden/visible, root subtrees, and the six built-in
-> category macros — and the S08 `Ranges`: sorted `(value, id)` arrays for size,
-> mtime, depth, child count, and parent, with `parent` built by counting sort and
-> the non-eager fields materialized on first use (`--fast-fields`). S09 adds the
-> `TrigramIndex`: one posting per ASCII-folded 3-byte name window, intersection
-> of the shortest postings with merge and galloping, stop-gram skipping, and
-> short-needle fallback to a full scan. Each index set is cross-checked against
-> the scan engine. The index is still in memory only; the query compiler (S10)
-> and persistence (S12) come next.
+> typed `Query` tree, and `src/exec` evaluates it two ways. The S05 linear scan
+> is still the semantic oracle: `search --live --root <PATH>` and
+> `count --live --root <PATH>` work end to end. The S10 compiler turns the same
+> `Query` into an `Expr` over id sets: dictionary terms become constants, range
+> terms become sorted-array slices, name substrings become trigram candidates,
+> and globs/regexes/path terms become scan predicates that the optimizer pushes
+> under indexed candidates. The indexed engine (`--engine bitmap`) is
+> cross-checked against the scan engine on every field and boolean combination.
+> All index structures — the S07 `Dict`, the S08 `Ranges`, and the S09
+> `TrigramIndex` — are bundled in `@index.Index`; the index is still in memory
+> only. Persistence (S12) and the remaining output formats (S11) come next.
 
 ## Build and run
 
@@ -49,8 +46,8 @@ moonsearch <command> [options] [query...]
 | --- | --- | --- |
 | `index` | Scan roots into an in-memory index and print a summary | works (in memory; persistence is S12) |
 | `update` | Rescan the roots and rebuild the index | works (same as `index` until S12) |
-| `search` | Query the index (default subcommand) | works with `--live --root <PATH>` (scan engine) |
-| `count` | Print the number of matches | works with `--live --root <PATH>` |
+| `search` | Query the index (default subcommand) | works with `--live --root <PATH>` on either engine |
+| `count` | Print the number of matches | works with `--live --root <PATH>` on either engine |
 | `info` | Show index statistics | pending (S12) |
 
 `search` is the default, so a bare query works without the subcommand:
@@ -269,14 +266,15 @@ saving transitions, and tests pin the zone to UTC for determinism.
 
 ### Current CLI surface
 
-The scan engine is still the only selectable engine: the bitmap engine needs the
-query compiler from S10, so `--engine` defaults to `scan` and `--engine bitmap`
-reports that it is not implemented yet. Search
-output is the default full-path-per-line format plus `-n/--limit`; `--sort`
-(other than `name`), `--reverse`, `--folders-first`, `--null`, `--json`,
-`--format`, `--relative-to`, and `--basename` belong to S11 and are rejected
-explicitly rather than silently ignored. `--explain` prints the parsed query and
-compiled plan to stderr; `--stats` adds entry, match, and timing lines.
+The scan engine is the default (`--engine scan`); `--engine bitmap` now runs the
+S10 compiler over a live index. Search output is the default full-path-per-line
+format plus `-n/--limit`; `--sort` (other than `name`), `--reverse`,
+`--folders-first`, `--null`, `--json`, `--format`, `--relative-to`, and
+`--basename` belong to S11 and are rejected explicitly rather than silently
+ignored. `--explain` prints the parsed query and the engine-specific plan to
+stderr: the `ScanExpr` predicate tree for the scan engine, or the estimated
+`Expr` tree with trigram key counts and scan degradation reasons for the bitmap
+engine. `--stats` adds entry, match, and timing lines.
 
 ## Id sets and compressed bitmaps (S06)
 
@@ -305,16 +303,16 @@ and checked against an independent membership-mask implementation. See
   block order, container contents, cardinality, and trailing bytes, and returns
   `IdsError` instead of panicking on corrupted input.
 
-The bitmap engine is not wired into the CLI yet: `--engine bitmap` still reports
-that it is not implemented, and the default remains the S05 scan engine. S08
-builds the range indexes on top of `Ids::Sorted`, S09 builds the trigram
-postings, and S10 compiles queries into these sets.
+The bitmap engine is wired into the CLI: `--engine bitmap` evaluates the S10
+`Expr` plan over the S07–S09 candidate sources. The S05 scan engine remains the
+default and the oracle the indexed engine is checked against. S11 adds the
+remaining output orders and formats, and S12 persists the index.
 
 ## Field dictionary (S07)
 
 `src/index/dict.mbt` builds the low-cardinality field dictionary after the scan.
 It is the first real consumer of `Ids` and the source of candidate sets the
-indexed executor will use in S10.
+indexed executor consumes.
 
 - **One id space** — `Store::global_id` numbers folders `0 .. folder_count - 1`
   and files from `folder_count` upward. Every dictionary set uses it, so
@@ -339,8 +337,8 @@ indexed executor will use in S10.
   build. `--stats` also prints its shape:
   `dict: <extensions> extensions, 6 categories, <hidden> hidden`.
 
-The dictionary is not persisted yet; S12 writes it as the `DICT` section. Until
-S10 the scan engine remains the only query path.
+The dictionary is not persisted yet; S12 writes it as the `DICT` section. The
+S10 compiler turns these sets into `Const` leaves of an indexed plan.
 
 ## Range indexes (S08)
 
@@ -404,6 +402,61 @@ one posting per distinct ASCII-folded 3-byte window of every entry name.
 
 The postings are not persisted yet; S12 writes them as the `POSTINGS` section.
 
+## Indexed query compiler and plans (S10)
+
+`src/exec/plan.mbt` compiles a `Query` into an `Expr` over id sets and evaluates
+it with set algebra. The scan engine and the indexed engine share the parser,
+the field rules, and the per-entry predicates; they differ only in how the
+candidate set is produced.
+
+```text
+Query
+  → compile: domain pruning + leaf selection (Const / Trigram / Scan / Filter)
+  → optimize: constant folding, cardinality reordering, predicate pushdown
+  → evaluate: Ids intersection, union, and difference
+```
+
+- **Leaves** — `Const` is a set already materialized by `Dict` or `Ranges`;
+  `Trigram` is a posting candidate set that still needs byte verification;
+  `Scan` is a predicate with no index support; `Filter` is a pushed-down scan
+  predicate over another node. Every leaf keeps the term text so `--explain`
+  stays readable.
+- **Compilation** — `file:`, `folder:`, `hidden:`, `ext:`, built-in categories,
+  `size:`, `dm:`, `depth:`, `childcount:`, `parent:`, and `empty:` become
+  constants or range slices. A plain substring or `exact:` term with a needle of
+  at least three bytes becomes a trigram leaf. Glob, regex, `path:`, short
+  needles, all-stop-gram needles, and disabled postings become scan leaves with
+  the reasons `glob`, `regex`, `path`, `short-needle`, `stop-grams`, and
+  `no-trigram`. `childfilecount:`, `childfoldercount:`, and `contenttype:` are
+  scan leaves until a range index exists for them.
+- **Type domains** — every subtree is classified `FilesOnly`, `FoldersOnly`,
+  `Both`, or `Never`. `file:` combined with `folder:`, or `ext:` under a folder
+  modifier, is `Never` and compiles to the empty set without touching the index.
+  A negation is always complemented over every entry, matching the scan engine.
+- **Optimizer** — adjacent constants merge; `And(empty, x)` is empty;
+  `Or(universe, x)` is the universe; `Not(Const)` becomes a constant; double
+  negation collapses. `And` sides are ordered by estimated cardinality, and a
+  scan predicate is pushed below the indexed side (`And(Scan(p), x)` becomes
+  `Filter(p, x)`) so globs and regexes only visit candidates.
+- **Evaluation** — `And` short-circuits on an empty left side, and `Not` uses
+  `Dict::all()` as the universe. `exec_indexed` returns an `Ids` set;
+  `exec_indexed_count` returns its cardinality. `search --engine bitmap` walks
+  the canonical order and checks membership, which preserves `name` order and
+  early-stops at `--limit` (the other sort keys are S11).
+- **`--explain`** — a single deterministic line per node, for example
+  `(filter#4 (glob "*.pdf" nocase) (const#4 (size > 1000)))` or
+  `(scan#9 reason=short-needle (substring "re" nocase))`. `node#N` is the
+  estimated cardinality, `keys=` the number of intersected postings, and
+  `reason=` the degradation behind a scan leaf.
+- **Cross-check** — `exec/plan_test.mbt` asserts the compiled shape of every
+  field, compares optimized and unoptimized plans against `exec_scan` over the
+  full query corpus (including `--no-trigram` and an empty store), and pins the
+  explain goldens.
+
+`@index.Index` bundles the store and the three candidate sources, so the
+compiler, the CLI, and the upcoming persistence layer pass one object instead of
+four.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -431,7 +484,7 @@ src/core/          version, exit codes, name pool, entry/store model, global ids
 src/platform/      ScanSource trait and the async/fs backend
 src/index/         excludes, builder, scanner, dictionary, ranges, trigram postings
 src/query/         lexer, parser, query AST, flags, values, macros, categories
-src/exec/          scan engine: compiled predicates, exec_scan, exec_count
+src/exec/          scan engine, query compiler, optimizer, indexed executor
 src/ids/           Ids set algebra, compressed bitmap containers, serialization
 src/cli/           command specification, invocation, index/search commands
 src/               public facade
@@ -440,8 +493,9 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S09; later steps add the query compiler, execution plans, persistence, and
-benchmarks. Module notes live in `docs/modules/`.
+S10; later steps add the remaining result orders and formats (S11), persistence
+(S12), the full cross-check/property/fuzz suite (S13), and benchmarks (S14).
+Module notes live in `docs/modules/`.
 
 ## License
 

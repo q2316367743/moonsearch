@@ -99,6 +99,16 @@ pub struct ExtensionEntry {
 pub fn ExtensionEntry::extension(Self) -> BytesView
 pub fn ExtensionEntry::ids(Self) -> @ids.Ids
 
+pub struct Index {
+  // private fields
+}
+pub fn Index::build(@core.Store, eager? : RangeFieldSet, trigram? : Bool) -> Self
+pub fn Index::dict(Self) -> Dict
+pub fn Index::entry_count(Self) -> Int32
+pub fn Index::ranges(Self) -> Ranges
+pub fn Index::store(Self) -> @core.Store
+pub fn Index::trigram(Self) -> TrigramIndex?
+
 pub(all) enum RangeField {
   Size
   MTime

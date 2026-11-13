@@ -4,29 +4,76 @@ package "q2316367743/moonsearch/src/exec"
 import {
   "moonbitlang/x/time",
   "q2316367743/moonsearch/src/core",
+  "q2316367743/moonsearch/src/ids",
+  "q2316367743/moonsearch/src/index",
   "q2316367743/moonsearch/src/query",
 }
 
 // Values
+pub fn compile_indexed(@index.Index, @query.Query, options? : PlanOptions) -> Expr raise @query.QueryError
+
 pub fn exec_count(@core.Store, @query.Query) -> Int32 raise @query.QueryError
 
 pub fn exec_count_with(@core.Store, @query.Query, options? : ScanOptions) -> Int32 raise @query.QueryError
 
+pub fn exec_indexed(@index.Index, @query.Query, options? : PlanOptions) -> @ids.Ids raise @query.QueryError
+
+pub fn exec_indexed_count(@index.Index, @query.Query, options? : PlanOptions) -> Int32 raise @query.QueryError
+
 pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
 
 pub fn exec_scan_with(@core.Store, @query.Query, options? : ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+
+pub fn explain_indexed(@index.Index, @query.Query, options? : PlanOptions) -> String raise @query.QueryError
 
 pub fn explain_query(@query.Query, options? : ScanOptions) -> String raise @query.QueryError
 
 // Errors
 
 // Types and methods
+pub struct ConstLeaf {
+  // private fields
+}
+pub fn ConstLeaf::ids(Self) -> @ids.Ids
+pub fn ConstLeaf::label(Self) -> String
+
+pub enum Expr {
+  Const(ConstLeaf)
+  Trigram(TrigramLeaf)
+  Scan(ScanLeaf)
+  Filter(ScanLeaf, Expr)
+  And(Expr, Expr)
+  Or(Expr, Expr)
+  Not(Expr)
+}
+pub fn Expr::describe(Self, Int32) -> String
+pub fn Expr::estimate(Self, Int32) -> Int32
+
+pub(all) struct PlanOptions {
+  now : Int64?
+  zone : @time.Zone?
+  optimize : Bool
+}
+pub fn PlanOptions::new(now? : Int64?, zone? : @time.Zone?, optimize? : Bool) -> Self
+
+pub struct ScanLeaf {
+  // private fields
+}
+pub fn ScanLeaf::reason(Self) -> String
+
 pub(all) struct ScanOptions {
   limit : Int32
   now : Int64?
   zone : @time.Zone?
 }
 pub fn ScanOptions::new(limit? : Int32, now? : Int64?, zone? : @time.Zone?) -> Self
+
+pub struct TrigramLeaf {
+  // private fields
+}
+pub fn TrigramLeaf::candidates(Self) -> @ids.Ids
+pub fn TrigramLeaf::key_count(Self) -> Int32
+pub fn TrigramLeaf::needle(Self) -> BytesView
 
 // Type aliases
 

@@ -23,6 +23,7 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
 | `dict.mbt` | `Dict`、`ExtensionEntry`、构建期物化 |
 | `range.mbt` | `RangeField`、`RangeFieldSet`、`RangeIndex`、`Ranges`、`ParentPaths` |
 | `trigram.mbt` | `TrigramIndex`、`TrigramPosting`、`TrigramLookup`、提取与交集 |
+| `index.mbt` | S10：`Index` 聚合（store + dict + ranges + trigram） |
 | `errors.mbt` | `IndexError` |
 
 ## 扫描与构建器
@@ -237,6 +238,31 @@ posting 的 `Int32` 数组（4 B/条），不含键与对象头；S12 持久化�
   约 52 MB；这是内存定长形态，S12 的 delta-varint 会把磁盘体积压到计划估算的
   ~25 MB 量级。
 
+## `Index` 聚合（S10）
+
+`index.mbt` 把一份扫描结果上的全部候选源打成一个只读对象：
+
+```moonbit
+pub struct Index {
+  priv store : @core.Store
+  priv dict : Dict
+  priv ranges : Ranges
+  priv trigram : TrigramIndex?
+}
+
+pub fn Index::build(store, eager? = all, trigram? = true) -> Index
+```
+
+- `eager` 选择立即构建的范围字段，默认与 `Ranges::build` 一致（全部字段）；CLI 传入
+  自己的 `--fast-fields` 选择（默认 `size,mtime`），其余字段在首次查询时按需构建。
+- `trigram=false` 生成 `--no-trigram` 对照索引；编译层把名字 term 标成
+  `reason=no-trigram` 并退化为扫描。
+- `Index` 是值类型：复制时共享底层数组，不复制候选数据；所有访问器返回的集合都必须
+  当作只读。
+- `exec` 的编译/求值入口与 CLI 的 `index`、`search --engine bitmap` 都只传一个
+  `Index`，不再分别传 store、dict、ranges、trigram 四个部件。S12 也以它为序列化与
+  恢复的单位。
+
 ## 测试
 
 - `dict_test.mbt`：统一 id、隐藏/可见划分、扩展名折叠与空扩展名、分类物化、根集合、
@@ -255,3 +281,5 @@ posting 的 `Int32` 数组（4 B/条），不含键与对象头；S12 持久化�
   子串分别以默认、`case:`、`exact:` 运行扫描引擎，断言每个命中 id 都在 trigram
   候选集内；同时覆盖缺失 trigram、短 needle、短名字、stop-gram 与 `path:` 的边界，
   并断言“至少一次走 posting、至少一次走全扫”。
+- `exec/plan_test.mbt`：通过 `Index` 聚合构建三种索引，验证每个字段的编译结果、
+  `--no-trigram` 退化，以及索引引擎与扫描引擎在全语料上的集合一致性。

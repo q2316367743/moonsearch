@@ -167,7 +167,7 @@ async test "search help is stable" {
       #|  --json                       Print one JSON object per result
       #|  --basename                   Print only the entry name
       #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>            Execution engine: scan; the bitmap engine arrives with S06 [default: scan]
+      #|  --engine <engine>            Execution engine: scan or bitmap [default: scan]
       #|  --root <root>                Root directory for a live scan; may be repeated
       #|  --sort <sort>                Result order: name, path, size, mtime, ext, or type [default: name]
       #|  -n, --limit <limit>          Maximum number of results; 0 means unlimited [default: 0]
@@ -207,7 +207,7 @@ async test "count help is stable" {
       #|  --auto-index               Build the index first when the database is missing
       #|  --compat                   Reproduce upstream query error recovery
       #|  --type <type>              Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>          Execution engine: scan; the bitmap engine arrives with S06 [default: scan]
+      #|  --engine <engine>          Execution engine: scan or bitmap [default: scan]
       #|  --root <root>              Root directory for a live scan; may be repeated
     ),
   )
@@ -947,17 +947,10 @@ async test "search --live explains the plan and prints statistics" {
 ///|
 async test "search rejects options that arrive with later steps" {
   let dir = make_fixture("moonsearch-search-unsupported")
-  let bitmap = @cli.run([
-    "search", "--live", "--root", dir, "--engine", "bitmap", "x",
-  ])
   let sort = @cli.run(["search", "--live", "--root", dir, "--sort", "size"])
   let json = @cli.run(["search", "--live", "--root", dir, "--json", "x"])
   let missing_root = @cli.run(["search", "--live", "x"])
   @fs.rmdir(dir, recursive=true)
-  match bitmap {
-    @cli.Failure(text) => assert_true(text.contains("bitmap engine"))
-    _ => abort("expected the bitmap engine to be rejected")
-  }
   match sort {
     @cli.Failure(text) => assert_true(text.contains("--sort size"))
     _ => abort("expected the sort to be rejected")
@@ -969,6 +962,42 @@ async test "search rejects options that arrive with later steps" {
   match missing_root {
     @cli.Failure(text) => assert_true(text.contains("no roots configured"))
     _ => abort("expected the missing root to be rejected")
+  }
+}
+
+///|
+async test "search --live runs the bitmap engine end to end" {
+  let dir = make_fixture("moonsearch-bitmap")
+  let real = real_dir(dir)
+  let search = @cli.run([
+    "search", "--live", "--root", dir, "--engine", "bitmap", "a.txt",
+  ])
+  let count = @cli.run([
+    "count", "--live", "--root", dir, "--engine", "bitmap", "ext:pdf",
+  ])
+  let miss = @cli.run([
+    "search", "--live", "--root", dir, "--engine", "bitmap", "ext:mp4",
+  ])
+  let explain = @cli.run([
+    "search", "--live", "--root", dir, "--engine", "bitmap", "--explain", "a.txt",
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match search {
+    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    _ => abort("expected the bitmap engine to match a.txt")
+  }
+  match count {
+    @cli.Success(text) => assert_eq(text, "1")
+    _ => abort("expected the bitmap engine to count the pdf")
+  }
+  assert_eq(miss.exit_code(), 1)
+  match explain {
+    @cli.SuccessWith(out, diagnostics) => {
+      assert_eq(out, "\{real}/a.txt")
+      assert_true(diagnostics.contains("plan: (trigram#"))
+      assert_true(diagnostics.contains("(substring \"a.txt\" nocase)"))
+    }
+    _ => abort("expected bitmap explain diagnostics")
   }
 }
 

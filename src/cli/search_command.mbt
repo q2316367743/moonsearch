@@ -56,12 +56,18 @@ fn build_query(
 }
 
 ///|
-/// Reject the bitmap engine until S06 lands.
-fn check_engine(matches : @argparse.Matches) -> Result[Unit, String] {
+/// The execution engine selected by `--engine`.
+priv enum Engine {
+  ScanEngine
+  BitmapEngine
+}
+
+///|
+/// Parse `--engine`.
+fn engine_of(matches : @argparse.Matches) -> Result[Engine, String] {
   match first_option_value(matches, "engine").unwrap_or("scan") {
-    "scan" => Ok(())
-    "bitmap" =>
-      Err("error: the bitmap engine is not implemented yet; pass --engine scan")
+    "scan" => Ok(ScanEngine)
+    "bitmap" => Ok(BitmapEngine)
     other => Err("error: --engine must be scan or bitmap, got '\{other}'")
   }
 }
@@ -151,6 +157,49 @@ fn elapsed_ms(started : UInt64) -> Int64 {
 }
 
 ///|
+/// Build the in-memory index a live bitmap query runs against.
+///
+/// The product default is `--fast-fields size,mtime`: the other range fields
+/// materialize on first use inside the query compiler. The trigram postings are
+/// built because a name term is the common case; `--no-trigram` belongs to the
+/// index command, which is where an index shape is chosen.
+fn live_index(store : @core.Store) -> @index.Index {
+  @index.Index::build(
+    store,
+    eager=@index.RangeFieldSet::of([
+      @index.RangeField::Size,
+      @index.RangeField::MTime,
+    ]),
+  )
+}
+
+///|
+/// Turn an id set into hits in canonical order.
+///
+/// This is the streaming half of the indexed engine: walking the canonical
+/// order and checking membership keeps `--limit` early-stopping and gives the
+/// default name order without a per-query sort. Sorting by other keys is S11.
+fn hits_of_ids(
+  store : @core.Store,
+  ids : @ids.Ids,
+  limit : Int32,
+) -> Array[@core.EntryRef] {
+  let hits : Array[@core.EntryRef] = []
+  if ids.is_empty() {
+    return hits
+  }
+  for entry in store.entries_in_order() {
+    if ids.contains(store.global_id(entry)) {
+      hits.push(entry)
+      if limit > 0 && hits.length() >= limit {
+        break
+      }
+    }
+  }
+  hits
+}
+
+///|
 /// Render hits as newline-separated full paths.
 fn format_hits(store : @core.Store, hits : Array[@core.EntryRef]) -> String {
   let out = StringBuilder()
@@ -174,6 +223,7 @@ fn search_diagnostics(
   store : @core.Store,
   hit_count : Int32,
   scan_ms : Int64,
+  index_ms : Int64?,
   exec_ms : Int64,
   live : Bool,
 ) -> String {
@@ -186,6 +236,10 @@ fn search_diagnostics(
     if live {
       out.write_string("scan: \{scan_ms} ms\n")
     }
+    match index_ms {
+      Some(ms) => out.write_string("index: \{ms} ms\n")
+      None => ()
+    }
     out.write_string("entries: \{store.entry_count()}\n")
     out.write_string("matches: \{hit_count}\n")
     out.write_string("search: \{exec_ms} ms\n")
@@ -194,11 +248,11 @@ fn search_diagnostics(
 }
 
 ///|
-/// Run `search` on the scan engine.
+/// Run `search` with the selected engine.
 async fn run_search(invocation : Invocation) -> CliResult {
   let matches = invocation.matches
-  match check_engine(matches) {
-    Ok(_) => ()
+  let engine = match engine_of(matches) {
+    Ok(engine) => engine
     Err(message) => return Failure(message)
   }
   match check_output_options(matches) {
@@ -224,19 +278,43 @@ async fn run_search(invocation : Invocation) -> CliResult {
     Err(message) => return Failure(message)
   }
   let scan_ms = elapsed_ms(scan_started)
-  let exec_started = @env.now()
-  let executed = Ok(@exec.exec_scan_with(store, query, options~)) catch {
-    err => Err("error: \{err.message()}")
-  }
-  let hits = match executed {
-    Ok(hits) => hits
-    Err(message) => return Failure(message)
-  }
-  let exec_ms = elapsed_ms(exec_started)
-  let plan = if flag_set(matches, "explain") {
-    explain_plan(query, options)
-  } else {
-    ""
+  let mut hits : Array[@core.EntryRef] = []
+  let mut index_ms : Int64? = None
+  let mut plan = ""
+  let mut exec_ms = 0L
+  match engine {
+    ScanEngine => {
+      let exec_started = @env.now()
+      let executed = Ok(@exec.exec_scan_with(store, query, options~)) catch {
+        err => Err("error: \{err.message()}")
+      }
+      hits = match executed {
+        Ok(hits) => hits
+        Err(message) => return Failure(message)
+      }
+      exec_ms = elapsed_ms(exec_started)
+      if flag_set(matches, "explain") {
+        plan = explain_scan_plan(query, options)
+      }
+    }
+    BitmapEngine => {
+      let build_started = @env.now()
+      let index = live_index(store)
+      index_ms = Some(elapsed_ms(build_started))
+      let exec_started = @env.now()
+      let executed = Ok(@exec.exec_indexed(index, query)) catch {
+        err => Err("error: \{err.message()}")
+      }
+      let ids = match executed {
+        Ok(ids) => ids
+        Err(message) => return Failure(message)
+      }
+      hits = hits_of_ids(store, ids, options.limit)
+      exec_ms = elapsed_ms(exec_started)
+      if flag_set(matches, "explain") {
+        plan = explain_bitmap_plan(index, query)
+      }
+    }
   }
   let diagnostics = search_diagnostics(
     matches,
@@ -245,6 +323,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
     store,
     hits.length(),
     scan_ms,
+    index_ms,
     exec_ms,
     live,
   )
@@ -259,10 +338,13 @@ async fn run_search(invocation : Invocation) -> CliResult {
 }
 
 ///|
-/// Compile the plan for `--explain`. Search already compiled the same query, so
-/// a failure here is not expected; reporting an empty plan is safer than
-/// turning a successful search into an error.
-fn explain_plan(query : @query.Query, options : @exec.ScanOptions) -> String {
+/// Compile the scan plan for `--explain`. Search already compiled the same
+/// query, so a failure here is not expected; reporting an error is safer than
+/// turning a successful search into a crash.
+fn explain_scan_plan(
+  query : @query.Query,
+  options : @exec.ScanOptions,
+) -> String {
   let explained = Ok(@exec.explain_query(query, options~)) catch {
     err => Err(err.message())
   }
@@ -273,11 +355,23 @@ fn explain_plan(query : @query.Query, options : @exec.ScanOptions) -> String {
 }
 
 ///|
-/// Run `count` on the scan engine.
+/// Compile the indexed plan for `--explain`.
+fn explain_bitmap_plan(index : @index.Index, query : @query.Query) -> String {
+  let explained = Ok(@exec.explain_indexed(index, query)) catch {
+    err => Err(err.message())
+  }
+  match explained {
+    Ok(plan) => plan
+    Err(message) => "error: \{message}"
+  }
+}
+
+///|
+/// Run `count` with the selected engine.
 async fn run_count(invocation : Invocation) -> CliResult {
   let matches = invocation.matches
-  match check_engine(matches) {
-    Ok(_) => ()
+  let engine = match engine_of(matches) {
+    Ok(engine) => engine
     Err(message) => return Failure(message)
   }
   let flags = match query_flags_of(matches) {
@@ -296,23 +390,55 @@ async fn run_count(invocation : Invocation) -> CliResult {
   }
   let scan_ms = elapsed_ms(scan_started)
   let options = @exec.ScanOptions::new()
-  let exec_started = @env.now()
-  let counted = Ok(@exec.exec_count_with(store, query, options~)) catch {
-    err => Err("error: \{err.message()}")
+  let mut count = 0
+  let mut index_ms : Int64? = None
+  let mut plan = ""
+  let mut exec_ms = 0L
+  match engine {
+    ScanEngine => {
+      let exec_started = @env.now()
+      let counted = Ok(@exec.exec_count_with(store, query, options~)) catch {
+        err => Err("error: \{err.message()}")
+      }
+      count = match counted {
+        Ok(count) => count
+        Err(message) => return Failure(message)
+      }
+      exec_ms = elapsed_ms(exec_started)
+      if flag_set(matches, "explain") {
+        plan = explain_scan_plan(query, options)
+      }
+    }
+    BitmapEngine => {
+      let build_started = @env.now()
+      let index = live_index(store)
+      index_ms = Some(elapsed_ms(build_started))
+      let exec_started = @env.now()
+      let counted = Ok(@exec.exec_indexed_count(index, query)) catch {
+        err => Err("error: \{err.message()}")
+      }
+      count = match counted {
+        Ok(count) => count
+        Err(message) => return Failure(message)
+      }
+      exec_ms = elapsed_ms(exec_started)
+      if flag_set(matches, "explain") {
+        plan = explain_bitmap_plan(index, query)
+      }
+    }
   }
-  let count = match counted {
-    Ok(count) => count
-    Err(message) => return Failure(message)
-  }
-  let exec_ms = elapsed_ms(exec_started)
   let out = StringBuilder()
   if flag_set(matches, "explain") {
     out.write_string("query: \{query.describe()}\n")
-    out.write_string("plan: \{explain_plan(query, options)}\n")
+    out.write_string("plan: \{plan}\n")
   }
   if flag_set(matches, "stats") {
     if live {
       out.write_string("scan: \{scan_ms} ms\n")
+    }
+    match index_ms {
+      Some(ms) => out.write_string("index: \{ms} ms\n")
+      None => ()
     }
     out.write_string("entries: \{store.entry_count()}\n")
     out.write_string("matches: \{count}\n")
