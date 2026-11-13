@@ -9,7 +9,7 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S08 — range indexes**. `index` and `update`
+> Status: **S09 — trigram inverted index**. `index` and `update`
 > walk real directory trees and build an in-memory `Store` with post-order
 > statistics. `src/query` parses the full field/modifier macro syntax into a
 > typed `Query` tree, and `src/exec` evaluates it against a store with a
@@ -20,9 +20,12 @@ algebra, and range arrays. The design is documented in
 > `files_all`/`folders_all`, hidden/visible, root subtrees, and the six built-in
 > category macros — and the S08 `Ranges`: sorted `(value, id)` arrays for size,
 > mtime, depth, child count, and parent, with `parent` built by counting sort and
-> the non-eager fields materialized on first use (`--fast-fields`). Each index
-> set is cross-checked against the scan engine. The index is still in memory
-> only; the query compiler (S10) and persistence (S12) come next.
+> the non-eager fields materialized on first use (`--fast-fields`). S09 adds the
+> `TrigramIndex`: one posting per ASCII-folded 3-byte name window, intersection
+> of the shortest postings with merge and galloping, stop-gram skipping, and
+> short-needle fallback to a full scan. Each index set is cross-checked against
+> the scan engine. The index is still in memory only; the query compiler (S10)
+> and persistence (S12) come next.
 
 ## Build and run
 
@@ -304,8 +307,8 @@ and checked against an independent membership-mask implementation. See
 
 The bitmap engine is not wired into the CLI yet: `--engine bitmap` still reports
 that it is not implemented, and the default remains the S05 scan engine. S08
-builds the range indexes on top of `Ids::Sorted`, and S10 compiles queries into
-these sets.
+builds the range indexes on top of `Ids::Sorted`, S09 builds the trigram
+postings, and S10 compiles queries into these sets.
 
 ## Field dictionary (S07)
 
@@ -369,6 +372,38 @@ S10 the scan engine remains the only query path.
 
 The range arrays are not persisted yet; S12 writes them as the `RANGES` section.
 
+## Trigram inverted index (S09)
+
+`src/index/trigram.mbt` adds the candidate source for ordinary substring terms:
+one posting per distinct ASCII-folded 3-byte window of every entry name.
+
+- **Extraction** — names are folded with `util.ascii_lower` (ASCII only), each
+  3-byte window is packed into a 24-bit `UInt32`, and repeated windows inside one
+  name are removed before its id is appended. Names shorter than three bytes
+  carry no trigram and are only counted; a longer needle cannot match them.
+- **Storage** — an ascending `keys : Array[UInt32]` plus parallel
+  `TrigramPosting` arrays, so a lookup is a binary search and the build-time hash
+  map is released. Ids arrive in store-wide order, which makes every posting
+  ascending without a final sort.
+- **Lookup** — a needle shorter than three bytes returns a full scan; a missing
+  trigram returns the empty candidate set; postings above 20% of the index are
+  stop-grams and are skipped; the three shortest remaining postings are
+  intersected. The result is a superset that still needs byte verification.
+- **Intersection** — a merge when the lists are comparable in length, and
+  galloping (exponential probe, then binary search) when one list is at least
+  32× shorter. Both branches keep the result ascending and duplicate-free.
+- **CLI** — `index`/`update` build the postings unless `--no-trigram` is passed.
+  `--stats` reports
+  `trigram: <keys> keys, <postings> postings, <short> short names, <stop> stop-grams, <bytes> B`,
+  or `trigram: disabled`.
+- **Cross-check** — `exec/trigram_compat_test.mbt` enumerates every substring of
+  every fixture name and asserts that the scan-engine results for the default,
+  `case:`, and `exact:` queries are all contained in the trigram candidates. It
+  also pins the fallbacks: short needles, missing trigrams, short names,
+  stop-grams, and the fact that name-only postings do not cover `path:` terms.
+
+The postings are not persisted yet; S12 writes them as the `POSTINGS` section.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -394,7 +429,7 @@ Layout:
 src/util/          byte helpers, extension/category rules, path/glob/date parsing
 src/core/          version, exit codes, name pool, entry/store model, global ids
 src/platform/      ScanSource trait and the async/fs backend
-src/index/         excludes, builder, scanner, field dictionary, range indexes
+src/index/         excludes, builder, scanner, dictionary, ranges, trigram postings
 src/query/         lexer, parser, query AST, flags, values, macros, categories
 src/exec/          scan engine: compiled predicates, exec_scan, exec_count
 src/ids/           Ids set algebra, compressed bitmap containers, serialization
@@ -405,7 +440,7 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S08; later steps add trigram postings, execution plans, persistence, and
+S09; later steps add the query compiler, execution plans, persistence, and
 benchmarks. Module notes live in `docs/modules/`.
 
 ## License

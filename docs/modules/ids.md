@@ -156,6 +156,6 @@ sorted: len 个无符号 LEB128 增量；首个值为绝对 id，后续为与前
 
 S07 已把 `Ids` 用作字段字典 `index::Dict` 的存储：`ext`、`files_all`/`folders_all`、
 `hidden`/`visible`、`root`、`TypeCat` 都是 `Ids`，构建时按总条目数调用
-`normalize(total)` 选择形态。CLI 的 `--engine bitmap` 仍然报“未实现”，因为位图执行器
-还需要 S08 的范围索引，并由 S10 把 `Query` 编译到这些集合上。S08 将把范围查询结果
-构造成 `Ids::Sorted`。
+`normalize(total)` 选择形态。S08 把范围查询结果构造成升序数组，再经
+`Ids::from_sorted(..., total)` 定形；S09 的 trigram 交集结果走同一条路径。CLI 的
+`--engine bitmap` 仍然报“未实现”，因为 S10 才会把 `Query` 编译到这些集合上。

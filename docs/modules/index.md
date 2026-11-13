@@ -1,7 +1,8 @@
-# index — 扫描、构建器、字段字典与范围索引
+# index — 扫描、构建器、字段字典、范围索引与 trigram 倒排
 
-`src/index` 负责把目录树变成 `core.Store`，并在扫描结束后建立 S07 的字段字典 `Dict`
-与 S08 的范围索引 `Ranges`。它依赖 `core`、`ids`、`util` 与 `platform`，不依赖查询层。
+`src/index` 负责把目录树变成 `core.Store`，并在扫描结束后建立 S07 的字段字典 `Dict`、
+S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依赖 `core`、`ids`、
+`util` 与 `platform`，不依赖查询层。
 
 ## 职责
 
@@ -9,6 +10,7 @@
 - `Builder`：追加根、文件夹、文件，维护名字池与两个条目数组。
 - `Dict`：低基数字段的位图集合（扩展名、类型、隐藏、根、内置分类）。
 - `Ranges`：高基数与范围字段的有序 `(value, id)` 数组（大小、时间、深度、子项数、父目录）。
+- `TrigramIndex`：名字的 3 字节倒排，为子串查询提供候选集。
 - 排除规则的解析与匹配（`ExcludeRule`）。
 
 ## 文件
@@ -20,6 +22,7 @@
 | `exclude.mbt` | `ExcludeRule`、`ExcludeScope`、`ExcludeTarget` |
 | `dict.mbt` | `Dict`、`ExtensionEntry`、构建期物化 |
 | `range.mbt` | `RangeField`、`RangeFieldSet`、`RangeIndex`、`Ranges`、`ParentPaths` |
+| `trigram.mbt` | `TrigramIndex`、`TrigramPosting`、`TrigramLookup`、提取与交集 |
 | `errors.mbt` | `IndexError` |
 
 ## 扫描与构建器
@@ -144,13 +147,111 @@ range(lo, hi) [lower_bound(lo), lower_bound(hi))   // 半开
   O(log F · L)，L 为路径长度。
 - 内存：每字段约 12 B/条目（`Int64` 值 + `Int32` id），与计划第 10 节的预算一致。
 
+## Trigram 倒排 `TrigramIndex`（S09）
+
+`TrigramIndex` 是第三个候选集来源：名字的三字节片段倒排，服务于普通子串查询。它只
+索引名字（`Store::entry_name`），不索引路径；查询方拿到的永远是候选集，必须再对候选
+逐条做真正的字节比较。
+
+### 结构与构建
+
+| 组成 | 说明 |
+| --- | --- |
+| 键 | 3 字节窗口打包成 24 位 `UInt32`，高字节在前 |
+| posting | `TrigramPosting`，内部是升序无重复的 `Int32` id 数组 |
+| 存储 | 升序 `keys : Array[UInt32]` + 平行 `postings : Array[TrigramPosting]` |
+
+键和 posting 各用一个平行数组而不是 Map：查找是一次二分，构建结束后 hash 容器立即
+释放，迭代顺序也天然确定。
+
+```text
+TrigramIndex::build(store):
+  1. 按全局 id 顺序遍历文件夹与文件（文件夹 0..F-1，文件从 F 开始）
+  2. 名字长度 < 3：计入 short_names，不产生键
+  3. ASCII 折叠（只折叠 A-Z），逐窗口取 3 字节键
+  4. 同一名字内按键排序去重
+  5. 键 -> 追加 id；遍历本身按 id 升序，posting 因此天然有序
+  6. Map 转数组、按键排序，构建期 hash 容器释放
+```
+
+- 文件夹与文件共用同一个 id 空间，文件夹名也会产生 posting；短名字（包括 `/r` 这样
+  的根名）只计入 `short_name_count`。长度 < 3 的名字不可能包含长度 ≥ 3 的 needle，
+  所以不需要候选列表。
+- 重复窗口必须在名字内去重：`aaaa` 会切出三个 `aaa`，若直接追加会让同一 id 在
+  posting 中出现多次，破坏 `Ids` 依赖的升序无重复不变量。
+- 非 ASCII 字节原样参与切分；大小写折叠只覆盖 ASCII，与扫描引擎的匹配规则一致。
+
+### 查询：取最短 posting 交集
+
+```text
+lookup(needle):
+  1. needle < 3 字节                      -> 全量扫描
+  2. 提取 needle 的全部去重 trigram
+  3. 任一 trigram 没有 posting            -> 候选集必为空（missing）
+  4. posting 基数 > N/5                   -> stop-gram，跳过
+  5. 剩余 posting 按长度升序取前 3 个做交集
+  6. 交集结果 -> Ids::from_sorted(..., total)
+```
+
+- **不漏报**：任何匹配的名字必须包含 needle 的每一个 trigram，因此只交集其中一部分
+  仍是超集；任一 trigram 的 posting 缺失时结果一定为空。
+- **stop-gram**：基数严格超过索引总条目 20% 的 posting 无法有效收窄候选，查询时
+  跳过；恰好 1/5 仍然保留。若所有 trigram 都是 stop-gram，返回全量扫描。
+- **短词退化**：needle < 3 字节时没有 trigram，`is_full_scan()` 为真，调用方在全集
+  （或其他字段的集合）上求值。
+- **大小写**：索引始终按 ASCII 折叠存储。大小写敏感的查询可以复用同一候选集：折叠
+  只会放大候选，最终由逐字节比较裁决。
+- **路径 / glob / regex**：本步只覆盖名字子串。`path:` 不能直接使用该候选集（needle
+  可能只出现在父目录名里），glob/regex 也应回退扫描；这些取舍由 S10 编译层执行。
+
+### 交集算法
+
+`posting_intersect` 以较短列表驱动：
+
+- 长度相近（短边 × 32 ≥ 长边）：归并式交集，一次线性扫描两个数组。
+- 长度悬殊（短边 × 32 < 长边）：galloping。每个短边 id 在长边上做指数探测
+  （步长 1、2、4…）再二分，并从上一次位置继续。
+
+两条分支都保持结果升序无重复。`trigram_wbtest.mbt` 用嵌套循环的朴素交集作为 oracle，
+分别覆盖两条分支以及空列表、无交集、全交集、末尾探测等边界。
+
+### 统计与 `--no-trigram`
+
+`index --stats` 增加一行：
+
+```text
+trigram: <keys> keys, <postings> postings, <short> short names, <stop> stop-grams, <bytes> B
+```
+
+`--no-trigram` 跳过 posting 构建，该行显示 `trigram: disabled`。`posting_bytes` 只统计
+posting 的 `Int32` 数组（4 B/条），不含键与对象头；S12 持久化后会用 delta-varint
+替换。`TrigramLookup::describe()` 提供稳定单行文本（`trigram: 3 keys, N candidate ids`
+/ `trigram: scan` / `trigram: miss`），供 S10 的 `--explain` 使用。
+
+### 复杂度与内存
+
+- 构建：O(N·L) 字节遍历 + 每名字 O(L log L) 的键排序去重 + O(K log K) 键排序，
+  K 为不同 trigram 数。
+- 查询：O(k · (log K + log N)) 次二分，k ≤ 3；候选集只与命中规模相关。
+- 内存：键 4 B/个，posting 4 B/id。100 万条目、约 1300 万 posting 时 posting 数组
+  约 52 MB；这是内存定长形态，S12 的 delta-varint 会把磁盘体积压到计划估算的
+  ~25 MB 量级。
+
 ## 测试
 
 - `dict_test.mbt`：统一 id、隐藏/可见划分、扩展名折叠与空扩展名、分类物化、根集合、
   确定性、空索引。
 - `range_test.mbt`：`RangeIndex` 的排序、上下界、半开区间、空/反向区间、重复值、密度
   形态；五个字段的构建结果；`parent` 计数排序与路径查找；懒构建；空索引与确定性。
+- `trigram_test.mbt`：键序与 posting 升序、重复窗口去重、ASCII 折叠、非 ASCII 字节、
+  短名字、空索引、缺失 trigram、stop-gram 跳过、确定性。
+- `trigram_wbtest.mbt`：`name_trigrams` / `pack_trigram`、归并与 galloping 两条交集
+  分支、`gallop_lower_bound` 边界。
 - `exec/dict_compat_test.mbt`：把字典结果逐项展开成路径，与扫描引擎的 `file:`、
   `folder:`、`hidden:`、`nohidden:`、`ext:`、内置宏查询结果对拍。
 - `exec/range_compat_test.mbt`：范围字段与扫描引擎的 `size:`、`dm:`、`depth:`、
   `childcount:`、`empty:`、`parent:` 对拍。
+- `exec/trigram_compat_test.mbt`：S09 的核心性质测试——对每个名字的全部长度 ≥ 3
+  子串分别以默认、`case:`、`exact:` 运行扫描引擎，断言每个命中 id 都在 trigram
+  候选集内；同时覆盖缺失 trigram、短 needle、短名字、stop-gram 与 `path:` 的边界，
+  并断言“至少一次走 posting、至少一次走全扫”。

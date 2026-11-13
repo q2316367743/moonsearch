@@ -8,8 +8,9 @@
 /// zone. S06 adds the `Ids` set algebra and the compressed bitmap containers
 /// that the bitmap engine will evaluate on. S07 adds the field dictionary of
 /// low-cardinality sets and S08 adds the sorted range indexes for size, mtime,
-/// depth, child count, and parent. Later steps add trigram postings,
-/// persistence, and the query compiler.
+/// depth, child count, and parent. S09 adds the trigram inverted index over
+/// names, with posting intersection, stop-grams, and short-needle degradation.
+/// Later steps add persistence and the query compiler.
 pub using @core {
   VERSION,
   VERSION_TEXT,
@@ -97,6 +98,8 @@ pub using @platform {
 
 ///|
 pub using @index {
+  TRIGRAM_POSTING_LIMIT,
+  TRIGRAM_STOP_GRAM_DIVISOR,
   type Builder,
   type Dict,
   type ExcludeKind,
@@ -113,6 +116,9 @@ pub using @index {
   type ScanConfig,
   type ScanIssue,
   type ScanReport,
+  type TrigramIndex,
+  type TrigramLookup,
+  type TrigramPosting,
   scan,
 }
 

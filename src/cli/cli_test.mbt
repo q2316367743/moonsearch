@@ -598,6 +598,10 @@ async test "stats and verbose write diagnostics to stderr" {
       assert_true(diagnostics.contains("mtime="))
       assert_false(diagnostics.contains("depth="))
       assert_false(diagnostics.contains("parent="))
+      // The trigram postings are built unless --no-trigram is passed.
+      assert_true(diagnostics.contains("trigram: "))
+      assert_true(diagnostics.contains("keys, "))
+      assert_true(diagnostics.contains("postings, "))
       assert_true(diagnostics.contains("skipped: hidden=0 excluded=0 mount=0"))
       assert_true(diagnostics.contains("issues: 0"))
       // Without --verbose the per-root line is absent.
@@ -620,6 +624,22 @@ async test "stats and verbose write diagnostics to stderr" {
       assert_true(diagnostics.contains("scan:"))
     }
     _ => abort("expected verbose and stats diagnostics")
+  }
+}
+
+///|
+async test "--no-trigram disables the posting build" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["index", "--stats", "--no-trigram", dir])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(_, diagnostics) => {
+      assert_true(diagnostics.contains("trigram: disabled"))
+      // The dictionary and range indexes are still built.
+      assert_true(diagnostics.contains("dict: "))
+      assert_true(diagnostics.contains("ranges: size="))
+    }
+    _ => abort("expected stats with a disabled trigram index")
   }
 }
 

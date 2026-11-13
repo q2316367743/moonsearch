@@ -154,12 +154,26 @@ fn loaded_ranges(ranges : @index.Ranges) -> String {
 }
 
 ///|
+/// Summarize the trigram index, or report that `--no-trigram` skipped it.
+///
+/// The byte figure is the in-memory posting arrays only; S12 replaces them with
+/// the delta-varint `POSTINGS` section on disk.
+fn describe_trigram(trigram : @index.TrigramIndex?) -> String {
+  match trigram {
+    Some(index) =>
+      "\{index.key_count()} keys, \{index.posting_count()} postings, \{index.short_name_count()} short names, \{index.stop_gram_count()} stop-grams, \{index.posting_bytes()} B"
+    None => "disabled"
+  }
+}
+
+///|
 /// Build the `--verbose` / `--stats` diagnostics.
 fn diagnostics_of(
   invocation : Invocation,
   report : @index.ScanReport,
   dict : @index.Dict,
   ranges : @index.Ranges,
+  trigram : @index.TrigramIndex?,
   elapsed_ms : Int64,
 ) -> String {
   let matches = invocation.matches
@@ -185,6 +199,7 @@ fn diagnostics_of(
       "dict: \{dict.extension_count()} extensions, \{dict.type_category_count()} categories, \{dict.hidden().cardinality()} hidden\n",
     )
     out.write_string("ranges: \{loaded_ranges(ranges)}\n")
+    out.write_string("trigram: \{describe_trigram(trigram)}\n")
     out.write_string(
       "skipped: hidden=\{report.skipped_hidden} excluded=\{report.skipped_excluded} mount=\{report.skipped_mount}\n",
     )
@@ -228,15 +243,21 @@ async fn run_index(invocation : Invocation) -> CliResult {
   match outcome {
     Err(message) => Failure(message)
     Ok(report) => {
-      // Materialize the dictionary and the eager range indexes as part of the
-      // index build; S10 evaluates queries on them and S12 persists them.
+      // Materialize the dictionary, the eager range indexes, and the trigram
+      // postings as part of the index build; S10 evaluates queries on them and
+      // S12 persists them.
       let dict = @index.Dict::build(report.store)
       let ranges = @index.Ranges::build(report.store, eager=fast_fields)
+      let trigram = if flag_set(invocation.matches, "no-trigram") {
+        None
+      } else {
+        Some(@index.TrigramIndex::build(report.store))
+      }
       let quiet = flag_set(invocation.matches, "quiet")
       let mut diagnostics = if quiet {
         ""
       } else {
-        diagnostics_of(invocation, report, dict, ranges, elapsed_ms)
+        diagnostics_of(invocation, report, dict, ranges, trigram, elapsed_ms)
       }
       if flag_set(invocation.matches, "one-file-system") &&
         !report.device_ids_available {

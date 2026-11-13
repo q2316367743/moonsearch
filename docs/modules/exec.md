@@ -1,6 +1,6 @@
 # exec — 线性扫描执行器与谓词
 
-`src/exec` 是 S05 建立、S07/S08 扩展的扫描引擎。它逐条遍历规范顺序，对每个条目求值，
+`src/exec` 是 S05 建立、S07–S09 扩展的扫描引擎。它逐条遍历规范顺序，对每个条目求值，
 是位图引擎的对拍 oracle。本模块不拥有索引结构，只读取 `core.Store` 与 `query.Query`。
 
 ## 文件
@@ -13,6 +13,7 @@
 | `scan.mbt` | `exec_scan` / `exec_count` / `ScanOptions` |
 | `dict_compat_test.mbt` | S07 字典与扫描引擎的对拍 |
 | `range_compat_test.mbt` | S08 范围索引与扫描引擎的对拍 |
+| `trigram_compat_test.mbt` | S09 trigram 候选集 ⊇ 扫描结果的性质测试 |
 
 ## 编译
 
@@ -77,3 +78,26 @@ S08 的 `index.Ranges` 必须与扫描谓词对同一字段给出同一集合。
 - `parent:` 只匹配有父目录的条目，根永不匹配；路径按字节精确比较，尾斜杠在编译期
   归一化；
 - `dm:` 的日历解析仍在 `compile.mbt` 完成，索引只接收解析后的绝对秒区间。
+
+## 与 trigram 倒排共享的规则
+
+S09 的 `index.TrigramIndex` 只负责把普通名字子串变成候选集，语义仍由扫描引擎的
+`match_name` 定义。`exec/trigram_compat_test.mbt` 用性质测试固定这条边界：
+
+```text
+对每个名字的全部长度 ≥ 3 子串 s：
+  scan(name_query(s))            ⊆ candidates(lookup(s))
+  scan(case:name_query(s))       ⊆ candidates(lookup(s))
+  scan(exact:name_query(s))      ⊆ candidates(lookup(s))
+```
+
+- 交集只取最短的若干个 posting，所以候选集是超集；候选必须再经过
+  `util.find_bytes_with` / `eq_bytes` 等真正的字节比较，不能直接当作结果。
+- 候选集为空（缺失 trigram）时，扫描结果也必须为空。
+- needle < 3 字节、所有 trigram 都是 stop-gram 时 `candidates()` 返回 `None`，
+  调用方对全集求值；这与“短名字没有 posting”一致，因为长度 < 3 的名字也不可能
+  包含长度 ≥ 3 的 needle。
+- 大小写折叠只会让候选变多，所以 `case:` 查询可以复用同一候选集。
+- **不能**直接用于 `path:`、glob 与 regex：`path:` 的匹配可能只出现在父目录名中，
+  glob/regex 的匹配文本也不一定是连续子串。S10 必须让这些 term 回退到扫描，或只
+  使用其他字段产生的候选集。

@@ -9,6 +9,10 @@ import {
 }
 
 // Values
+pub const TRIGRAM_POSTING_LIMIT : Int32 = 3
+
+pub const TRIGRAM_STOP_GRAM_DIVISOR : Int32 = 5
+
 pub async fn[Source : @platform.ScanSource] scan(ScanConfig, Source) -> ScanReport raise IndexError
 
 // Errors
@@ -185,6 +189,39 @@ pub(all) struct ScanReport {
   skipped_mount : Int32
   device_ids_available : Bool
 }
+
+pub struct TrigramIndex {
+  // private fields
+}
+pub fn TrigramIndex::build(@core.Store) -> Self
+pub fn TrigramIndex::empty() -> Self
+pub fn TrigramIndex::entry_count(Self) -> Int32
+pub fn TrigramIndex::key_at(Self, Int32) -> UInt32?
+pub fn TrigramIndex::key_count(Self) -> Int32
+pub fn TrigramIndex::lookup(Self, BytesView) -> TrigramLookup
+pub fn TrigramIndex::posting(Self, UInt32) -> TrigramPosting?
+pub fn TrigramIndex::posting_at(Self, Int32) -> TrigramPosting?
+pub fn TrigramIndex::posting_bytes(Self) -> Int64
+pub fn TrigramIndex::posting_count(Self) -> Int32
+pub fn TrigramIndex::short_name_count(Self) -> Int32
+pub fn TrigramIndex::stop_gram_count(Self) -> Int32
+
+pub struct TrigramLookup {
+  // private fields
+}
+pub fn TrigramLookup::candidates(Self) -> @ids.Ids?
+pub fn TrigramLookup::describe(Self) -> String
+pub fn TrigramLookup::is_full_scan(Self) -> Bool
+pub fn TrigramLookup::is_missing(Self) -> Bool
+pub fn TrigramLookup::key_count(Self) -> Int32
+pub fn TrigramLookup::stop_gram_count(Self) -> Int32
+
+pub struct TrigramPosting {
+  // private fields
+}
+pub fn TrigramPosting::ids(Self) -> ArrayView[Int32]
+pub fn TrigramPosting::is_empty(Self) -> Bool
+pub fn TrigramPosting::len(Self) -> Int32
 
 // Type aliases
 

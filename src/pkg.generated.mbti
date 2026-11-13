@@ -49,6 +49,10 @@ pub const MAX_NAME_LEN : Int32 = 65535
 
 pub const NO_PARENT : Int32 = -1
 
+pub const TRIGRAM_POSTING_LIMIT : Int32 = 3
+
+pub const TRIGRAM_STOP_GRAM_DIVISOR : Int32 = 5
+
 pub const VERSION : String = "0.1.0"
 
 pub const VERSION_TEXT : String = "moonsearch 0.1.0"
@@ -247,6 +251,12 @@ pub using @query {type TermBody}
 pub using @query {type Token}
 
 pub using @query {type TokenKind}
+
+pub using @index {type TrigramIndex}
+
+pub using @index {type TrigramLookup}
+
+pub using @index {type TrigramPosting}
 
 pub using @util {type TypeCategory}
 
