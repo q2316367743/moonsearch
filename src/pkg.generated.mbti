@@ -216,6 +216,14 @@ pub using @query {type Query}
 
 pub using @query {type QueryError}
 
+pub using @index {type RangeField}
+
+pub using @index {type RangeFieldSet}
+
+pub using @index {type RangeIndex}
+
+pub using @index {type Ranges}
+
 pub using @core {type RootInfo}
 
 pub using @index {type RootSpec}

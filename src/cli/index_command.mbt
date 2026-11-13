@@ -99,6 +99,21 @@ fn scan_config_of(invocation : Invocation) -> Result[@index.ScanConfig, String] 
 }
 
 ///|
+/// Parse `--fast-fields` into the range fields built eagerly.
+///
+/// The default `size,mtime` keeps startup work low; the remaining fields are
+/// built on first use by `Ranges`.
+fn fast_fields_of(
+  matches : @argparse.Matches,
+) -> Result[@index.RangeFieldSet, String] {
+  let text = first_option_value(matches, "fast-fields").unwrap_or("size,mtime")
+  match @index.RangeFieldSet::parse(text) {
+    Ok(fields) => Ok(fields)
+    Err(message) => Err("error: \{message}")
+  }
+}
+
+///|
 /// Format the stable stdout summary.
 fn summary_of(report : @index.ScanReport) -> String {
   let store = report.store
@@ -120,11 +135,31 @@ fn summary_of(report : @index.ScanReport) -> String {
 }
 
 ///|
+/// Summarize the range indexes that were actually built.
+///
+/// Only loaded fields appear, so the line shows the effect of `--fast-fields`
+/// instead of forcing every lazy field to materialize for statistics.
+fn loaded_ranges(ranges : @index.Ranges) -> String {
+  let parts : Array[String] = []
+  for field in @index.RangeField::all() {
+    if ranges.is_loaded(field) {
+      parts.push("\{field.name()}=\{ranges.field(field).len()}")
+    }
+  }
+  if parts.is_empty() {
+    "none"
+  } else {
+    parts.join(" ")
+  }
+}
+
+///|
 /// Build the `--verbose` / `--stats` diagnostics.
 fn diagnostics_of(
   invocation : Invocation,
   report : @index.ScanReport,
   dict : @index.Dict,
+  ranges : @index.Ranges,
   elapsed_ms : Int64,
 ) -> String {
   let matches = invocation.matches
@@ -149,6 +184,7 @@ fn diagnostics_of(
     out.write_string(
       "dict: \{dict.extension_count()} extensions, \{dict.type_category_count()} categories, \{dict.hidden().cardinality()} hidden\n",
     )
+    out.write_string("ranges: \{loaded_ranges(ranges)}\n")
     out.write_string(
       "skipped: hidden=\{report.skipped_hidden} excluded=\{report.skipped_excluded} mount=\{report.skipped_mount}\n",
     )
@@ -178,6 +214,10 @@ async fn run_index(invocation : Invocation) -> CliResult {
     Ok(config) => config
     Err(message) => return Failure(message)
   }
+  let fast_fields = match fast_fields_of(invocation.matches) {
+    Ok(fields) => fields
+    Err(message) => return Failure(message)
+  }
   let started = @env.now()
   let outcome = try @index.scan(config, @platform.system_source()) catch {
     err => Err("error: \{err.message()}")
@@ -188,14 +228,15 @@ async fn run_index(invocation : Invocation) -> CliResult {
   match outcome {
     Err(message) => Failure(message)
     Ok(report) => {
-      // Materialize the dictionary as part of the index build; S10 evaluates
-      // queries on it and S12 persists it.
+      // Materialize the dictionary and the eager range indexes as part of the
+      // index build; S10 evaluates queries on them and S12 persists them.
       let dict = @index.Dict::build(report.store)
+      let ranges = @index.Ranges::build(report.store, eager=fast_fields)
       let quiet = flag_set(invocation.matches, "quiet")
       let mut diagnostics = if quiet {
         ""
       } else {
-        diagnostics_of(invocation, report, dict, elapsed_ms)
+        diagnostics_of(invocation, report, dict, ranges, elapsed_ms)
       }
       if flag_set(invocation.matches, "one-file-system") &&
         !report.device_ids_available {

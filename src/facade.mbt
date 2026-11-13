@@ -6,8 +6,10 @@
 /// parsing, and macro expansion. S05 adds the scan engine that evaluates a
 /// compiled query against a store, including date resolution in the local time
 /// zone. S06 adds the `Ids` set algebra and the compressed bitmap containers
-/// that the bitmap engine will evaluate on. Later steps add the field indexes
-/// and persistence.
+/// that the bitmap engine will evaluate on. S07 adds the field dictionary of
+/// low-cardinality sets and S08 adds the sorted range indexes for size, mtime,
+/// depth, child count, and parent. Later steps add trigram postings,
+/// persistence, and the query compiler.
 pub using @core {
   VERSION,
   VERSION_TEXT,
@@ -103,6 +105,10 @@ pub using @index {
   type ExcludeTarget,
   type ExtensionEntry,
   type IndexError,
+  type RangeField,
+  type RangeFieldSet,
+  type RangeIndex,
+  type Ranges,
   type RootSpec,
   type ScanConfig,
   type ScanIssue,

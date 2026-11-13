@@ -1,7 +1,7 @@
 # exec — 线性扫描执行器与谓词
 
-`src/exec` 是 S05 建立、S07 扩展的扫描引擎。它逐条遍历规范顺序，对每个条目求值，是位图
-引擎的对拍 oracle。本模块不拥有索引结构，只读取 `core.Store` 与 `query.Query`。
+`src/exec` 是 S05 建立、S07/S08 扩展的扫描引擎。它逐条遍历规范顺序，对每个条目求值，
+是位图引擎的对拍 oracle。本模块不拥有索引结构，只读取 `core.Store` 与 `query.Query`。
 
 ## 文件
 
@@ -12,6 +12,7 @@
 | `content_type.mbt` | 扩展名 → MIME 表与 `contenttype:` |
 | `scan.mbt` | `exec_scan` / `exec_count` / `ScanOptions` |
 | `dict_compat_test.mbt` | S07 字典与扫描引擎的对拍 |
+| `range_compat_test.mbt` | S08 范围索引与扫描引擎的对拍 |
 
 ## 编译
 
@@ -53,3 +54,26 @@ S07 的对拍要求两套引擎在 `ext:`、`file:`、`folder:`、`hidden:`、�
 `exec/dict_compat_test.mbt` 把字典集合展开成路径，与 `exec_scan` 的结果排序后比较，
 覆盖 `file:`、`folder:`、`hidden:`、`nohidden:`、`file:hidden:`、`folder:hidden:`、
 `ext:`、空扩展名以及全部内置宏。
+
+## 与范围索引共享的规则
+
+S08 的 `index.Ranges` 必须与扫描谓词对同一字段给出同一集合。`exec/range_compat_test.mbt`
+负责对拍，映射关系即 S10 的编译规则：
+
+| 比较 | `RangeIndex` 方法 |
+| --- | --- |
+| `= v` | `equal(v)` |
+| `> v` | `greater_than(v)` |
+| `>= v` | `at_least(v)` |
+| `< v` | `less_than(v)` |
+| `<= v` | `at_most(v)` |
+| `a..b`（半开） | `range(a, b)` |
+
+需要保持的语义：
+
+- `size` / `dm` / `depth` 同时作用于文件与文件夹；`childcount` 只作用于文件夹，
+  `empty:` 等价于文件夹的 `childcount` 为 0；
+- `depth` 的根为 0，文件等于父目录深度加 1；
+- `parent:` 只匹配有父目录的条目，根永不匹配；路径按字节精确比较，尾斜杠在编译期
+  归一化；
+- `dm:` 的日历解析仍在 `compile.mbt` 完成，索引只接收解析后的绝对秒区间。

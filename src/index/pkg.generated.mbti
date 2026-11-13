@@ -95,6 +95,68 @@ pub struct ExtensionEntry {
 pub fn ExtensionEntry::extension(Self) -> BytesView
 pub fn ExtensionEntry::ids(Self) -> @ids.Ids
 
+pub(all) enum RangeField {
+  Size
+  MTime
+  Depth
+  ChildCount
+  Parent
+}
+pub fn RangeField::all() -> Array[Self]
+pub fn RangeField::from_name(StringView) -> Self?
+pub fn RangeField::name(Self) -> String
+
+pub struct RangeFieldSet {
+  // private fields
+}
+pub fn RangeFieldSet::all() -> Self
+pub fn RangeFieldSet::contains(Self, RangeField) -> Bool
+pub fn RangeFieldSet::describe(Self) -> String
+pub fn RangeFieldSet::empty() -> Self
+pub fn RangeFieldSet::is_empty(Self) -> Bool
+pub fn RangeFieldSet::of(Array[RangeField]) -> Self
+pub fn RangeFieldSet::parse(StringView) -> Result[Self, String]
+pub fn RangeFieldSet::single(RangeField) -> Self
+pub fn RangeFieldSet::size(Self) -> Int32
+pub fn RangeFieldSet::union(Self, Self) -> Self
+
+pub struct RangeIndex {
+  // private fields
+}
+pub fn RangeIndex::at_least(Self, Int64) -> @ids.Ids
+pub fn RangeIndex::at_most(Self, Int64) -> @ids.Ids
+pub fn RangeIndex::build(Array[(Int64, Int32)], total? : Int32) -> Self
+pub fn RangeIndex::empty() -> Self
+pub fn RangeIndex::equal(Self, Int64) -> @ids.Ids
+pub fn RangeIndex::greater_than(Self, Int64) -> @ids.Ids
+pub fn RangeIndex::id_at(Self, Int32) -> Int32?
+pub fn RangeIndex::ids(Self) -> ArrayView[Int32]
+pub fn RangeIndex::is_empty(Self) -> Bool
+pub fn RangeIndex::len(Self) -> Int32
+pub fn RangeIndex::less_than(Self, Int64) -> @ids.Ids
+pub fn RangeIndex::lower_bound(Self, Int64) -> Int32
+pub fn RangeIndex::range(Self, Int64, Int64) -> @ids.Ids
+pub fn RangeIndex::slice(Self, Int32, Int32) -> @ids.Ids
+pub fn RangeIndex::upper_bound(Self, Int64) -> Int32
+pub fn RangeIndex::value_at(Self, Int32) -> Int64?
+pub fn RangeIndex::values(Self) -> ArrayView[Int64]
+
+pub struct Ranges {
+  // private fields
+}
+pub fn Ranges::build(@core.Store, eager? : RangeFieldSet) -> Self
+pub fn Ranges::child_count(Self) -> RangeIndex
+pub fn Ranges::depth(Self) -> RangeIndex
+pub fn Ranges::eager_fields(Self) -> RangeFieldSet
+pub fn Ranges::entry_count(Self) -> Int32
+pub fn Ranges::field(Self, RangeField) -> RangeIndex
+pub fn Ranges::is_loaded(Self, RangeField) -> Bool
+pub fn Ranges::mtime(Self) -> RangeIndex
+pub fn Ranges::parent(Self) -> RangeIndex
+pub fn Ranges::parent_ids(Self, BytesView) -> @ids.Ids
+pub fn Ranges::parent_of(Self, BytesView) -> Int32?
+pub fn Ranges::size(Self) -> RangeIndex
+
 pub(all) struct RootSpec {
   path : String
   one_file_system : Bool

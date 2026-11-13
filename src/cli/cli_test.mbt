@@ -593,6 +593,11 @@ async test "stats and verbose write diagnostics to stderr" {
       assert_true(diagnostics.contains("names:"))
       assert_true(diagnostics.contains("dict: "))
       assert_true(diagnostics.contains("categories"))
+      // The default fast fields are built eagerly; the others stay lazy.
+      assert_true(diagnostics.contains("ranges: size="))
+      assert_true(diagnostics.contains("mtime="))
+      assert_false(diagnostics.contains("depth="))
+      assert_false(diagnostics.contains("parent="))
       assert_true(diagnostics.contains("skipped: hidden=0 excluded=0 mount=0"))
       assert_true(diagnostics.contains("issues: 0"))
       // Without --verbose the per-root line is absent.
@@ -615,6 +620,39 @@ async test "stats and verbose write diagnostics to stderr" {
       assert_true(diagnostics.contains("scan:"))
     }
     _ => abort("expected verbose and stats diagnostics")
+  }
+}
+
+///|
+async test "fast-fields selects the range indexes built eagerly" {
+  let dir = make_tree_fixture()
+  let result = @cli.run([
+    "index", "--stats", "--fast-fields", "size,depth,parent", dir,
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(_, diagnostics) => {
+      assert_true(diagnostics.contains("ranges: size="))
+      assert_true(diagnostics.contains("depth="))
+      assert_true(diagnostics.contains("parent="))
+      // mtime was not selected, so it is neither built nor reported.
+      assert_false(diagnostics.contains("mtime="))
+    }
+    _ => abort("expected stats with range indexes")
+  }
+}
+
+///|
+async test "an unknown fast field is rejected before scanning" {
+  let dir = make_tree_fixture()
+  let result = @cli.run(["index", "--fast-fields", "size,bogus", dir])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.Failure(text) => {
+      assert_true(text.contains("bogus"))
+      assert_eq(result.exit_code(), 2)
+    }
+    _ => abort("expected an invalid fast-fields failure")
   }
 }
 

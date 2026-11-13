@@ -9,20 +9,20 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S07 — field dictionaries and bitmap fields**. `index` and `update`
+> Status: **S08 — range indexes**. `index` and `update`
 > walk real directory trees and build an in-memory `Store` with post-order
 > statistics. `src/query` parses the full field/modifier macro syntax into a
 > typed `Query` tree, and `src/exec` evaluates it against a store with a
 > streaming linear scan: `search --live --root <PATH>` and
 > `count --live --root <PATH>` work end to end. This scan engine is the semantic
 > oracle every later index structure is checked against. Every entry now has one
-> store-wide id, and `src/index` builds a `Dict` over it: extension buckets,
-> `files_all`/`folders_all`, hidden/visible, root subtrees, and the built-in
-> category macros (`app:`, `archive:`, `audio:`, `doc:`, `pic:`, `video:`).
-> Queries can use `hidden:` / `nohidden:` and the category macros on the scan
-> engine, and each dictionary set is cross-checked against it. The index is still
-> in memory only; range indexes (S08), the query compiler (S10), and persistence
-> (S12) come next.
+> store-wide id, and `src/index` builds both the S07 `Dict` — extension buckets,
+> `files_all`/`folders_all`, hidden/visible, root subtrees, and the six built-in
+> category macros — and the S08 `Ranges`: sorted `(value, id)` arrays for size,
+> mtime, depth, child count, and parent, with `parent` built by counting sort and
+> the non-eager fields materialized on first use (`--fast-fields`). Each index
+> set is cross-checked against the scan engine. The index is still in memory
+> only; the query compiler (S10) and persistence (S12) come next.
 
 ## Build and run
 
@@ -267,8 +267,8 @@ saving transitions, and tests pin the zone to UTC for determinism.
 ### Current CLI surface
 
 The scan engine is still the only selectable engine: the bitmap engine needs the
-range indexes from S08 and the query compiler from S10, so `--engine` defaults
-to `scan` and `--engine bitmap` reports that it is not implemented yet. Search
+query compiler from S10, so `--engine` defaults to `scan` and `--engine bitmap`
+reports that it is not implemented yet. Search
 output is the default full-path-per-line format plus `-n/--limit`; `--sort`
 (other than `name`), `--reverse`, `--folders-first`, `--null`, `--json`,
 `--format`, `--relative-to`, and `--basename` belong to S11 and are rejected
@@ -339,6 +339,36 @@ indexed executor will use in S10.
 The dictionary is not persisted yet; S12 writes it as the `DICT` section. Until
 S10 the scan engine remains the only query path.
 
+## Range indexes (S08)
+
+`src/index/range.mbt` adds the second kind of candidate source: five sorted
+`(value, id)` arrays, one per range field.
+
+- **Fields** — `size` (files and folders; a folder value is its subtree total),
+  `mtime` (Unix seconds), `depth` (roots 0, files take their parent's depth + 1),
+  `childcount` (folders only), and `parent` (a folder id; roots excluded).
+- **`RangeIndex`** — two parallel arrays sorted by value, then id. `lower_bound`
+  and `upper_bound` are the only search primitives; equality is the run between
+  them, and ranges are half-open `[lo, hi)`. An empty or inverted interval
+  returns the empty set without touching the arrays. Slices are canonicalized
+  back into `Ids`, so a narrow range stays `Sorted` while a broad one becomes a
+  `Bitmap` by the S06 density rule.
+- **Parent by counting sort** — parent values are folder ids, so the index is
+  built in O(N + F) with a counting pass, prefix sums, and one append per entry
+  in id order. `parent:<path>` resolves through `ParentPaths`, a byte-sorted
+  table of folder paths searched by binary search.
+- **Lazy fields and `--fast-fields`** — `Ranges::build` builds only the selected
+  fields; the rest materialize on first access and stay cached. The CLI default
+  is `size,mtime`; `index --fast-fields size,depth,parent` changes the eager set.
+  `--stats` reports only loaded fields (`ranges: size=... mtime=...`), so
+  printing statistics never forces a lazy build.
+- **Cross-check** — `exec/range_compat_test.mbt` compares every field set against
+  the scan engine: the six comparison forms plus inverted ranges for `size`,
+  month and comparison dates for `dm`, multi-level `depth`, `childcount` with
+  `empty:`, and `parent:` paths that exist or do not.
+
+The range arrays are not persisted yet; S12 writes them as the `RANGES` section.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -364,7 +394,7 @@ Layout:
 src/util/          byte helpers, extension/category rules, path/glob/date parsing
 src/core/          version, exit codes, name pool, entry/store model, global ids
 src/platform/      ScanSource trait and the async/fs backend
-src/index/         excludes, builder, scanner, in-memory store, field dictionary
+src/index/         excludes, builder, scanner, field dictionary, range indexes
 src/query/         lexer, parser, query AST, flags, values, macros, categories
 src/exec/          scan engine: compiled predicates, exec_scan, exec_count
 src/ids/           Ids set algebra, compressed bitmap containers, serialization
@@ -375,8 +405,8 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S07; later steps add range indexes, trigram postings, execution plans,
-persistence, and benchmarks. Module notes live in `docs/modules/`.
+S08; later steps add trigram postings, execution plans, persistence, and
+benchmarks. Module notes live in `docs/modules/`.
 
 ## License
 

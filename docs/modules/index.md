@@ -1,13 +1,14 @@
-# index — 扫描、构建器与字段字典
+# index — 扫描、构建器、字段字典与范围索引
 
-`src/index` 负责把目录树变成 `core.Store`，并在扫描结束后建立 S07 的字段字典 `Dict`。
-它依赖 `core`、`ids`、`util` 与 `platform`，不依赖查询层。
+`src/index` 负责把目录树变成 `core.Store`，并在扫描结束后建立 S07 的字段字典 `Dict`
+与 S08 的范围索引 `Ranges`。它依赖 `core`、`ids`、`util` 与 `platform`，不依赖查询层。
 
 ## 职责
 
 - 递归扫描根目录：排序后的 `readdir`、排除规则、隐藏文件、one-file-system、后序统计。
 - `Builder`：追加根、文件夹、文件，维护名字池与两个条目数组。
 - `Dict`：低基数字段的位图集合（扩展名、类型、隐藏、根、内置分类）。
+- `Ranges`：高基数与范围字段的有序 `(value, id)` 数组（大小、时间、深度、子项数、父目录）。
 - 排除规则的解析与匹配（`ExcludeRule`）。
 
 ## 文件
@@ -18,6 +19,7 @@
 | `builder.mbt` | `Builder`：条目追加、子项计数、根统计、`finish` |
 | `exclude.mbt` | `ExcludeRule`、`ExcludeScope`、`ExcludeTarget` |
 | `dict.mbt` | `Dict`、`ExtensionEntry`、构建期物化 |
+| `range.mbt` | `RangeField`、`RangeFieldSet`、`RangeIndex`、`Ranges`、`ParentPaths` |
 | `errors.mbt` | `IndexError` |
 
 ## 扫描与构建器
@@ -78,9 +80,77 @@ Dict::build(store):
   O(1) 取值后做集合代数。
 - 内存：每个扩展名一个 `Ids`；稀疏扩展名是 `Sorted` 数组，稠密集合是位图。
 
+## 范围索引 `Ranges`（S08）
+
+`RangeIndex` 覆盖值域大、查询为范围或等值匹配的字段。与 `Dict` 的分工是：值种类少用
+位图，值种类多用有序数组。
+
+| 字段 | 覆盖条目 | 值 |
+| --- | --- | --- |
+| `size` | 文件 + 文件夹 | 文件字节数；文件夹为子树总和 |
+| `mtime` | 文件 + 文件夹 | Unix 秒 |
+| `depth` | 文件 + 文件夹 | 根为 0，直接子项为 1 |
+| `childcount` | 仅文件夹 | 直接子项总数 |
+| `parent` | 文件 + 文件夹，根除外 | 父文件夹 id |
+
+### 结构与查询
+
+`RangeIndex` 是两条平行数组 `values : Int64[]`、`ids : Int32[]`，按 `(value, id)` 升序：
+相同值连续，桶内 id 升序。查询只做二分与切片：
+
+```text
+equal(v)      [lower_bound(v), upper_bound(v))
+range(lo, hi) [lower_bound(lo), lower_bound(hi))   // 半开
+> v           [upper_bound(v), len)
+>= v          [lower_bound(v), len)
+< v           [0, lower_bound(v))
+<= v          [0, upper_bound(v))
+```
+
+- 空区间或反向区间（`hi <= lo`）直接返回空集，不触碰数组。
+- 区间切片的 id 按值排序而非 id 排序，因此统一经 `Ids::from_sorted` 排序去重；
+  `total` 参与 S06 的密度规则，窄区间保持 `Sorted`，覆盖大部分索引时升为 `Bitmap`。
+- 五个访问器共享 `Ranges::field`，构建后只读。
+
+### parent 计数排序
+
+`parent` 的键空间是文件夹 id，因此不需要比较排序：计数、前缀和、按条目 id 顺序回填，
+复杂度 O(N + F)。根条目的 `parent` 为 -1，不进入索引——扫描引擎的 `parent:` 也永不
+匹配根。`parent:` 按路径查询，路径到文件夹 id 的转换由 `ParentPaths` 完成：所有文件夹
+路径按字节排序后二分，查不到路径即空集。路径精确匹配，尾斜杠由查询层归一化。
+
+### 懒构建与 `--fast-fields`
+
+`Ranges::build(store, eager~)` 只立即构建 `eager` 选中的字段，其余字段在第一次访问时
+从 `Store` 构建并缓存，因此不需要第二次扫描。`RangeFieldSet` 负责解析
+`--fast-fields`（默认 `size,mtime`，接受 `dm`、`children` 别名与空格）。`--stats` 只遍历
+`is_loaded` 为真的字段，避免为了打印统计而触发懒构建。
+
+### 语义对齐
+
+- `depth` 用一次记忆化上溯填满所有文件夹，文件取父目录深度 + 1；与扫描引擎逐条
+  `folder_depth` 的结果一致。
+- `childcount` 只收录文件夹；`empty:` 等价于 `childcount` 等于 0。
+- `size` / `mtime` 同时收录文件与文件夹，文件夹的 size 是子树总和。
+- `mtime` 保存原始 Unix 秒；`dm:` 的日历解析仍在查询/编译层完成，再转成区间。
+- `exec/range_compat_test.mbt` 把每个字段的查询结果展开成路径，与 `exec_scan` 对拍：
+  size 的六种比较与反向区间、dm 的月份/比较/范围、depth 多层、childcount 与 `empty:`、
+  parent 多级路径与不存在的路径。
+
+### 复杂度
+
+- 构建：四个字段各一次排序 O(N log N)；`parent` O(N + F)；`ParentPaths` O(F log F)。
+- 查询：一次或两次二分 + 区间切片 O(log N + k)；`parent:` 额外一次路径二分
+  O(log F · L)，L 为路径长度。
+- 内存：每字段约 12 B/条目（`Int64` 值 + `Int32` id），与计划第 10 节的预算一致。
+
 ## 测试
 
 - `dict_test.mbt`：统一 id、隐藏/可见划分、扩展名折叠与空扩展名、分类物化、根集合、
   确定性、空索引。
+- `range_test.mbt`：`RangeIndex` 的排序、上下界、半开区间、空/反向区间、重复值、密度
+  形态；五个字段的构建结果；`parent` 计数排序与路径查找；懒构建；空索引与确定性。
 - `exec/dict_compat_test.mbt`：把字典结果逐项展开成路径，与扫描引擎的 `file:`、
   `folder:`、`hidden:`、`nohidden:`、`ext:`、内置宏查询结果对拍。
+- `exec/range_compat_test.mbt`：范围字段与扫描引擎的 `size:`、`dm:`、`depth:`、
+  `childcount:`、`empty:`、`parent:` 对拍。
