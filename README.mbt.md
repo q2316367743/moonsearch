@@ -9,7 +9,7 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S10 — indexed query compiler**. `index` and `update`
+> Status: **S11 — result ordering and output formats**. `index` and `update`
 > walk real directory trees and build an in-memory `Store` with post-order
 > statistics. `src/query` parses the full field/modifier macro syntax into a
 > typed `Query` tree, and `src/exec` evaluates it two ways. The S05 linear scan
@@ -20,9 +20,12 @@ algebra, and range arrays. The design is documented in
 > and globs/regexes/path terms become scan predicates that the optimizer pushes
 > under indexed candidates. The indexed engine (`--engine bitmap`) is
 > cross-checked against the scan engine on every field and boolean combination.
+> S11 adds the complete output layer: `--sort name|path|size|mtime|ext|type`,
+> `--reverse`, `--folders-first`, top-K `--limit`, `--null`, `--json`,
+> `--format`, `--basename`, and `--relative-to`, all shared by both engines.
 > All index structures — the S07 `Dict`, the S08 `Ranges`, and the S09
 > `TrigramIndex` — are bundled in `@index.Index`; the index is still in memory
-> only. Persistence (S12) and the remaining output formats (S11) come next.
+> only. Persistence (S12) comes next.
 
 ## Build and run
 
@@ -266,15 +269,13 @@ saving transitions, and tests pin the zone to UTC for determinism.
 
 ### Current CLI surface
 
-The scan engine is the default (`--engine scan`); `--engine bitmap` now runs the
-S10 compiler over a live index. Search output is the default full-path-per-line
-format plus `-n/--limit`; `--sort` (other than `name`), `--reverse`,
-`--folders-first`, `--null`, `--json`, `--format`, `--relative-to`, and
-`--basename` belong to S11 and are rejected explicitly rather than silently
-ignored. `--explain` prints the parsed query and the engine-specific plan to
-stderr: the `ScanExpr` predicate tree for the scan engine, or the estimated
-`Expr` tree with trigram key counts and scan degradation reasons for the bitmap
-engine. `--stats` adds entry, match, and timing lines.
+The scan engine is the default (`--engine scan`); `--engine bitmap` runs the
+S10 compiler over a live index. Both engines feed the same S11 output layer, so
+they produce byte-identical output for the same query. `--explain` prints the
+parsed query and the engine-specific plan to stderr: the `ScanExpr` predicate
+tree for the scan engine, or the estimated `Expr` tree with trigram key counts
+and scan degradation reasons for the bitmap engine. `--stats` adds entry, match,
+and timing lines. Ordering and formats are described in the next section.
 
 ## Id sets and compressed bitmaps (S06)
 
@@ -305,8 +306,8 @@ and checked against an independent membership-mask implementation. See
 
 The bitmap engine is wired into the CLI: `--engine bitmap` evaluates the S10
 `Expr` plan over the S07–S09 candidate sources. The S05 scan engine remains the
-default and the oracle the indexed engine is checked against. S11 adds the
-remaining output orders and formats, and S12 persists the index.
+default and the oracle the indexed engine is checked against. Both engines feed
+the S11 ordering and formatting layer, and S12 persists the index.
 
 ## Field dictionary (S07)
 
@@ -442,7 +443,7 @@ Query
   `Dict::all()` as the universe. `exec_indexed` returns an `Ids` set;
   `exec_indexed_count` returns its cardinality. `search --engine bitmap` walks
   the canonical order and checks membership, which preserves `name` order and
-  early-stops at `--limit` (the other sort keys are S11).
+  early-stops at `--limit`; other orders go through the S11 ordering layer.
 - **`--explain`** — a single deterministic line per node, for example
   `(filter#4 (glob "*.pdf" nocase) (const#4 (size > 1000)))` or
   `(scan#9 reason=short-needle (substring "re" nocase))`. `node#N` is the
@@ -456,6 +457,50 @@ Query
 `@index.Index` bundles the store and the three candidate sources, so the
 compiler, the CLI, and the upcoming persistence layer pass one object instead of
 four.
+
+## Result ordering and output formats (S11)
+
+`src/exec/order.mbt` and `src/exec/format.mbt` turn a match set into the lines a
+user sees. Both engines feed the same two stages, so `--engine scan` and
+`--engine bitmap` produce byte-identical output for the same query.
+
+- **Sort keys** — `name` (the canonical `(name, path)` order, default), `path`,
+  `size`, `mtime`, `ext`, and `type`. Every comparator falls back to canonical
+  order, then the store-wide id, so the result never depends on scan order.
+  Folders report their subtree size for `size`; `ext` is ASCII-folded with
+  folders treated as having no extension; `type` orders folders first, then the
+  built-in categories, then files with unlisted extensions.
+- **`--reverse` / `--folders-first`** — `--reverse` reverses the whole order,
+  including tie-breaks. `--folders-first` groups folders ahead of files and
+  keeps the selected key and direction inside each group.
+- **`--limit`** — applied after ordering, so `--sort size -n 20` keeps the
+  twenty smallest matches. Plain `name` order streams in either direction and
+  early-stops at the limit (`--reverse` walks the canonical order backwards);
+  other orders collect the match set, then use a bounded top-K heap.
+- **Formats** — full paths by default; `--basename` for names; `--json` for one
+  JSON object per line (`path`, `name`, `size`, `mtime`, `ext`, `type`,
+  `kind`); `--format` for templates with `{path}`, `{name}`, `{dir}`, `{size}`,
+  `{mtime}`, `{ext}`, `{type}`, `{kind}` and `\n`, `\t`, `\0`, `\\` escapes.
+  Invalid templates are usage errors before any scan runs.
+- **`--null`** — terminates every record, including the last, with NUL. The
+  entry point detects the trailing NUL and writes the bytes directly instead of
+  appending a newline, so `--null | xargs -0` works.
+- **`--relative-to <DIR>`** — the base is resolved with `realpath`; a match equal
+  to the base prints `.`, matches below it lose the base and one separator, and
+  paths outside it stay absolute. It applies to `{path}` and the JSON `path`.
+- **Type names** — folders are `folder`; files are `app`, `archive`, `audio`,
+  `doc`, `pic`, or `video`; unlisted extensions are `other`. `{ext}` and JSON
+  `ext` are lowercase and empty for folders.
+- **Encoding** — paths are stored as raw bytes but formatted as lossy UTF-8, so
+  invalid UTF-8 names display with replacement characters.
+
+Tests: `exec/order_test.mbt` pins every key, tie-breaks, reversal, grouping,
+limit placement, top-K equivalence, and input-order independence;
+`exec/format_test.mbt` covers every format, escape, JSON escaping, relative
+paths, and template errors; `src/cli/cli_test.mbt` compares both engines across
+all orders and formats; `tests/cli.md` covers the executable end to end. The CLI
+wiring and option-conflict rules live in
+[`docs/modules/cli.md`](docs/modules/cli.md).
 
 ## Exit codes
 
@@ -484,7 +529,7 @@ src/core/          version, exit codes, name pool, entry/store model, global ids
 src/platform/      ScanSource trait and the async/fs backend
 src/index/         excludes, builder, scanner, dictionary, ranges, trigram postings
 src/query/         lexer, parser, query AST, flags, values, macros, categories
-src/exec/          scan engine, query compiler, optimizer, indexed executor
+src/exec/          scan engine, query compiler, optimizer, result order/formatting
 src/ids/           Ids set algebra, compressed bitmap containers, serialization
 src/cli/           command specification, invocation, index/search commands
 src/               public facade
@@ -493,9 +538,8 @@ tests/cli.md       end-to-end CLI golden tests
 ```
 
 The original migration plan splits the work into S01–S14. This repository is at
-S10; later steps add the remaining result orders and formats (S11), persistence
-(S12), the full cross-check/property/fuzz suite (S13), and benchmarks (S14).
-Module notes live in `docs/modules/`.
+S11; later steps add persistence (S12), the full cross-check/property/fuzz suite
+(S13), and benchmarks (S14). Module notes live in `docs/modules/`.
 
 ## License
 

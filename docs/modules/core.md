@@ -16,7 +16,7 @@
 | --- | --- |
 | `name_pool.mbt` | 分块名字池、`NameRef`、长度上限 |
 | `entry.mbt` | `Entry`、`EntryRef`、可见性/符号链接 flags、`GlobalId` 类型 |
-| `store.mbt` | 计数、id 访问、路径重建、规范顺序、全局 id 映射 |
+| `store.mbt` | 计数、id 访问、路径重建、扩展名、规范顺序、全局 id 映射 |
 | `exit.mbt` / `version.mbt` | CLI 退出码与版本文本 |
 
 ## 两套 id
@@ -41,6 +41,14 @@ GlobalId = folder id                             0 .. folder_count - 1
 `Store::new` 在构造时建立唯一一份预排序数组：文件夹与文件合并，按 `(name, path)` 的
 自然顺序排序，最后用输入下标兜底，保证不同扫描顺序下结果确定。查询输出与 `--limit`
 的提前停止都基于这份顺序，不再为每个排序键维护数组。
+
+## 扩展名
+
+`Store::entry_extension(entry)` 是输出层与排序层共用的扩展名入口：
+
+- 文件返回名字最后一个点之后的原始字节，规则与 `util::extension_of` 一致；
+- 文件夹恒为空，即使名字里含点——`ext:` 是文件字段，输出层必须与查询层一致；
+- 字节原样返回，由调用方决定是否 ASCII 折叠。
 
 ## 错误与边界
 

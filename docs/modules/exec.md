@@ -1,6 +1,6 @@
 # exec — 查询执行：扫描引擎、编译计划与位图执行器
 
-`src/exec` 是 S05 建立、S07–S10 扩展的查询执行层。它包含两套引擎：
+`src/exec` 是 S05 建立、S07–S11 扩展的查询执行层。它包含两套引擎：
 
 - **扫描引擎**：逐条遍历规范顺序，对每个条目求值；它是 S05 的基线，也是 S06 之后
   所有索引结构的对拍 oracle；
@@ -17,12 +17,16 @@
 | `compile.mbt` | `Query` → `ScanExpr`、名字匹配器、日期解析、扫描计划文本 |
 | `predicate.mbt` | 逐条目谓词：名字、扩展名、类型、可见性、数值、父路径 |
 | `content_type.mbt` | 扩展名 → MIME 表与 `contenttype:` |
-| `scan.mbt` | `exec_scan` / `exec_count` / `ScanOptions` |
+| `scan.mbt` | `exec_scan` / `exec_scan_reverse_with` / `exec_count` / `ScanOptions` |
 | `plan.mbt` | S10：`Expr`、类型域、编译、优化、基数估计、位图求值、`--explain` |
+| `order.mbt` | S11：`SortKey`、`OrderOptions`、结果排序、`--reverse`、`--folders-first`、top-K |
+| `format.mbt` | S11：`OutputFormat`、`--format` 模板、JSON Lines、`--null`、相对路径 |
 | `dict_compat_test.mbt` | S07 字典与扫描引擎的对拍 |
 | `range_compat_test.mbt` | S08 范围索引与扫描引擎的对拍 |
 | `trigram_compat_test.mbt` | S09 trigram 候选集 ⊇ 扫描结果的性质测试 |
 | `plan_test.mbt` | S10：逐字段编译形状、优化前后等价、全语料对拍、explain golden |
+| `order_test.mbt` | S11：每个排序键、反向、分组、limit、top-K 与输入无关性 |
+| `format_test.mbt` | S11：各输出格式、占位符、转义、JSON 转义、相对路径 |
 
 ## 编译
 
@@ -219,3 +223,88 @@ Query
   空索引；
 - `--no-trigram` 索引上的名字查询仍与扫描引擎一致；
 - explain golden 精确到空格与预估数字。
+
+## 输出顺序与格式化（S11）
+
+S10 之前，`search` 只输出规范顺序并只支持 `--limit`。S11 把“结果集合”变成“用户看到
+的行”，分成两个独立阶段，两套引擎共用：
+
+```text
+matches (Array[EntryRef], 规范顺序)
+  → order_hits: 排序键、--folders-first、--reverse、--limit（必要时 top-K）
+  → format_hits: 路径 / basename / JSON / 模板、--null、--relative-to
+```
+
+两个阶段都只读 `core.Store`，不重新查询索引，因此 `--engine scan` 与
+`--engine bitmap` 在相同查询上输出逐字节一致。
+
+### 排序
+
+`SortKey { Name, Path, Size, MTime, Ext, Type }`，所有比较器最后都用
+`(name 自然序, path 自然序, GlobalId)` 兜底，保证结果与输入顺序、扫描顺序无关。
+
+| 键 | 主比较 | 说明 |
+| --- | --- | --- |
+| `name` | `cmp_paths(name)` | 默认；就是 `Store` 的规范顺序 |
+| `path` | `cmp_paths(完整路径)` | 只按路径，不先按名字 |
+| `size` | 数值升序 | 文件夹使用子树总大小 |
+| `mtime` | 数值升序 | Unix 秒；`--reverse` 得到最新在前 |
+| `ext` | 折叠后的扩展名字节序 | 文件夹与无扩展名条目为空，排在最前 |
+| `type` | 文件夹 0 → 内置分类 1..6 → 其他文件 7 | 同类再按扩展名、规范顺序 |
+
+- **`--folders-first`** 是先分组再排序：文件夹组在前、文件组在后，组内仍按所选键与
+  `--reverse` 排序。它不改变“组内”语义。
+- **`--reverse`** 反转整个比较器，包括同键时的规范顺序兜底。
+- **`--limit`** 在排序之后应用：`--sort size -n 20` 取最小的 20 个命中，而不是先截断
+  再排序。
+- **提前停止** 对 `name` 顺序成立：正序用 `exec_scan_with` 流式前进，`--reverse`
+  用 `exec_scan_reverse_with` 从规范顺序末尾后退；两者都在收集到 limit 条时停止。
+  `--folders-first` 与其他排序键先由 `OrderOptions::streams_name_order()` 判定
+  不能流式输出，再收集全部命中。
+- **top-K**：`limit > 0` 且小于命中数时，`select_top_k` 用一个大小为 limit 的最大堆
+  选出前 K 条，再排序；复杂度 O(N log K)，结果与全排序后截断逐条相同。
+- **预计算排序键**：`path`、`ext`、`type` 在构建 `SortItem` 时一次性算出，比较器
+  不再为每次比较分配路径或折叠扩展名；`type` 的扩展名→分类表每次查询只建一次。
+
+### 输出格式
+
+`FormatOptions { format, null_terminated, relative_to }`：
+
+| 格式 | 输出 |
+| --- | --- |
+| `Paths`（默认） | 完整路径 |
+| `Names`（`--basename`） | 条目名字 |
+| `Json`（`--json`） | 每个命中一行 JSON 对象 |
+| `Template`（`--format`） | 解析后的模板 |
+
+- **分隔符**：换行模式在记录之间写 `\n`，最后一条不带换行（CLI 入口补最终换行）；
+  `--null` 在每条之后写 `\0`，包括最后一条，供 `xargs -0` 使用。入口检测到文本以
+  NUL 结尾时直接写原始字节，避免额外换行。
+- **`--format` 占位符**：`{path}`、`{name}`、`{dir}`、`{size}`、`{mtime}`、`{ext}`、
+  `{type}`、`{kind}`。转义只支持 `\n`、`\t`、`\0`、`\\`；其他反斜杠序列原样保留。
+  未知占位符与未闭合的 `{` 在扫描前报错（退出码 2），不会输出半截结果。当前版本
+  `{` 总是开始占位符，不能输出字面花括号。
+- **`{dir}`**：绝对路径去掉最后一个分量，单分量路径得到 `/`；相对路径没有分隔符时
+  得到 `.`。
+- **`--relative-to`**：基准目录在用前先 `realpath`；等于基准的路径输出 `.`，位于基准
+  下的路径去掉基准和一个 `/`，基准外的路径保持原样。`--json` 的 `path` 与
+  `{path}` 都使用相对形式。
+- **`{ext}` / `ext` 字段**：文件夹恒为空；文件扩展名 ASCII 小写。
+- **`{type}` / JSON `type`**：文件夹为 `folder`；文件为内置分类名（`app`、`archive`、
+  `audio`、`doc`、`pic`、`video`）；未收录扩展名为 `other`。分类表来自
+  `util.TypeCategory`，与查询层、字典共用。
+- **JSON 字段顺序**：`path`、`name`、`size`、`mtime`、`ext`、`type`、`kind`，固定
+  顺序便于 golden 测试；字符串按 JSON 规则转义引号、反斜杠与控制字符。
+- **编码**：路径按原始字节保存，输出经 `decode_lossy` 转成 `String`；非法 UTF-8 字节
+  在输出层显示为替换字符。这是 S11 已知限制，字节级修复属于后续输出重构。
+
+### 测试边界
+
+- `exec/order_test.mbt` 覆盖每个排序键的完整期望顺序、同值 tie-break、`--reverse`
+  对 tie-break 的翻转、`--folders-first` 分组、limit 在排序之后、top-K 与全排序
+  逐条一致、不同输入顺序得到相同结果，以及 name 顺序正反两向的流式判定。
+- `exec/format_test.mbt` 覆盖默认/basename/JSON/模板/空结果、NUL 终止、转义、
+  JSON 引号/反斜杠/控制字符、相对路径（根、尾斜杠、基准内、基准外）与模板错误。
+- `src/cli/cli_test.mbt` 逐项验证参数冲突与错误，并在同一夹具上对每个排序键、
+  `--reverse`、`--folders-first`、`--limit` 与每种输出格式比较两套引擎的 stdout。
+- `tests/cli.md` 固化可执行文件的排序、格式、错误消息与退出码。

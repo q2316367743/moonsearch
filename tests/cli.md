@@ -182,3 +182,83 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --eng
 @STDERR (empty)
 [1]
 ```
+
+Result ordering and output formats (S11). Sizes in the fixture are
+`sub/b.pdf` = 1 B, `a.txt` = 5 B, and `.hidden` = 6 B:
+
+```mooncram q2316367743/moonsearch
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort size
+*/fixture/sub/b.pdf (glob)
+*/fixture/a.txt (glob)
+*/fixture/.hidden (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort size --reverse
+*/fixture/.hidden (glob)
+*/fixture/a.txt (glob)
+*/fixture/sub/b.pdf (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort ext
+*/fixture/.hidden (glob)
+*/fixture/sub/b.pdf (glob)
+*/fixture/a.txt (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort type
+*/fixture/sub/b.pdf (glob)
+*/fixture/a.txt (glob)
+*/fixture/.hidden (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort size -n 2
+*/fixture/sub/b.pdf (glob)
+*/fixture/a.txt (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --reverse -n 2
+*/fixture/sub/b.pdf (glob)
+*/fixture/a.txt (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --folders-first
+*/fixture (glob)
+*/fixture/sub (glob)
+*/fixture/.hidden (glob)
+*/fixture/a.txt (glob)
+*/fixture/sub/b.pdf (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --basename
+.hidden
+a.txt
+b.pdf
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort size --relative-to fixture
+sub/b.pdf
+a.txt
+.hidden
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort size --relative-to fixture --format "{path}|{size}|{ext}|{type}|{kind}"
+sub/b.pdf|1|pdf|doc|file
+a.txt|5|txt|doc|file
+.hidden|6||other|file
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort size --relative-to fixture --json -n 1
+\{"path":"sub/b\.pdf","name":"b\.pdf","size":1,"mtime":[0-9]+,"ext":"pdf","type":"doc","kind":"file"\} (regex)
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --type file --sort size --engine bitmap
+*/fixture/sub/b.pdf (glob)
+*/fixture/a.txt (glob)
+*/fixture/.hidden (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --sort bogus
+@STDOUT (empty)
+@STDERR
+error: --sort must be name, path, size, mtime, ext, or type, got 'bogus'
+[2]
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --json --format "{path}"
+@STDOUT (empty)
+@STDERR
+error: --json and --format cannot be combined
+[2]
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --format "{bogus}"
+@STDOUT (empty)
+@STDERR
+error: unknown format placeholder '{bogus}'
+[2]
+```

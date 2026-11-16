@@ -73,32 +73,18 @@ fn engine_of(matches : @argparse.Matches) -> Result[Engine, String] {
 }
 
 ///|
-/// Reject output features that belong to S11.
-///
-/// The default name order and `--limit` are implemented; everything else warns
-/// instead of silently producing the wrong format.
-fn check_output_options(matches : @argparse.Matches) -> Result[Unit, String] {
-  let sort = first_option_value(matches, "sort").unwrap_or("name")
-  if sort != "name" {
-    return Err(
-      "error: --sort \{sort} is not implemented yet; only name order is available",
-    )
+/// Parse `--limit`.
+fn limit_of(matches : @argparse.Matches) -> Result[Int32, String] {
+  let text = first_option_value(matches, "limit").unwrap_or("0")
+  match @query.parse_count(text) {
+    Some(value) =>
+      if value >= 0L && value <= 2147483647L {
+        Ok(value.to_int())
+      } else {
+        Err("error: --limit must be a non-negative integer, got '\{text}'")
+      }
+    None => Err("error: --limit must be a non-negative integer, got '\{text}'")
   }
-  let flags : Array[String] = [
-    "reverse", "folders-first", "null", "json", "basename",
-  ]
-  for name in flags {
-    if flag_set(matches, name) {
-      return Err("error: --\{name} is not implemented yet")
-    }
-  }
-  if first_option_value(matches, "format") is Some(_) {
-    return Err("error: --format is not implemented yet")
-  }
-  if first_option_value(matches, "relative-to") is Some(_) {
-    return Err("error: --relative-to is not implemented yet")
-  }
-  Ok(())
 }
 
 ///|
@@ -106,20 +92,103 @@ fn check_output_options(matches : @argparse.Matches) -> Result[Unit, String] {
 fn scan_options_of(
   matches : @argparse.Matches,
 ) -> Result[@exec.ScanOptions, String] {
-  let text = first_option_value(matches, "limit").unwrap_or("0")
-  let limit = match @query.parse_count(text) {
-    Some(value) =>
-      if value >= 0L && value <= 2147483647L {
-        value.to_int()
-      } else {
-        return Err(
-          "error: --limit must be a non-negative integer, got '\{text}'",
-        )
-      }
-    None =>
-      return Err("error: --limit must be a non-negative integer, got '\{text}'")
+  let limit = match limit_of(matches) {
+    Ok(limit) => limit
+    Err(message) => return Err(message)
   }
   Ok(@exec.ScanOptions::new(limit~))
+}
+
+///|
+/// Parse `--sort` and the ordering flags.
+fn order_options_of(
+  matches : @argparse.Matches,
+) -> Result[@exec.OrderOptions, String] {
+  let text = first_option_value(matches, "sort").unwrap_or("name")
+  let key = match @exec.SortKey::from_name(text) {
+    Some(key) => key
+    None =>
+      return Err(
+        "error: --sort must be name, path, size, mtime, ext, or type, got '\{text}'",
+      )
+  }
+  let limit = match limit_of(matches) {
+    Ok(limit) => limit
+    Err(message) => return Err(message)
+  }
+  Ok(
+    @exec.OrderOptions::new(
+      key~,
+      reverse=flag_set(matches, "reverse"),
+      folders_first=flag_set(matches, "folders-first"),
+      limit~,
+    ),
+  )
+}
+
+///|
+/// Build the output format from `--json`, `--format`, `--basename`, `--null`,
+/// and `--relative-to`.
+///
+/// The three record formats are mutually exclusive: combining them would make
+/// the output depend on an undocumented precedence. `--null` is a terminator
+/// and works with every format. The relative base is resolved once here so the
+/// formatter only compares bytes.
+async fn format_options_of(
+  invocation : Invocation,
+) -> Result[@exec.FormatOptions, String] {
+  let matches = invocation.matches
+  let json = flag_set(matches, "json")
+  let basename = flag_set(matches, "basename")
+  let template = first_option_value(matches, "format")
+  let has_template = match template {
+    Some(_) => true
+    None => false
+  }
+  if json && has_template {
+    return Err("error: --json and --format cannot be combined")
+  }
+  if json && basename {
+    return Err("error: --json and --basename cannot be combined")
+  }
+  if basename && has_template {
+    return Err("error: --basename and --format cannot be combined")
+  }
+  let format = if json {
+    @exec.Json
+  } else if basename {
+    @exec.Names
+  } else {
+    match template {
+      Some(text) =>
+        match @exec.FormatTemplate::parse(text) {
+          Ok(template) => @exec.Template(template)
+          Err(message) => return Err("error: \{message}")
+        }
+      None => @exec.Paths
+    }
+  }
+  let relative_to = if basename {
+    // `--basename` prints names only, so a relative base cannot affect output.
+    None
+  } else {
+    match first_option_value(matches, "relative-to") {
+      Some(path) => {
+        let resolved = @fs.realpath(path) catch {
+          err => return Err("error: --relative-to \{path}: \{err.to_string()}")
+        }
+        Some(resolved)
+      }
+      None => None
+    }
+  }
+  Ok(
+    @exec.FormatOptions::new(
+      format~,
+      null_terminated=flag_set(matches, "null"),
+      relative_to~,
+    ),
+  )
 }
 
 ///|
@@ -177,41 +246,42 @@ fn live_index(store : @core.Store) -> @index.Index {
 /// Turn an id set into hits in canonical order.
 ///
 /// This is the streaming half of the indexed engine: walking the canonical
-/// order and checking membership keeps `--limit` early-stopping and gives the
-/// default name order without a per-query sort. Sorting by other keys is S11.
+/// order and checking membership keeps `--limit` early-stopping. Ordering and
+/// formatting happen afterwards in `@exec`, so both engines share them.
 fn hits_of_ids(
   store : @core.Store,
   ids : @ids.Ids,
   limit : Int32,
+  reverse~ : Bool = false,
 ) -> Array[@core.EntryRef] {
   let hits : Array[@core.EntryRef] = []
   if ids.is_empty() {
     return hits
   }
-  for entry in store.entries_in_order() {
-    if ids.contains(store.global_id(entry)) {
-      hits.push(entry)
-      if limit > 0 && hits.length() >= limit {
-        break
+  let order = store.entries_in_order()
+  if reverse {
+    let mut index = order.length() - 1
+    while index >= 0 {
+      let entry = order[index]
+      if ids.contains(store.global_id(entry)) {
+        hits.push(entry)
+        if limit > 0 && hits.length() >= limit {
+          break
+        }
+      }
+      index = index - 1
+    }
+  } else {
+    for entry in order {
+      if ids.contains(store.global_id(entry)) {
+        hits.push(entry)
+        if limit > 0 && hits.length() >= limit {
+          break
+        }
       }
     }
   }
   hits
-}
-
-///|
-/// Render hits as newline-separated full paths.
-fn format_hits(store : @core.Store, hits : Array[@core.EntryRef]) -> String {
-  let out = StringBuilder()
-  let mut index = 0
-  while index < hits.length() {
-    if index > 0 {
-      out.write_char('\n')
-    }
-    out.write_string(@utf8.decode_lossy(store.entry_path(hits[index])))
-    index = index + 1
-  }
-  out.to_string()
 }
 
 ///|
@@ -255,8 +325,12 @@ async fn run_search(invocation : Invocation) -> CliResult {
     Ok(engine) => engine
     Err(message) => return Failure(message)
   }
-  match check_output_options(matches) {
-    Ok(_) => ()
+  let order = match order_options_of(matches) {
+    Ok(order) => order
+    Err(message) => return Failure(message)
+  }
+  let output = match format_options_of(invocation) {
+    Ok(output) => output
     Err(message) => return Failure(message)
   }
   let flags = match query_flags_of(matches) {
@@ -271,6 +345,15 @@ async fn run_search(invocation : Invocation) -> CliResult {
     Ok(options) => options
     Err(message) => return Failure(message)
   }
+  // Plain name order streams and lets the engine stop at the limit. Every
+  // other order needs the complete match set before it can choose the first
+  // `limit` results.
+  // Name order streams in either direction: forward walks the canonical order,
+  // `--reverse` walks it backwards, so both stop at the limit. Every other
+  // order needs the complete match set before choosing the first hits.
+  let stream_order = order.streams_name_order()
+  let reverse_name = stream_order && order.reverse
+  let collect_limit = if stream_order { order.limit } else { 0 }
   let live = flag_set(matches, "live") || flag_set(matches, "auto-index")
   let scan_started = @env.now()
   let store = match store_for_query(invocation) {
@@ -285,8 +368,15 @@ async fn run_search(invocation : Invocation) -> CliResult {
   match engine {
     ScanEngine => {
       let exec_started = @env.now()
-      let executed = Ok(@exec.exec_scan_with(store, query, options~)) catch {
-        err => Err("error: \{err.message()}")
+      let scan_options = @exec.ScanOptions::new(limit=collect_limit)
+      let executed = if reverse_name {
+        Ok(@exec.exec_scan_reverse_with(store, query, options=scan_options)) catch {
+          err => Err("error: \{err.message()}")
+        }
+      } else {
+        Ok(@exec.exec_scan_with(store, query, options=scan_options)) catch {
+          err => Err("error: \{err.message()}")
+        }
       }
       hits = match executed {
         Ok(hits) => hits
@@ -309,12 +399,15 @@ async fn run_search(invocation : Invocation) -> CliResult {
         Ok(ids) => ids
         Err(message) => return Failure(message)
       }
-      hits = hits_of_ids(store, ids, options.limit)
+      hits = hits_of_ids(store, ids, collect_limit, reverse=reverse_name)
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
         plan = explain_bitmap_plan(index, query)
       }
     }
+  }
+  if !stream_order {
+    hits = @exec.order_hits(store, hits, order)
   }
   let diagnostics = search_diagnostics(
     matches,
@@ -327,7 +420,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
     exec_ms,
     live,
   )
-  let text = format_hits(store, hits)
+  let text = @exec.format_hits(store, hits, output)
   if hits.is_empty() {
     NoMatch("", diagnostics)
   } else if diagnostics.is_empty() {

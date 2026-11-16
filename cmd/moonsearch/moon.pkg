@@ -1,11 +1,16 @@
 import {
   "moonbitlang/core/async",
-  "q2316367743/moonsearch/src/cli",
+  "moonbitlang/core/async/stdio",
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
+  "q2316367743/moonsearch/src/cli",
 }
 
 pkgtype(kind: "executable")
 
 options(
-  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/stdio",
+  ],
 )

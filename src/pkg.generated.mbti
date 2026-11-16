@@ -87,6 +87,8 @@ pub fn exec_count_with(@core.Store, @query.Query, options? : @exec.ScanOptions) 
 
 pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
 
+pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+
 pub fn exec_scan_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
 
 pub fn explain_query(@query.Query, options? : @exec.ScanOptions) -> String raise @query.QueryError
@@ -98,6 +100,8 @@ pub fn find_byte(BytesView, Byte, from? : Int32) -> Int32?
 pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
 
 pub fn find_bytes_with(BytesView, BytesView, Bool, from? : Int32) -> Int32?
+
+pub fn format_hits(@core.Store, Array[@core.EntryRef], @exec.FormatOptions) -> String
 
 pub fn glob_match(BytesView, BytesView) -> Bool
 
@@ -124,6 +128,8 @@ pub fn lex(StringView) -> Array[@query.Token] raise @query.QueryError
 pub fn local_zone() -> @time.Zone
 
 pub fn name_query(StringView, flags? : @query.Flags) -> @query.Query
+
+pub fn order_hits(@core.Store, Array[@core.EntryRef], @exec.OrderOptions) -> Array[@core.EntryRef]
 
 pub fn parse(StringView, flags? : @query.Flags, macros? : @query.Macros, compat? : Bool) -> @query.Query raise @query.QueryError
 
@@ -190,6 +196,10 @@ pub using @query {type Flags}
 
 pub type FolderId = Int32
 
+pub using @exec {type FormatOptions}
+
+pub using @exec {type FormatTemplate}
+
 pub type GlobalId = Int32
 
 pub using @ids {type Ids}
@@ -213,6 +223,10 @@ pub using @core {type NameRef}
 pub using @platform {type NodeInfo}
 
 pub using @platform {type NodeKind}
+
+pub using @exec {type OrderOptions}
+
+pub using @exec {type OutputFormat}
 
 pub using @platform {type PlatformError}
 
@@ -239,6 +253,8 @@ pub using @index {type ScanIssue}
 pub using @exec {type ScanOptions}
 
 pub using @index {type ScanReport}
+
+pub using @exec {type SortKey}
 
 pub using @core {type Store}
 

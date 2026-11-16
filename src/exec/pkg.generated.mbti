@@ -22,11 +22,17 @@ pub fn exec_indexed_count(@index.Index, @query.Query, options? : PlanOptions) ->
 
 pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
 
+pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+
 pub fn exec_scan_with(@core.Store, @query.Query, options? : ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
 
 pub fn explain_indexed(@index.Index, @query.Query, options? : PlanOptions) -> String raise @query.QueryError
 
 pub fn explain_query(@query.Query, options? : ScanOptions) -> String raise @query.QueryError
+
+pub fn format_hits(@core.Store, Array[@core.EntryRef], FormatOptions) -> String
+
+pub fn order_hits(@core.Store, Array[@core.EntryRef], OrderOptions) -> Array[@core.EntryRef]
 
 // Errors
 
@@ -49,6 +55,34 @@ pub enum Expr {
 pub fn Expr::describe(Self, Int32) -> String
 pub fn Expr::estimate(Self, Int32) -> Int32
 
+pub(all) struct FormatOptions {
+  format : OutputFormat
+  null_terminated : Bool
+  relative_to : String?
+}
+pub fn FormatOptions::new(format? : OutputFormat, null_terminated? : Bool, relative_to? : String?) -> Self
+
+pub struct FormatTemplate {
+  // private fields
+}
+pub fn FormatTemplate::parse(StringView) -> Result[Self, String]
+
+pub(all) struct OrderOptions {
+  key : SortKey
+  reverse : Bool
+  folders_first : Bool
+  limit : Int32
+}
+pub fn OrderOptions::new(key? : SortKey, reverse? : Bool, folders_first? : Bool, limit? : Int32) -> Self
+pub fn OrderOptions::streams_name_order(Self) -> Bool
+
+pub(all) enum OutputFormat {
+  Paths
+  Names
+  Json
+  Template(FormatTemplate)
+}
+
 pub(all) struct PlanOptions {
   now : Int64?
   zone : @time.Zone?
@@ -67,6 +101,18 @@ pub(all) struct ScanOptions {
   zone : @time.Zone?
 }
 pub fn ScanOptions::new(limit? : Int32, now? : Int64?, zone? : @time.Zone?) -> Self
+
+pub(all) enum SortKey {
+  Name
+  Path
+  Size
+  MTime
+  Ext
+  Type
+}
+pub fn SortKey::all() -> Array[Self]
+pub fn SortKey::from_name(StringView) -> Self?
+pub fn SortKey::name(Self) -> String
 
 pub struct TrigramLeaf {
   // private fields

@@ -80,6 +80,7 @@ pub fn TypeCategory::extensions(Self) -> Array[String]
 pub fn TypeCategory::from_name(StringView) -> Self?
 pub fn TypeCategory::index(Self) -> Int32
 pub fn TypeCategory::name(Self) -> String
+pub fn TypeCategory::of_extension(BytesView) -> Self?
 
 // Type aliases
 

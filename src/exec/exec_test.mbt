@@ -311,3 +311,32 @@ test "compat error recovery compiles to an empty set" {
   }
   assert_eq(count, 0)
 }
+
+///|
+test "reverse scan walks the canonical order backwards and stops at the limit" {
+  let store = test_store() catch {
+    err => abort("fixture failed: \{err.message()}")
+  }
+  let query = query_of("file:")
+  let all = @exec.exec_scan_reverse_with(store, query) catch {
+    err => abort("reverse scan failed: \{err.message()}")
+  }
+  assert_eq(
+    all.map(fn(entry) { @utf8.decode_lossy(store.entry_path(entry)) }),
+    [
+      "/root/docs/report.pdf", "/root/readme.md", "/root/media/photo.JPG", "/root/docs/notes.txt",
+      "/root/.hidden",
+    ],
+  )
+  let limited = @exec.exec_scan_reverse_with(
+    store,
+    query,
+    options=@exec.ScanOptions::new(limit=2),
+  ) catch {
+    err => abort("reverse scan failed: \{err.message()}")
+  }
+  assert_eq(
+    limited.map(fn(entry) { @utf8.decode_lossy(store.entry_path(entry)) }),
+    ["/root/docs/report.pdf", "/root/readme.md"],
+  )
+}

@@ -171,6 +171,20 @@ pub fn Store::entry_name(self : Store, entry : EntryRef) -> BytesView {
 }
 
 ///|
+/// Extension bytes of one entry, or an empty view when the id is out of range.
+///
+/// Folders have no extension even when their name contains a dot: `ext:` is a
+/// file field, and the output layer must agree with the query layer. The bytes
+/// are returned as stored; callers fold ASCII case when comparing or printing.
+pub fn Store::entry_extension(self : Store, entry : EntryRef) -> BytesView {
+  if entry.is_file() {
+    @util.extension_of(self.entry_name(entry))
+  } else {
+    b""[0:0]
+  }
+}
+
+///|
 /// Full path bytes of one entry, or an empty value when the id is out of range.
 pub fn Store::entry_path(self : Store, entry : EntryRef) -> Bytes {
   match entry.kind {

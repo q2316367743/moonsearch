@@ -31,6 +31,17 @@
 `extensions()` 返回本项目自己的常见格式列表（ASCII 小写、无点号）。列表是扫描引擎与
 字典的共同数据源；修改分类只改这一处。
 
+`TypeCategory::of_extension(ext)` 反向查询扩展名所属分类，ASCII 大小写不敏感、不带
+前导点；空扩展名与未收录扩展名返回 `None`。扩展名同时出现在多个分类时按
+`TypeCategory::all()` 的顺序取第一个。输出层从同一份 `extensions()` 列表构建一次
+映射来回答 `--sort type`、`{type}` 与 JSON `type`（避免逐条扫描）；`of_extension`
+是等价的单次查询入口。查询谓词与字典仍用 `extensions()`。
+
+## 输出相关的字节规则
+
+`--sort ext` 与 `{ext}` 依赖 `extension_of` + `ascii_fold`；文件夹的扩展名由
+`core::Store::entry_extension` 统一置空，避免“名字含点的文件夹”在输出层出现扩展名。
+
 ## 自然排序
 
 `cmp_paths` 用于名字、路径与规范顺序：`\0` 权重 0、`/` 权重 1、其他字节按值；连续数字

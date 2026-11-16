@@ -119,6 +119,49 @@ pub fn TypeCategory::extensions(self : TypeCategory) -> Array[String] {
 }
 
 ///|
+/// Category that owns an extension, or `None` for an unlisted extension.
+///
+/// The extension is ASCII case-insensitive and must not include the leading
+/// dot. An empty extension belongs to no category. The result order follows
+/// `TypeCategory::all()`, so an extension listed in two categories resolves to
+/// the first one; the lists are the single source of truth for both the query
+/// predicate and the output layer.
+pub fn TypeCategory::of_extension(ext : BytesView) -> TypeCategory? {
+  if ext.is_empty() {
+    return None
+  }
+  for category in TypeCategory::all() {
+    for candidate in category.extensions() {
+      if extension_eq(ext, candidate) {
+        return Some(category)
+      }
+    }
+  }
+  None
+}
+
+///|
+/// Whether an extension byte view equals an ASCII candidate string.
+fn extension_eq(ext : BytesView, candidate : StringView) -> Bool {
+  if ext.length() != candidate.length() {
+    return false
+  }
+  let mut index = 0
+  while index < ext.length() {
+    let expected = match candidate.get_char(index) {
+      Some(char) => char
+      None => return false
+    }
+    if ascii_lower(ext[index]).to_int() !=
+      expected.to_ascii_lowercase().to_int() {
+      return false
+    }
+    index = index + 1
+  }
+  true
+}
+
+///|
 /// Whether `text` equals an ASCII lowercase literal after ASCII case folding.
 ///
 /// Macro and field names are ASCII in practice; a non-ASCII code unit simply

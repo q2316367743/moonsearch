@@ -45,16 +45,56 @@ pub fn exec_scan_with(
   query : @query.Query,
   options~ : ScanOptions = ScanOptions::new(),
 ) -> Array[@core.EntryRef] raise @query.QueryError {
+  exec_scan_ordered(store, query, options, false)
+}
+
+///|
+/// Evaluate a query in reverse canonical order.
+///
+/// `--sort name --reverse` uses this path: walking the canonical order
+/// backwards keeps the same streaming and early-stop behavior as forward name
+/// order, instead of collecting every match and sorting it.
+pub fn exec_scan_reverse_with(
+  store : @core.Store,
+  query : @query.Query,
+  options~ : ScanOptions = ScanOptions::new(),
+) -> Array[@core.EntryRef] raise @query.QueryError {
+  exec_scan_ordered(store, query, options, true)
+}
+
+///|
+/// Forward or backward streaming scan.
+fn exec_scan_ordered(
+  store : @core.Store,
+  query : @query.Query,
+  options : ScanOptions,
+  reverse : Bool,
+) -> Array[@core.EntryRef] raise @query.QueryError {
   let expr = compile_query(query, resolved_now(options), resolved_zone(options))
   let hits : Array[@core.EntryRef] = []
   if expr is None {
     return hits
   }
-  for entry in store.entries_in_order() {
-    if eval_expr(expr, store, entry) {
-      hits.push(entry)
-      if options.limit > 0 && hits.length() >= options.limit {
-        break
+  let order = store.entries_in_order()
+  if reverse {
+    let mut index = order.length() - 1
+    while index >= 0 {
+      let entry = order[index]
+      if eval_expr(expr, store, entry) {
+        hits.push(entry)
+        if options.limit > 0 && hits.length() >= options.limit {
+          break
+        }
+      }
+      index = index - 1
+    }
+  } else {
+    for entry in order {
+      if eval_expr(expr, store, entry) {
+        hits.push(entry)
+        if options.limit > 0 && hits.length() >= options.limit {
+          break
+        }
       }
     }
   }

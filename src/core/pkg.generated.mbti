@@ -103,6 +103,7 @@ pub fn Store::built_at(Self) -> Int64
 pub fn Store::entries_in_order(Self) -> ArrayView[EntryRef]
 pub fn Store::entry_at(Self, Int32) -> EntryRef?
 pub fn Store::entry_count(Self) -> Int32
+pub fn Store::entry_extension(Self, EntryRef) -> BytesView
 pub fn Store::entry_mtime(Self, EntryRef) -> Int64?
 pub fn Store::entry_name(Self, EntryRef) -> BytesView
 pub fn Store::entry_path(Self, EntryRef) -> Bytes

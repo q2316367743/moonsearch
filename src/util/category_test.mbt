@@ -90,3 +90,37 @@ test "the common formats land in the expected categories" {
   assert_true(doc.contains("mbt"))
   assert_false(pic.contains("pdf"))
 }
+
+///|
+test "extensions resolve back to their category case-insensitively" {
+  assert_parsed_category(
+    @util.TypeCategory::of_extension(b"jpg"[:]),
+    @util.TypeCategory::Pic,
+  )
+  assert_parsed_category(
+    @util.TypeCategory::of_extension(b"JPG"[:]),
+    @util.TypeCategory::Pic,
+  )
+  assert_parsed_category(
+    @util.TypeCategory::of_extension(b"Pdf"[:]),
+    @util.TypeCategory::Doc,
+  )
+  assert_parsed_category(
+    @util.TypeCategory::of_extension(b"mp4"[:]),
+    @util.TypeCategory::Video,
+  )
+  match @util.TypeCategory::of_extension(b""[:]) {
+    None => ()
+    Some(_) => abort("an empty extension must not resolve")
+  }
+  match @util.TypeCategory::of_extension(b"nope"[:]) {
+    None => ()
+    Some(_) => abort("an unknown extension must not resolve")
+  }
+  // The comparison is byte-exact apart from ASCII case; a suffix is not a
+  // match for a longer extension.
+  match @util.TypeCategory::of_extension(b"jpgx"[:]) {
+    None => ()
+    Some(_) => abort("a longer extension must not resolve to jpg")
+  }
+}

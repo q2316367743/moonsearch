@@ -945,24 +945,258 @@ async test "search --live explains the plan and prints statistics" {
 }
 
 ///|
-async test "search rejects options that arrive with later steps" {
-  let dir = make_fixture("moonsearch-search-unsupported")
-  let sort = @cli.run(["search", "--live", "--root", dir, "--sort", "size"])
-  let json = @cli.run(["search", "--live", "--root", dir, "--json", "x"])
+async test "search validates output options before scanning" {
+  let dir = make_fixture("moonsearch-search-options")
+  let sort = @cli.run(["search", "--live", "--root", dir, "--sort", "bogus"])
+  let json_template = @cli.run([
+    "search", "--live", "--root", dir, "--json", "--format", "{path}",
+  ])
+  let json_basename = @cli.run([
+    "search", "--live", "--root", dir, "--json", "--basename",
+  ])
+  let template_basename = @cli.run([
+    "search", "--live", "--root", dir, "--basename", "--format", "{path}",
+  ])
+  let unknown = @cli.run([
+    "search", "--live", "--root", dir, "--format", "{bogus}",
+  ])
+  let unterminated = @cli.run([
+    "search", "--live", "--root", dir, "--format", "{path",
+  ])
+  let relative = @cli.run([
+    "search", "--live", "--root", dir, "--relative-to", "/no/such/dir",
+  ])
   let missing_root = @cli.run(["search", "--live", "x"])
   @fs.rmdir(dir, recursive=true)
   match sort {
-    @cli.Failure(text) => assert_true(text.contains("--sort size"))
+    @cli.Failure(text) => {
+      assert_true(text.contains("--sort"))
+      assert_true(text.contains("bogus"))
+    }
     _ => abort("expected the sort to be rejected")
   }
-  match json {
-    @cli.Failure(text) => assert_true(text.contains("--json"))
-    _ => abort("expected json to be rejected")
+  match json_template {
+    @cli.Failure(text) => assert_true(text.contains("cannot be combined"))
+    _ => abort("expected json with format to be rejected")
+  }
+  match json_basename {
+    @cli.Failure(text) => assert_true(text.contains("cannot be combined"))
+    _ => abort("expected json with basename to be rejected")
+  }
+  match template_basename {
+    @cli.Failure(text) => assert_true(text.contains("cannot be combined"))
+    _ => abort("expected format with basename to be rejected")
+  }
+  match unknown {
+    @cli.Failure(text) =>
+      assert_true(text.contains("unknown format placeholder"))
+    _ => abort("expected an unknown placeholder to be rejected")
+  }
+  match unterminated {
+    @cli.Failure(text) => assert_true(text.contains("unterminated"))
+    _ => abort("expected an unterminated placeholder to be rejected")
+  }
+  match relative {
+    @cli.Failure(text) => assert_true(text.contains("--relative-to"))
+    _ => abort("expected a missing relative directory to be rejected")
   }
   match missing_root {
     @cli.Failure(text) => assert_true(text.contains("no roots configured"))
     _ => abort("expected the missing root to be rejected")
   }
+}
+
+///|
+/// A small tree with distinct names, extensions, and sizes:
+///
+/// ```text
+/// a.pdf     30 B
+/// b.txt     20 B
+/// c/d.zip   10 B
+/// ```
+async fn make_order_fixture() -> String {
+  let dir = @fs.tmpdir(prefix="moonsearch-order")
+  @fs.mkdir("\{dir}/c")
+  @fs.write_text("\{dir}/a.pdf", "012345678901234567890123456789")
+  @fs.write_text("\{dir}/b.txt", "01234567890123456789")
+  @fs.write_text("\{dir}/c/d.zip", "0123456789")
+  dir
+}
+
+///|
+async test "search orders by every key with limit and reversal" {
+  let dir = make_order_fixture()
+  let real = real_dir(dir)
+  let by_size = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "--sort", "size",
+  ])
+  let by_ext = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "--sort", "ext",
+  ])
+  let by_type = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "--sort", "type",
+  ])
+  let by_path = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "--sort", "path",
+  ])
+  let limited = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "--sort", "size", "-n",
+    "2",
+  ])
+  let reversed = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "--sort", "size", "--reverse",
+  ])
+  let reverse_limited = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "--reverse", "-n", "2",
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match by_size {
+    @cli.Success(text) =>
+      assert_eq(text, "\{real}/c/d.zip\n\{real}/b.txt\n\{real}/a.pdf")
+    _ => abort("expected size order")
+  }
+  match by_ext {
+    @cli.Success(text) =>
+      assert_eq(text, "\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip")
+    _ => abort("expected extension order")
+  }
+  match by_type {
+    @cli.Success(text) =>
+      assert_eq(text, "\{real}/c/d.zip\n\{real}/a.pdf\n\{real}/b.txt")
+    _ => abort("expected type order")
+  }
+  match by_path {
+    @cli.Success(text) =>
+      assert_eq(text, "\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip")
+    _ => abort("expected path order")
+  }
+  match limited {
+    @cli.Success(text) => assert_eq(text, "\{real}/c/d.zip\n\{real}/b.txt")
+    _ => abort("expected a limited result")
+  }
+  match reversed {
+    @cli.Success(text) =>
+      assert_eq(text, "\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip")
+    _ => abort("expected reversed size order")
+  }
+  match reverse_limited {
+    @cli.Success(text) => assert_eq(text, "\{real}/c/d.zip\n\{real}/b.txt")
+    _ => abort("expected a limited reverse-name result")
+  }
+}
+
+///|
+async test "folders-first groups folders ahead of files" {
+  let dir = make_order_fixture()
+  let real = real_dir(dir)
+  let result = @cli.run(["search", "--live", "--root", dir, "--folders-first"])
+  @fs.rmdir(dir, recursive=true)
+  match result {
+    @cli.Success(text) =>
+      assert_eq(
+        text,
+        "\{real}\n\{real}/c\n\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip",
+      )
+    _ => abort("expected folder-first output")
+  }
+}
+
+///|
+async test "basename, null, relative, json, and format output" {
+  let dir = make_order_fixture()
+  let real = real_dir(dir)
+  let base = ["search", "--live", "--root", dir, "--type", "file"]
+  let basename = @cli.run(base + ["--basename"])
+  let nul = @cli.run(base + ["--null"])
+  let relative = @cli.run(base + ["--relative-to", dir])
+  let json = @cli.run(base + ["--json", "--relative-to", dir])
+  let template = @cli.run(
+    base +
+    ["--relative-to", dir, "--format", "{path}|{size}|{ext}|{type}|{kind}"],
+  )
+  @fs.rmdir(dir, recursive=true)
+  match basename {
+    @cli.Success(text) => assert_eq(text, "a.pdf\nb.txt\nd.zip")
+    _ => abort("expected basenames")
+  }
+  match nul {
+    @cli.Success(text) => {
+      assert_eq(
+        text,
+        "\{real}/a.pdf\u{0}\{real}/b.txt\u{0}\{real}/c/d.zip\u{0}",
+      )
+      assert_true(text.get_char(text.length() - 1) is Some('\u{0}'))
+    }
+    _ => abort("expected NUL-terminated output")
+  }
+  match relative {
+    @cli.Success(text) => assert_eq(text, "a.pdf\nb.txt\nc/d.zip")
+    _ => abort("expected relative paths")
+  }
+  match json {
+    @cli.Success(text) => {
+      assert_true(text.contains("\"path\":\"a.pdf\""))
+      assert_true(text.contains("\"name\":\"a.pdf\""))
+      assert_true(text.contains("\"size\":30"))
+      assert_true(text.contains("\"ext\":\"pdf\""))
+      assert_true(text.contains("\"type\":\"doc\""))
+      assert_true(text.contains("\"kind\":\"file\""))
+      assert_eq(text.split("\n").count(), 3)
+    }
+    _ => abort("expected JSON lines")
+  }
+  match template {
+    @cli.Success(text) =>
+      assert_eq(
+        text, "a.pdf|30|pdf|doc|file\nb.txt|20|txt|doc|file\nc/d.zip|10|zip|archive|file",
+      )
+    _ => abort("expected formatted output")
+  }
+}
+
+///|
+async test "both engines produce byte-identical output" {
+  let dir = make_order_fixture()
+  let sorts = ["name", "path", "size", "mtime", "ext", "type"]
+  let variants : Array[Array[String]] = [
+    [],
+    ["--reverse"],
+    ["--folders-first"],
+    ["-n", "2"],
+    ["--reverse", "-n", "2"],
+    ["--folders-first", "-n", "2"],
+  ]
+  let formats : Array[Array[String]] = [
+    ["--json"],
+    ["--null"],
+    ["--basename"],
+    ["--format", "{path}|{name}|{size}|{ext}|{type}|{kind}"],
+    ["--relative-to", dir],
+  ]
+  let failures : Array[String] = []
+  for sort in sorts {
+    for variant in variants {
+      let base = ["search", "--live", "--root", dir, "--sort", sort, "file:"] +
+        variant
+      let scan = @cli.run(base)
+      let bitmap = @cli.run(base + ["--engine", "bitmap"])
+      if stdout_of(scan) != stdout_of(bitmap) ||
+        scan.exit_code() != bitmap.exit_code() {
+        failures.push("sort=\{sort} \{variant.join(" ")}")
+      }
+    }
+  }
+  for format in formats {
+    let base = ["search", "--live", "--root", dir, "file:"] + format
+    let scan = @cli.run(base)
+    let bitmap = @cli.run(base + ["--engine", "bitmap"])
+    if stdout_of(scan) != stdout_of(bitmap) ||
+      scan.exit_code() != bitmap.exit_code() {
+      failures.push("format=\{format.join(" ")}")
+    }
+  }
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(failures, [])
 }
 
 ///|

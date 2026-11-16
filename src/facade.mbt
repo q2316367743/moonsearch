@@ -153,10 +153,18 @@ pub using @query {
 
 ///|
 pub using @exec {
+  type FormatOptions,
+  type FormatTemplate,
+  type OrderOptions,
+  type OutputFormat,
   type ScanOptions,
+  type SortKey,
   exec_count,
   exec_count_with,
   exec_scan,
+  exec_scan_reverse_with,
   exec_scan_with,
   explain_query,
+  format_hits,
+  order_hits,
 }
