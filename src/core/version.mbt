@@ -3,7 +3,7 @@
 ///
 /// Keep this in sync with `version` in `moon.mod`; the release workflow fails
 /// when they disagree.
-pub const VERSION : String = "0.1.0"
+pub const VERSION : String = "1.0.0"
 
 ///|
 /// Text printed by `--version`.

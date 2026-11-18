@@ -6,7 +6,7 @@ stderr, and exit codes.
 
 ```mooncram q2316367743/moonsearch
 $ moonx q2316367743/moonsearch/cmd/moonsearch --version
-moonsearch 0.1.0
+moonsearch 1.0.0
 
 $ moonx q2316367743/moonsearch/cmd/moonsearch --help
 Usage: moonsearch [options] [command]

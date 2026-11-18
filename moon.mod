@@ -1,6 +1,6 @@
 name = "q2316367743/moonsearch"
 
-version = "0.1.0"
+version = "1.0.0"
 
 readme = "README.mbt.md"
 
