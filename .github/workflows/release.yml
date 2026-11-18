@@ -1,14 +1,27 @@
-# Publish the module to mooncakes.io.
+# Release pipeline: publish to mooncakes.io and attach prebuilt binaries to the
+# GitHub Release.
 #
-# Release flow for a new version:
-#   1. Bump `version` in moon.mod, commit, and push to master.
+# Flow for a new version:
+#   1. Bump `version` in moon.mod and VERSION in src/core/version.mbt, commit,
+#      and push to master.
 #   2. Wait for CI on that push to pass.
 #   3. Draft a GitHub Release with a matching tag (v0.2.0 for version 0.2.0)
 #      targeting master, then publish it. This workflow starts automatically.
 #
 # The tag is only a marker: mooncakes.io takes the version from moon.mod.
-# The workflow can also be dispatched manually from the Actions tab to publish
-# the version currently on master.
+# The workflow can also be dispatched manually from the Actions tab. Leave the
+# `tag` input empty to publish to mooncakes only; set it to rebuild and attach
+# the binaries of an existing release.
+#
+# Release assets, one runner per platform, built from the same commit:
+#   moonsearch-<version>-linux-x86_64.tar.gz
+#   moonsearch-<version>-macos-arm64.tar.gz
+#   moonsearch-<version>-windows-x86_64.zip
+#   SHA256SUMS
+#
+# `moon install q2316367743/moonsearch/cmd/moonsearch` is the source-based
+# install path: mooncakes serves the sources and the toolchain compiles them
+# locally. Both paths ship the same `cmd/moonsearch` executable package.
 #
 # One-time setup:
 #   Settings -> Secrets and variables -> Actions -> New repository secret
@@ -16,38 +29,53 @@
 #   Value: the full contents of ~/.moon/credentials.json (one JSON line),
 #          for example {"token":"<token>","username":"q2316367743"}
 
-name: publish
+name: release
 
 on:
   release:
     types: [released]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach binaries to (e.g. v0.1.0). Leave empty to publish to mooncakes only."
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  # Full gate: nothing is published or packaged unless every step passes.
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       # Fail in seconds on a version mismatch instead of surfacing the registry
       # error later. A `v` prefix on the tag is allowed (v0.2.0 == 0.2.0).
-      - name: Check tag matches moon.mod version
-        if: ${{ github.event_name == 'release' }}
+      - name: Resolve version and tag
+        id: meta
         run: |
-          MOON_VERSION=$(grep -m1 '^version' moon.mod | sed -E 's/.*"(.*)".*/\1/')
-          TAG="${{ github.event.release.tag_name }}"
-          TAG_VERSION="${TAG#v}"
-          echo "moon.mod version = $MOON_VERSION"
-          echo "release tag      = $TAG"
-          if [ "$MOON_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::tag \"$TAG\" does not match moon.mod version \"$MOON_VERSION\". Bump the version, push to master, then create the tag and release."
+          set -euo pipefail
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' moon.mod | head -1)
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "moon.mod version = $version"
+          echo "release tag      = ${tag:-<none>}"
+          if [ -n "$tag" ] && [ "${tag#v}" != "$version" ]; then
+            echo "::error::tag \"$tag\" does not match moon.mod version \"$version\". Bump the version, push to master, then create the tag and release."
             exit 1
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Set up MoonBit
         run: |
@@ -60,7 +88,6 @@ jobs:
       - name: Update MoonBit dependencies
         run: moon update
 
-      # Full gate: nothing is published unless every step passes.
       - name: Check
         run: moon check --target native --deny-warn
 
@@ -82,10 +109,222 @@ jobs:
       - name: Check formatting
         run: moon fmt --check
 
-      - name: Publish to mooncakes.io
+      # The binary reports VERSION_TEXT, which is compiled in; a release whose
+      # --version disagrees with the tag is worse than a failed pipeline.
+      - name: Check version constant
         run: |
-          echo "$CREDENTIALS" > ~/.moon/credentials.json
-          moon publish
-          rm -f ~/.moon/credentials.json
+          set -euo pipefail
+          version="${{ steps.meta.outputs.version }}"
+          grep -Fq "pub const VERSION : String = \"$version\"" src/core/version.mbt
+
+      # Proves the package is installable from a local checkout before the
+      # registry path is published.
+      - name: Smoke test moon install
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          moon install ./cmd/moonsearch --bin "$RUNNER_TEMP/bin"
+          "$RUNNER_TEMP/bin/moonsearch" --version
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Write mooncakes credentials
+        run: |
+          set -euo pipefail
+          if [ -z "${MOONCAKES_TOKEN:-}" ]; then
+            echo "::error::secret MOONCAKES_TOKEN is missing"
+            exit 1
+          fi
+          mkdir -p "$HOME/.moon"
+          printf '%s' "$MOONCAKES_TOKEN" > "$HOME/.moon/credentials.json"
+          # A stray newline or a truncated paste only shows up as an opaque
+          # registry error later; check the shape up front.
+          if ! grep -q '"token"' "$HOME/.moon/credentials.json" ||
+             ! grep -q '"username"' "$HOME/.moon/credentials.json"; then
+            echo "::error::MOONCAKES_TOKEN must contain both token and username"
+            exit 1
+          fi
         env:
-          CREDENTIALS: ${{ secrets.MOONCAKES_TOKEN }}
+          MOONCAKES_TOKEN: ${{ secrets.MOONCAKES_TOKEN }}
+
+      # Re-running the workflow to rebuild assets must not fail on an already
+      # published version. The first `version` field in the response is the
+      # module version; dependencies also carry one, so match only the first.
+      - name: Skip when already published
+        id: check
+        run: |
+          set -euo pipefail
+          version="${{ needs.verify.outputs.version }}"
+          status=$(curl -sS -o "$RUNNER_TEMP/module.json" -w '%{http_code}' \
+            "https://mooncakes.io/api/v0/modules/q2316367743/moonsearch")
+          if [ "$status" = "200" ]; then
+            published=$(grep -o '"version":"[^"]*"' "$RUNNER_TEMP/module.json" | head -1 | cut -d'"' -f4)
+            echo "on mooncakes: $published, releasing: $version"
+            if [ "$published" = "$version" ]; then
+              echo "q2316367743/moonsearch $version is already published; skipping"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "module is not on mooncakes yet (HTTP $status)"
+          fi
+
+      - name: Publish to mooncakes.io
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          moon update
+          moon publish
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f "$HOME/.moon/credentials.json"
+
+  build:
+    needs: verify
+    if: needs.verify.outputs.tag != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glibc 2.35 baseline: a binary built here runs on current LTS distros.
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: macos-15
+            platform: macos-arm64
+          - os: windows-latest
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up MoonBit (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Set up MoonBit (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Show toolchain versions
+        run: moon version --all
+
+      - name: Update MoonBit dependencies
+        run: moon update
+
+      - name: Build native
+        run: moon build --target native --release
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          version="${{ needs.verify.outputs.version }}"
+          platform="${{ matrix.platform }}"
+          stage="$RUNNER_TEMP/moonsearch"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          bin=$(find _build/native/release/build/cmd/moonsearch -maxdepth 1 -type f \
+            \( -name 'moonsearch.exe' -o -name 'moonsearch' \) | head -1)
+          if [ -z "$bin" ]; then
+            echo "::error::native binary not found under _build/native/release/build/cmd/moonsearch"
+            exit 1
+          fi
+          cp "$bin" "$stage/moonsearch"
+          cp LICENSE "$stage/LICENSE"
+          chmod +x "$stage/moonsearch"
+          # Ad-hoc signing keeps the arm64 binary runnable on macOS.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            codesign --force --sign - "$stage/moonsearch"
+          fi
+          actual=$("$stage/moonsearch" --version)
+          if [ "$actual" != "moonsearch $version" ]; then
+            echo "::error::binary reports \"$actual\", expected \"moonsearch $version\""
+            exit 1
+          fi
+          asset="$RUNNER_TEMP/moonsearch-$version-$platform.tar.gz"
+          tar -czf "$asset" -C "$stage" moonsearch LICENSE
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ needs.verify.outputs.version }}"
+          $platform = "${{ matrix.platform }}"
+          $stage = Join-Path $env:RUNNER_TEMP "moonsearch"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item "_build\native\release\build\cmd\moonsearch\moonsearch.exe" (Join-Path $stage "moonsearch.exe")
+          Copy-Item "LICENSE" (Join-Path $stage "LICENSE")
+          $actual = (& (Join-Path $stage "moonsearch.exe") --version | Out-String).Trim()
+          if ($actual -ne "moonsearch $version") {
+            Write-Error "binary reports '$actual', expected 'moonsearch $version'"
+            exit 1
+          }
+          $asset = Join-Path $env:RUNNER_TEMP "moonsearch-$version-$platform.zip"
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $asset
+          "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: moonsearch-${{ matrix.platform }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+          retention-days: 7
+
+  attach:
+    needs: [verify, build]
+    if: needs.verify.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - name: Collect assets and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          find dist -type f \( -name 'moonsearch-*.tar.gz' -o -name 'moonsearch-*.zip' \) \
+            -exec cp -t assets {} +
+          count=$(find assets -maxdepth 1 -type f | wc -l)
+          echo "collected $count assets"
+          if [ "$count" -ne 3 ]; then
+            echo "::error::expected 3 platform archives, found $count"
+            exit 1
+          fi
+          (cd assets && sha256sum moonsearch-*.tar.gz moonsearch-*.zip > SHA256SUMS)
+
+      - name: Upload assets to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: gh release upload "$TAG" assets/* --clobber --repo "$GITHUB_REPOSITORY"
