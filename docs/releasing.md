@@ -21,6 +21,18 @@ tag 只是标记：mooncakes.io 的版本号来自 `moon.mod`。工作流会先�
 - `tag` 留空：只发布到 mooncakes。
 - `tag` 填已有 Release 的 tag：重新构建并上传该 Release 的二进制资产。
 
+## 版本号限制
+
+mooncakes.io 当前只接受主版本 `0`，版本号必须是 `0.x.y`。主版本非 0 时
+`moon publish` 直接返回 403：
+
+```text
+Server status: 403 Forbidden, detail: In this very early stage, the major version must be '0'. The version should follow the format of `0.x.y`
+```
+
+所以 GitHub Release 的 tag 也只能是 `v0.x.y`；`verify` 的版本一致性校验与 registry
+的限制共同决定可选版本。升级主版本前先确认 mooncakes 是否已放开该限制。
+
 ## 工作流结构
 
 | Job | 内容 |
