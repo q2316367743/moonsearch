@@ -124,7 +124,7 @@ async fn ensure_database_dir(path : StringView) -> Unit raise DbError {
   let parent = database_parent(path)
   match parent {
     Some(dir) =>
-      @fs.mkdir(dir, recursive=true, allow_exist=true) catch {
+      @fs.mkdir(dir, recursive=true, allow_existing=true) catch {
         err => raise DbError::Io("cannot create \{dir}: \{err}")
       }
     None => ()

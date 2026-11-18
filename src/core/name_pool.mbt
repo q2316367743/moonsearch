@@ -85,7 +85,7 @@ pub fn NamePool::with_chunk_size(chunk_size : Int32) -> NamePool {
     sealed_len: 0UL,
     name_count: 0,
     chunk_size: size,
-    tail: @buffer.Buffer(size_hint=size),
+    tail: @buffer.Buffer(capacity=size),
   }
 }
 
@@ -162,7 +162,7 @@ pub fn NamePool::to_bytes(self : NamePool) -> Bytes {
   if self.chunks.length() == 1 {
     return self.chunks[0]
   }
-  let buffer = @buffer.Buffer(size_hint=self.sealed_len.to_int())
+  let buffer = @buffer.Buffer(capacity=self.sealed_len.to_int())
   for chunk in self.chunks {
     buffer.write_bytes(chunk.exact_view())
   }

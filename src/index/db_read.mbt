@@ -163,7 +163,7 @@ fn parse_names(
       raise DbError::Corrupt("name is too long")
     }
     let suffix_bytes = reader.read_bytes(suffix)
-    let buffer = @buffer.Buffer(size_hint=prefix + suffix)
+    let buffer = @buffer.Buffer(capacity=prefix + suffix)
     buffer.write_bytes(previous.exact_view(start=0, end=prefix))
     buffer.write_bytes(suffix_bytes)
     let name = buffer.to_bytes()

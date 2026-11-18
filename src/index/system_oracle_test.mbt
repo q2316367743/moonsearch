@@ -55,7 +55,7 @@ async test "the system backend matches an independent directory walk" {
   }
   let tree : RefTree = { files: Map([]), folders: Map([]), }
   let total = reference_walk(root, tree)
-  @fs.rmdir(dir, recursive=true)
+  @fs.remove(dir, recursive=true)
   // The fixture itself: 5 + 2 + 3 + 1 bytes; the symlink contributes zero.
   assert_eq(total, 11L)
   assert_eq(report.issues.length(), 0)

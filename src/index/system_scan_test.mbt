@@ -21,7 +21,7 @@ async test "system backend reports unreadable directories as issues" {
     err => abort(err.message())
   }
   @fs.chmod(locked, 0o755)
-  @fs.rmdir(dir, recursive=true)
+  @fs.remove(dir, recursive=true)
   if denied {
     assert_eq(report.issues.length(), 1)
     assert_true(report.issues[0].path.contains("locked"))

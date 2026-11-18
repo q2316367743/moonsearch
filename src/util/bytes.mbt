@@ -59,7 +59,7 @@ pub fn ascii_upper(byte : Byte) -> Byte {
 /// Non-ASCII bytes are preserved verbatim. This is the folding used by the
 /// trigram index and by case-insensitive name matching.
 pub fn ascii_fold(view : BytesView) -> Bytes {
-  let buffer = @buffer.Buffer(size_hint=view.length())
+  let buffer = @buffer.Buffer(capacity=view.length())
   for byte in view.iter() {
     buffer.write_byte(ascii_lower(byte))
   }

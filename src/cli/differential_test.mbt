@@ -116,7 +116,7 @@ async test "scan and bitmap agree on the corpus against a persisted database" {
   for query in queries {
     cli_diff_query("persisted", database, query)
   }
-  @fs.rmdir(dir, recursive=true)
+  @fs.remove(dir, recursive=true)
 }
 
 ///|
@@ -133,7 +133,7 @@ async test "scan and bitmap agree on a no-trigram database" {
   for query in queries {
     cli_diff_query("no-trigram", database, query)
   }
-  @fs.rmdir(dir, recursive=true)
+  @fs.remove(dir, recursive=true)
 }
 
 ///|
@@ -169,7 +169,7 @@ async test "the live scan matches the persisted bitmap engine" {
     compared = compared + 1
   }
   assert_true(compared > 0)
-  @fs.rmdir(dir, recursive=true)
+  @fs.remove(dir, recursive=true)
 }
 
 ///|
@@ -209,5 +209,5 @@ async test "both engines format and order results identically" {
     }
   }
   assert_eq(comparisons, queries.length() * variants.length())
-  @fs.rmdir(dir, recursive=true)
+  @fs.remove(dir, recursive=true)
 }

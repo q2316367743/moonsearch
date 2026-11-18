@@ -72,7 +72,7 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
   if checksum_offset.to_int64() + 8L > 2147483647L {
     raise DbError::TooLarge("the checksum does not fit in the byte buffer")
   }
-  let prefix = @buffer.Buffer(size_hint=table_size)
+  let prefix = @buffer.Buffer(capacity=table_size)
   write_header(
     prefix,
     folder_count~,
@@ -97,7 +97,7 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
   let crc = Crc32::new()
   crc.update(prefix_bytes.exact_view())
   let metadata_crc = crc.finish()
-  let out = @buffer.Buffer(size_hint=offset + 8)
+  let out = @buffer.Buffer(capacity=offset + 8)
   out.write_bytes(prefix_bytes.exact_view())
   for section in pending {
     out.write_bytes(section.data.exact_view())
@@ -323,7 +323,7 @@ fn name_index_of(
 ///|
 /// Serialize the canonical order as store-wide ids.
 fn order_section(store : @core.Store, total : Int32) -> Bytes {
-  let buffer = @buffer.Buffer(size_hint=total * 4)
+  let buffer = @buffer.Buffer(capacity=total * 4)
   for entry in store.entries_in_order() {
     buffer.write_uint_le(store.global_id(entry).reinterpret_as_uint())
   }
@@ -396,7 +396,7 @@ fn write_dict_key(
 ///|
 /// One-byte payload.
 fn small_payload(value : Byte) -> Bytes {
-  let buffer = @buffer.Buffer(size_hint=1)
+  let buffer = @buffer.Buffer(capacity=1)
   buffer.write_byte(value)
   buffer.to_bytes()
 }
@@ -404,7 +404,7 @@ fn small_payload(value : Byte) -> Bytes {
 ///|
 /// Four-byte little-endian payload.
 fn u32_payload(value : UInt32) -> Bytes {
-  let buffer = @buffer.Buffer(size_hint=4)
+  let buffer = @buffer.Buffer(capacity=4)
   buffer.write_uint_le(value)
   buffer.to_bytes()
 }
