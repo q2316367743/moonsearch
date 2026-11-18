@@ -95,6 +95,7 @@ pub(all) struct RootInfo {
   folders : UInt32
   size : Int64
 }
+pub fn RootInfo::new(path~ : String, one_file_system~ : Bool, folder~ : Int32, files? : UInt32, folders? : UInt32, size? : Int64) -> Self
 
 pub struct Store {
   // private fields
@@ -119,6 +120,7 @@ pub fn Store::name(Self, NameRef) -> BytesView
 pub fn Store::name_bytes(Self) -> Int32
 pub fn Store::name_count(Self) -> Int32
 pub fn Store::new(names~ : NamePool, folders~ : Array[Entry], files~ : Array[Entry], roots~ : Array[RootInfo], built_at~ : Int64) -> Self
+pub fn Store::restore(names~ : NamePool, folders~ : Array[Entry], files~ : Array[Entry], roots~ : Array[RootInfo], built_at~ : Int64, order~ : Array[EntryRef]) -> Self
 pub fn Store::roots(Self) -> ArrayView[RootInfo]
 pub fn Store::total_size(Self) -> Int64
 

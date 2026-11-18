@@ -9,10 +9,12 @@ arrays + linear scan" execution model with a trigram inverted index, bitmap set
 algebra, and range arrays. The design is documented in
 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
 
-> Status: **S11 — result ordering and output formats**. `index` and `update`
-> walk real directory trees and build an in-memory `Store` with post-order
-> statistics. `src/query` parses the full field/modifier macro syntax into a
-> typed `Query` tree, and `src/exec` evaluates it two ways. The S05 linear scan
+> Status: **S14 — benchmarks, documentation, and demo**. The complete S01–S13
+> stack is in place: `index` and `update` walk real directory trees, build an
+> in-memory `Store` with post-order statistics, and write the complete index to
+> an MSDB v2 database with an atomic replace. `src/query` parses the full
+> field/modifier macro syntax into a typed `Query` tree, and `src/exec` evaluates
+> it two ways. The S05 linear scan
 > is still the semantic oracle: `search --live --root <PATH>` and
 > `count --live --root <PATH>` work end to end. The S10 compiler turns the same
 > `Query` into an `Expr` over id sets: dictionary terms become constants, range
@@ -24,8 +26,13 @@ algebra, and range arrays. The design is documented in
 > `--reverse`, `--folders-first`, top-K `--limit`, `--null`, `--json`,
 > `--format`, `--basename`, and `--relative-to`, all shared by both engines.
 > All index structures — the S07 `Dict`, the S08 `Ranges`, and the S09
-> `TrigramIndex` — are bundled in `@index.Index`; the index is still in memory
-> only. Persistence (S12) comes next.
+> `TrigramIndex` — are bundled in `@index.Index`. S12 persists that bundle:
+> `search` and `count` load the database and run without rebuilding anything.
+> S13 makes the cross-check systematic: a three-layer query corpus, a
+> deterministic differential runner over several fixtures, quickcheck-style
+> properties, and a corruption fuzzer for the database reader. S14 adds the
+> benchmark harness, the measured target table, the database-format
+> specification, and a scripted demo.
 
 ## Build and run
 
@@ -36,7 +43,9 @@ moon build --target native
 moon run cmd/moonsearch -- --help
 moon run cmd/moonsearch -- --version
 moon run cmd/moonsearch -- index -r /tmp/some-tree
+moon run cmd/moonsearch -- 'ext:pdf size:>1mb'
 moon run cmd/moonsearch -- search --live --root /tmp/some-tree 'ext:pdf size:>1mb'
+moon run cmd/moonsearch -- info --verify
 ```
 
 ## Commands
@@ -47,11 +56,11 @@ moonsearch <command> [options] [query...]
 
 | Command | Purpose | Status |
 | --- | --- | --- |
-| `index` | Scan roots into an in-memory index and print a summary | works (in memory; persistence is S12) |
-| `update` | Rescan the roots and rebuild the index | works (same as `index` until S12) |
-| `search` | Query the index (default subcommand) | works with `--live --root <PATH>` on either engine |
-| `count` | Print the number of matches | works with `--live --root <PATH>` on either engine |
-| `info` | Show index statistics | pending (S12) |
+| `index` | Scan roots and write the persisted index | works |
+| `update` | Rescan the roots and replace the persisted index | works |
+| `search` | Query the persisted index (default subcommand) | works on either engine |
+| `count` | Print the number of matches | works on either engine |
+| `info` | Show persisted index statistics | works; `--verify` checks every section |
 
 `search` is the default, so a bare query works without the subcommand:
 
@@ -59,8 +68,11 @@ moonsearch <command> [options] [query...]
 moonsearch 'ext:pdf size:>1mb'
 ```
 
-Until persistence lands in S12 a search needs an in-memory store, which
-`--live --root <PATH>` builds from a directory scan:
+`search` and `count` use the database written by `index`/`update`. Their default
+path is `$XDG_DATA_HOME/moonsearch/index.msdb` (or
+`$HOME/.local/share/moonsearch/index.msdb`); `-D/--database` and
+`MOONSEARCH_DATABASE` override it. `--live --root <PATH>` still scans for the
+current invocation without touching the database:
 
 ```bash
 moonsearch search --live --root /home/user 'ext:jpg;png size:>1mb' -n 20
@@ -80,6 +92,73 @@ Global options are accepted before or after the subcommand:
 | `-h, --help` / `-V, --version` | Help and version |
 
 Run `moonsearch <command> --help` for the full option list.
+
+## Query coverage and index sources
+
+The bitmap engine never walks the store for a term that an index can answer.
+`--explain` prints the chosen leaf and, for a fallback, the reason:
+
+| Query form | Candidate source | Notes |
+| --- | --- | --- |
+| `file:`, `folder:`, `hidden:`, `nohidden:` | `Dict` bitmap | one dictionary lookup |
+| `ext:jpg;png` | `Dict` extension buckets | union of the named buckets |
+| `app:`, `archive:`, `audio:`, `doc:`, `pic:`, `video:` | `Dict` category set | one set per category, built once |
+| `size:`, `dm:`, `depth:`, `childcount:`, `parent:`, `empty:` | `Ranges` sorted slice | two binary searches, then `Ids` |
+| name substring or `exact:` with ≥ 3 bytes | trigram postings | 3 shortest postings intersected, then byte verification |
+| name substring shorter than 3 bytes | full scan | `reason=short-needle` |
+| glob (`*.pdf`), regex, `path:` | full scan | `reason=glob`, `regex`, or `path`; pushed under any indexed sibling |
+| `childfilecount:`, `childfoldercount:`, `contenttype:` | full scan | no range/bitmap field yet |
+| `--no-trigram` database | full scan for names | dictionary and range terms still use their indexes |
+| empty query | `Dict.all()` | canonical-order membership, stops at `--limit` |
+| `--live` (both engines) | directory scan | no database is read or written |
+
+`AND` sides are sorted by estimated cardinality, `Scan` leaves are pushed below
+indexed sides, and `Or`/`Not` are evaluated as set algebra. A term that cannot
+use an index does not disable the indexes of the other terms.
+
+## Benchmarks (S14)
+
+The primary dataset is 1,219,537 entries from three trees under
+`~/Documents/workspace` (`app`, `dashou-plugin`, `plugin`): 113,665 folders,
+1,105,872 files, and an 86.7 MiB database. Measurements are from a release
+build on an Apple M4 Pro (macOS 26.6.2); engine latency is the median from
+`moonsearch-bench`, which loads the database once and samples the in-process
+query path with a monotonic clock. `--stats` and `info --verify` numbers are
+from the same database.
+
+| Scenario | Target (plan) | Measured (1.22M entries) | Status |
+| --- | --- | --- | --- |
+| Scan + build + write | < 90 s at 1M | 75.4 s | met |
+| Database load | < 800 ms at 1M | 1136 ms | missed |
+| `ext:jpg` | < 1 ms | 34.1 µs | met |
+| `ext:jpg size:>1mb` | < 5 ms | 0.31 ms | met |
+| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 4.41 ms | met |
+| `report` | < 20 ms | 76.6 µs | met |
+| `report pdf` | < 40 ms | 183 µs | met |
+| `*.pdf` | < 120 ms | 72.3 ms | met |
+| `count ext:mp4` | < 1 ms | 34.0 µs | met |
+| empty query + `-n 20` | < 1 ms | 33.4 µs | met |
+| Index extra size | < 1.5× names + entries | 1.58× | marginal |
+| Query-time resident memory | < 400 MB at 1M | 361.9 MiB | met |
+
+Every query target is met on this dataset; indexed terms are up to ~1350×
+faster than the linear-scan oracle (glob-only `*.pdf`, which has no index to
+use, is the expected 1.3× exception). The two misses are
+database load (1.14 s at 1.22M entries, about 0.93 s normalized to 1M) and
+index size (1.58× against a 1.5× budget; `RANGES` and `POSTINGS` dominate).
+The full 2.36M-entry tree is a stress case: build 150 s, load 2.45 s, and dense
+range queries such as `size:>1kb` reach 84 ms because a large range slice is
+sorted and converted to a bitmap. Glob-only `*.pdf` is the only raw query miss
+there (143 ms at 2.36M entries, about 61 ms normalized to 1M). The tuning
+backlog is recorded in
+[`docs/benchmarks.md`](docs/benchmarks.md).
+
+- Raw reports: [`bench/results.md`](bench/results.md) (1.22M dataset) and
+  [`bench/results-full-tree.md`](bench/results-full-tree.md) (2.36M stress).
+- Reprocess: `python3 bench/run_bench.py --rebuild-index --root <DIR>`, after
+  `moon build --target native --release`.
+- Demo: `bash bench/demo.sh` (scripted terminal walkthrough suitable for a
+  recording; see [`docs/benchmarks.md`](docs/benchmarks.md)).
 
 ## Core model (S02)
 
@@ -147,8 +226,9 @@ bytes: 6
 
 `skipped:` and `issues:` lines appear when non-zero. `--stats` adds timing,
 name-pool sizes, and the dictionary shape (extension count, category count,
-hidden entries) to stderr. Until S12 the store exists only for the duration of
-the command; nothing is written to `--database` yet.
+hidden entries) to stderr. The index is written to the database with a temporary
+file, `sync`, and an atomic `rename`; a writer lock serialises concurrent
+`index`/`update` runs and leaves the previous database intact on failure.
 
 ### Scanner backend limits
 
@@ -307,7 +387,8 @@ and checked against an independent membership-mask implementation. See
 The bitmap engine is wired into the CLI: `--engine bitmap` evaluates the S10
 `Expr` plan over the S07–S09 candidate sources. The S05 scan engine remains the
 default and the oracle the indexed engine is checked against. Both engines feed
-the S11 ordering and formatting layer, and S12 persists the index.
+the S11 ordering and formatting layer. S12 persists the whole `Index` and
+restores it without rebuilding.
 
 ## Field dictionary (S07)
 
@@ -338,8 +419,8 @@ indexed executor consumes.
   build. `--stats` also prints its shape:
   `dict: <extensions> extensions, 6 categories, <hidden> hidden`.
 
-The dictionary is not persisted yet; S12 writes it as the `DICT` section. The
-S10 compiler turns these sets into `Const` leaves of an indexed plan.
+The dictionary is persisted as the `DICT` section and restored as-is; the S10
+compiler turns these sets into `Const` leaves of an indexed plan.
 
 ## Range indexes (S08)
 
@@ -369,7 +450,8 @@ S10 compiler turns these sets into `Const` leaves of an indexed plan.
   month and comparison dates for `dm`, multi-level `depth`, `childcount` with
   `empty:`, and `parent:` paths that exist or do not.
 
-The range arrays are not persisted yet; S12 writes them as the `RANGES` section.
+The range arrays are persisted as the `RANGES` section. Only materialized fields
+are written; the rest stay lazy after loading.
 
 ## Trigram inverted index (S09)
 
@@ -401,7 +483,7 @@ one posting per distinct ASCII-folded 3-byte window of every entry name.
   also pins the fallbacks: short needles, missing trigrams, short names,
   stop-grams, and the fact that name-only postings do not cover `path:` terms.
 
-The postings are not persisted yet; S12 writes them as the `POSTINGS` section.
+The postings are persisted as the `POSTINGS` section with delta-varint ids.
 
 ## Indexed query compiler and plans (S10)
 
@@ -455,8 +537,33 @@ Query
   explain goldens.
 
 `@index.Index` bundles the store and the three candidate sources, so the
-compiler, the CLI, and the upcoming persistence layer pass one object instead of
-four.
+compiler, the CLI, and the persistence layer pass one object instead of four.
+
+## Persistence (S12)
+
+`src/index/db*.mbt` writes and reads the MSDB v2 format. The file contains the
+header, a section table, roots, a deduplicated and front-coded name table,
+folder/file records, the canonical order, the dictionary (`DICT`), the
+materialized range arrays (`RANGES`), and the delta-varint trigram postings
+(`POSTINGS`). Loading restores those structures directly: no rescan, no
+dictionary rebuild, no posting rebuild.
+
+- **Integrity** — a metadata CRC covers the header and section table on every
+  load; `info --verify` (or `verify=true` in the library) checks the full-file
+  CRC. Every length, offset, id, parent link, and name reference is validated
+  before use, and parent cycles are rejected.
+- **Atomic replace** — the writer takes `<path>.lock` exclusively, writes
+  `<path>.tmp.<timestamp>`, syncs, then renames over the old database. Readers
+  never lock; a failed write leaves the previous database in place.
+- **`info`** — reads only the header and section table, so it reports counts,
+  format version, file size, trigram key count, and per-section sizes without
+  loading the store.
+- **Degradation** — a database written with `--no-trigram` loads with
+  `Index::trigram() = None`; the compiler falls back to full scans for name
+  terms. Lazy range fields that were not materialized stay lazy and build from
+  the restored store on first use.
+
+The field-level specification is [`docs/db-format.md`](docs/db-format.md).
 
 ## Result ordering and output formats (S11)
 
@@ -502,6 +609,49 @@ all orders and formats; `tests/cli.md` covers the executable end to end. The CLI
 wiring and option-conflict rules live in
 [`docs/modules/cli.md`](docs/modules/cli.md).
 
+## Cross-check, properties, and fuzzing (S13)
+
+The two engines share the lexer, parser, field rules, predicates, ordering, and
+formatting; they differ only in how they produce candidate ids. S13 turns that
+contract into a gate that runs on every change:
+
+- **Three-layer corpus** — `src/testkit/corpus.mbt` holds a handwritten
+  semantic corpus (every field, modifier, operator, and boundary), a
+  deterministic quickcheck-style generator (depth-limited boolean expressions
+  over a fixed leaf vocabulary), and an explain-coverage supplement (one query
+  per plan node and per degradation reason). `testkit.Rng` is an xorshift64
+  generator, so a failing seed reproduces the same inputs on every platform.
+- **Differential runner** — `exec/differential_test.mbt` evaluates each query
+  with `exec_scan_with` and with `exec_indexed` (both optimized and unoptimized
+  plan trees), then compares the sorted id sets, the canonical-order expansion,
+  and `exec_indexed_count`. Fixtures cover an empty store, a hand-written tree,
+  three deterministic random trees, unicode names, a store where every name
+  shares the same trigrams, and `--no-trigram` builds.
+- **Explain coverage gate** — the runner walks optimized and raw plan trees,
+  collects node kinds (`const`/`trigram`/`scan`/`filter`/`and`/`or`/`not`) and
+  degradation reasons, and fails unless every one is observed. A new operator
+  or fallback path must extend the corpus first.
+- **Properties** — trigram candidate sets never miss a linear-scan match (for
+  default, `case:`, `exact:`, and `case:exact:` queries); a database round trip
+  answers the corpus identically with and without postings; query output is
+  independent of repetition and shuffled input; `Ids` obeys the set-algebra
+  identities against a boolean-mask reference and survives serialization
+  mutation.
+- **Corruption fuzz** — `index/db_fuzz_test.mbt` applies deterministic
+  multi-operation mutations (flips, deletions, insertions, overwrites,
+  truncations) and random garbage. Full verification must reject every mutant;
+  an unverified load that slips through is probed through every store,
+  dictionary, range, and trigram accessor to prove it stays in bounds.
+- **End-to-end** — `cli/differential_test.mbt` compares stdout bytes and exit
+  codes for `search` and `count` between engines on a persisted database, a
+  `--no-trigram` database, a live scan, and the full sort/format option matrix.
+
+All seeds are constants in the test files; there is no clock or entropy input,
+so CI runs exactly the cases a local run does. Module-level notes are in
+[`docs/modules/testkit.md`](docs/modules/testkit.md),
+[`docs/modules/exec.md`](docs/modules/exec.md), and
+[`docs/modules/index.md`](docs/modules/index.md).
+
 ## Exit codes
 
 | Code | Meaning |
@@ -521,6 +671,20 @@ moon info
 moon testcli test tests/cli.md --target native
 ```
 
+Benchmarks and demo:
+
+```bash
+moon build --target native --release
+python3 bench/run_bench.py --label my-tree --root /path/to/tree --rebuild-index
+bash bench/demo.sh
+```
+
+`bench/run_bench.py` builds the database when it is missing (or when
+`--rebuild-index` is passed), records build time and peak RSS, runs
+`moonsearch-bench` for in-process engine latency, and measures CLI wall time.
+It writes `bench/results.md` and `bench/results.json`; `--output` and
+`--json-output` redirect them.
+
 Layout:
 
 ```text
@@ -532,14 +696,20 @@ src/query/         lexer, parser, query AST, flags, values, macros, categories
 src/exec/          scan engine, query compiler, optimizer, result order/formatting
 src/ids/           Ids set algebra, compressed bitmap containers, serialization
 src/cli/           command specification, invocation, index/search commands
+src/testkit/       deterministic RNG and the three-layer query corpus (tests only)
 src/               public facade
 cmd/moonsearch/    executable entry point
+cmd/moonsearch-bench/  in-process benchmark driver (load once, sample queries)
+bench/             benchmark harness, demo script, measured results
 tests/cli.md       end-to-end CLI golden tests
 ```
 
-The original migration plan splits the work into S01–S14. This repository is at
-S11; later steps add persistence (S12), the full cross-check/property/fuzz suite
-(S13), and benchmarks (S14). Module notes live in `docs/modules/`.
+The migration plan's S01–S14 are complete. Module notes live in `docs/modules/`;
+the database format is specified in [`docs/db-format.md`](docs/db-format.md);
+benchmark methodology and the tuning backlog are in
+[`docs/benchmarks.md`](docs/benchmarks.md). The remaining plan items are the P1
+and P2 extensions (Unicode casefold, `libmagic` content types, PCRE2 regex,
+path trigrams, incremental monitoring, and a POSIX FFI scanner backend).
 
 ## License
 

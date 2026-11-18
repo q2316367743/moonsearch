@@ -16,6 +16,22 @@ pub(all) struct RootInfo {
 }
 
 ///|
+/// Build a per-root summary.
+///
+/// The scanner fills these in through `Builder::set_root_stats`; a database
+/// loader reconstructs them from the persisted ROOTS section.
+pub fn RootInfo::new(
+  path~ : String,
+  one_file_system~ : Bool,
+  folder~ : FolderId,
+  files~ : UInt32 = 0U,
+  folders~ : UInt32 = 0U,
+  size~ : Int64 = 0L,
+) -> RootInfo {
+  { path, one_file_system, folder, files, folders, size, }
+}
+
+///|
 /// An immutable in-memory index.
 ///
 /// A store owns the name pool and the folder/file arrays built by a scan. The
@@ -50,6 +66,27 @@ pub fn Store::new(
   built_at~ : Int64,
 ) -> Store {
   let order = build_order(names, folders, files)
+  { names, folders, files, roots, built_at, order, }
+}
+
+///|
+/// Rebuild a store from parts that were already validated.
+///
+/// This is the database loader's constructor: it skips `Store::new`'s canonical
+/// sort because the persisted ORDER section is the exact order the store had
+/// when it was written. The caller owns validation: `order` must be a
+/// permutation of the store-wide ids, every parent must name a folder, and every
+/// name reference must be readable from `names`. A malformed order can make
+/// results appear in the wrong sequence but cannot index out of bounds, because
+/// every consumer of `order` resolves ids through `entry_at`.
+pub fn Store::restore(
+  names~ : NamePool,
+  folders~ : Array[Entry],
+  files~ : Array[Entry],
+  roots~ : Array[RootInfo],
+  built_at~ : Int64,
+  order~ : Array[EntryRef],
+) -> Store {
   { names, folders, files, roots, built_at, order, }
 }
 

@@ -168,6 +168,12 @@ pub using @query {type DateComparison}
 
 pub using @util {type DateSpan}
 
+pub using @index {type DbError}
+
+pub using @index {type DbInfo}
+
+pub using @index {type DbSectionInfo}
+
 pub using @index {type Dict}
 
 pub using @platform {type DirFailure}
@@ -205,6 +211,8 @@ pub type GlobalId = Int32
 pub using @ids {type Ids}
 
 pub using @ids {type IdsError}
+
+pub using @index {type Index}
 
 pub using @index {type IndexError}
 

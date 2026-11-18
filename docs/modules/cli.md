@@ -11,9 +11,12 @@
 | `spec.mbt` | argparse 规格：全局选项、`index/update/search/count/info` 子命令、help 文本 |
 | `invocation.mbt` | `Command`、`Invocation`、`parse` 与默认子命令 `search` |
 | `run.mbt` | `CliResult`、退出码映射、子命令分发 |
-| `index_command.mbt` | `index` / `update`：扫描、构建 `@index.Index`、汇总与 `--stats` |
-| `search_command.mbt` | `search` / `count`：查询构建、引擎选择、排序、格式化、诊断 |
+| `database.mbt` | 数据库路径解析：`-D`、`MOONSEARCH_DATABASE`、XDG/HOME 默认值 |
+| `index_command.mbt` | `index` / `update`：扫描、构建 `@index.Index`、原子写库、汇总与 `--stats` |
+| `search_command.mbt` | `search` / `count`：查询构建、索引来源、引擎选择、排序、格式化、诊断 |
+| `info_command.mbt` | `info`：只读 header/section table，报告版本、条目数、大小与校验状态 |
 | `cli_test.mbt` | 进程内 CLI 测试：help golden、参数错误、真实目录端到端、两引擎对拍 |
+| `differential_test.mbt` | S13：三层语料在持久化库、`--no-trigram` 库、`--live` 与全部输出选项上的端到端字节对拍 |
 
 ## 执行流程
 
@@ -22,14 +25,25 @@ argv
   → parse: subcommand + options/flags + positionals（默认 search）
   → build_query: --type/-c/-e/-p/-r/--regex 与应用到 parser 的初始 Flags
   → 校验输出参数：--sort、--limit、--json/--format/--basename/--null/--relative-to
-  → store_for_query: --live / --auto-index 扫描 roots（S12 之前没有持久化 DB）
+  → query_source
+      --live          : 扫描 roots → Store（不读写数据库）
+      数据库存在      : Index::read_database → 字典/范围/posting 原样恢复
+      数据库缺失      : --auto-index 时扫描 → 建 Index → 原子写库；否则报错并提示 index
   → 引擎
       scan   : exec_scan_with(collect_limit)
-      bitmap : Index::build(eager=size,mtime, trigram) → exec_indexed → 规范顺序 membership
+      bitmap : 持久化索引直接使用；live 时 Index::build(eager=size,mtime, trigram)
+               → exec_indexed → 规范顺序 membership
   → order_hits: 排序、--reverse、--folders-first、--limit / top-K
   → format_hits: 路径 / basename / JSON / 模板、--null、--relative-to
   → CliResult + 退出码
 ```
+
+`index`/`update` 完成扫描后构建同一个 `@index.Index`，再用
+`Index::write_database` 做原子替换：临时文件 + `sync` + `rename`。`info` 只读
+header 与 section table；`--verify` 额外校验全文件 CRC。默认数据库路径为
+`$XDG_DATA_HOME/moonsearch/index.msdb`，未设置时为
+`$HOME/.local/share/moonsearch/index.msdb`；`-D/--database` 与
+`MOONSEARCH_DATABASE` 覆盖默认值，路径开头的 `~/` 会按 `$HOME` 展开。
 
 两个引擎产生同一命中集合；排序与格式化完全在 `@exec` 中共享，因此相同查询的输出
 逐字节一致。`name` 顺序（正序或 `--reverse`，且无 `--folders-first`）把 `--limit`
@@ -49,8 +63,12 @@ argv
   未闭合的 `{` 直接以退出码 2 失败。
 - `--relative-to <DIR>` 先 `realpath`；基准内的路径去掉基准，等于基准输出 `.`，
   基准外保持绝对路径；作用于 `{path}` 与 JSON `path`。
-- `--stats` 输出 `entries` / `matches` / `search` 等诊断到 stderr；`--explain`
-  输出查询文本与当前引擎的计划。
+- `--stats` 输出 `entries` / `matches` / `search` 等诊断到 stderr；持久化索引路径
+  额外输出 `load: <ms>`，实时扫描输出 `scan: <ms>`；`index --stats` 还会打印
+  `database: <path> (<bytes> bytes)`。`--explain` 输出查询文本与当前引擎的计划。
+- `info` 输出 `database`、`format`、`built`、根/文件夹/文件/名字计数、文件大小、
+  trigram 键数与各 section 字节数；`--verify` 会把 `checksum` 从 `metadata` 改为
+  `verified`。
 
 ## 输出字节与退出码
 
@@ -71,11 +89,29 @@ argv
 - 参数错误：未知选项、缺值、`count` 拒绝输出选项、非法 `--sort`/`--limit`/
   `--format`/`--relative-to`、互斥格式组合；
 - 真实目录：扫描汇总、排除规则、权限告警、`--one-file-system` 警告、`--quiet`；
+- 持久化：`index` 写库、`info --verify` 读头、删除根目录后 `search`/`count` 仍从库中
+  命中、bitmap 引擎直接读库、`--no-trigram` 库退化为扫描、损坏数据库以退出码 2 失败；
 - `search`/`count` 的 `--live`、`--auto-index`、多 root、`--type`、`--regex`、
   `--explain`、`--stats`；
 - 每个排序键、`--reverse`、`--folders-first`、`--limit`、`--basename`、`--null`、
   `--json`、`--format`、`--relative-to` 的进程内输出；
 - 同一夹具上 `--engine scan` 与 `--engine bitmap` 的 stdout 与退出码逐字节一致。
+
+`differential_test.mbt`（S13）把这条对拍扩展到三层语料（手写语义、随机生成、
+explain 覆盖）：
+
+- **持久化库**：`index` 写库后，每条查询分别以 `--engine scan` 与
+  `--engine bitmap` 运行 `search` 与 `count`，比较退出码、stdout 与失败文本；
+  运行时才知道的 `parent:`/`path:` 查询追加在同一份语料后。
+- **`--no-trigram` 库**：手写语义、explain 与 40 条生成查询重复同一比较，确认
+  降级路径与扫描引擎一致。
+- **`--live` 对比持久化 bitmap**：三分之一的语料在真实目录扫描与持久化索引之间
+  比较 stdout 与退出码。
+- **输出矩阵**：6 条查询 × 13 组排序/反向/分组/limit/JSON/NUL/basename/模板/
+  相对路径选项 × 两引擎，比较 stdout 与退出码。
+
+语料只依赖固定种子，失败消息带查询文本；日期查询不进入 CLI 对拍，避免两次引擎
+调用跨越日历边界。
 
 `tests/cli.md` 用可执行文件覆盖同样的排序、格式、错误消息与退出码，并保留 S01
 以来的 help golden。

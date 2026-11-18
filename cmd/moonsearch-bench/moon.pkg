@@ -1,0 +1,15 @@
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/bench",
+  "moonbitlang/core/env",
+  "q2316367743/moonsearch/src/exec",
+  "q2316367743/moonsearch/src/ids",
+  "q2316367743/moonsearch/src/index",
+  "q2316367743/moonsearch/src/query",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

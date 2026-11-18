@@ -232,6 +232,7 @@ async test "info help is stable" {
       #|  --explain                  Print the execution plan to stderr
       #|  -D, --database <database>  Path to the index database [env: MOONSEARCH_DATABASE]
       #|  --config <config>          Path to the configuration file [env: MOONSEARCH_CONFIG]
+      #|  --verify                   Verify every section checksum before reporting
     ),
   )
 }
@@ -338,16 +339,30 @@ async test "exit code mapping" {
 }
 
 ///|
-async test "search without a store explains how to run live" {
-  let result = @cli.run(["search", "report"])
+async test "search without a database explains how to create one" {
+  let database = test_database("missing")
+  @fs.remove(database, allow_missing=true) catch {
+    _ => ()
+  }
+  let result = @cli.run(["search", "-D", database, "report"])
   assert_eq(result.exit_code(), 2)
   match result {
     @cli.Failure(text) => {
-      assert_true(text.contains("persisted"))
-      assert_true(text.contains("--live"))
+      assert_true(text.contains("no index database"))
+      assert_true(text.contains("moonsearch index"))
     }
     _ => abort("expected a failure")
   }
+}
+
+///|
+/// Database path used by an end-to-end test.
+///
+/// Index commands write a real database; tests keep it under the build
+/// directory so it never pollutes the source tree and parallel tests use
+/// distinct files.
+fn test_database(name : String) -> String {
+  "_build/test-db/\{name}.msdb"
 }
 
 ///|
@@ -364,7 +379,7 @@ async fn make_fixture(prefix : String) -> String {
 ///|
 async test "index scans a real directory tree" {
   let dir = make_fixture("moonsearch-index")
-  let result = @cli.run(["index", dir])
+  let result = @cli.run(["index", "-D", test_database("scan"), dir])
   @fs.rmdir(dir, recursive=true)
   match result {
     @cli.Success(text) =>
@@ -378,12 +393,158 @@ async test "index scans a real directory tree" {
 }
 
 ///|
+async test "a written database drives search, count, and info without the roots" {
+  let dir = make_fixture("moonsearch-persist")
+  let real = real_dir(dir)
+  let database = test_database("persist")
+  @fs.remove(database, allow_missing=true) catch {
+    _ => ()
+  }
+  let indexed = @cli.run(["index", "-D", database, dir])
+  assert_eq(index_stdout(indexed), "roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+  let info = @cli.run(["info", "-D", database, "--verify"])
+  @fs.rmdir(dir, recursive=true)
+  match info {
+    @cli.Success(text) => {
+      assert_true(text.contains("format: MSDB 2.0"))
+      assert_true(text.contains("folders: 2"))
+      assert_true(text.contains("files: 3"))
+      assert_true(text.contains("checksum: verified"))
+      assert_true(text.contains("postings="))
+    }
+    _ => abort("expected database info")
+  }
+  let search = @cli.run(["search", "-D", database, "a.txt"])
+  let bitmap = @cli.run([
+    "search", "-D", database, "--engine", "bitmap", "ext:pdf",
+  ])
+  let count = @cli.run(["count", "-D", database, "ext:pdf"])
+  match search {
+    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    _ => abort("expected a match from the persisted index")
+  }
+  match bitmap {
+    @cli.Success(text) => assert_eq(text, "\{real}/sub/b.pdf")
+    _ => abort("expected the bitmap engine to read the persisted index")
+  }
+  match count {
+    @cli.Success(text) => assert_eq(text, "1")
+    _ => abort("expected a count from the persisted index")
+  }
+}
+
+///|
+async test "a persisted index keeps unbuilt range fields lazy" {
+  let dir = make_fixture("moonsearch-lazy-fields")
+  let real = real_dir(dir)
+  let database = test_database("lazy-fields")
+  ignore(@cli.run(["index", "-D", database, "--fast-fields", "size", dir]))
+  let depth = @cli.run([
+    "search", "-D", database, "--engine", "bitmap", "--type", "folder", "depth:0",
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match depth {
+    @cli.Success(text) => assert_eq(text, real)
+    _ => abort("expected the root to match depth:0 from the persisted store")
+  }
+}
+
+///|
+async test "index uses the XDG data directory by default" {
+  let home = @fs.tmpdir(prefix="moonsearch-home")
+  let data = "\{home}/data"
+  let dir = make_fixture("moonsearch-xdg")
+  let real = real_dir(dir)
+  let indexed = @cli.run(
+    ["index", dir],
+    env=Map([("XDG_DATA_HOME", data), ("HOME", home)]),
+  )
+  let database = "\{data}/moonsearch/index.msdb"
+  let exists = @fs.exists(database)
+  let search = @cli.run(["search", "-D", database, "a.txt"])
+  @fs.rmdir(dir, recursive=true)
+  @fs.rmdir(home, recursive=true)
+  assert_eq(index_stdout(indexed), "roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+  assert_true(exists)
+  match search {
+    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    _ => abort("expected a match from the default database")
+  }
+}
+
+///|
+async test "a held writer lock rejects a second index run" {
+  @fs.mkdir("_build/test-db", recursive=true, allow_exist=true)
+  let dir = make_fixture("moonsearch-lock")
+  let database = test_database("lock")
+  let lock_path = "\{database}.lock"
+  let lock = @fs.open(lock_path, mode=WriteOnly, create_mode=OpenOrCreate)
+  assert_true(lock.try_lock(Exclusive))
+  let result = @cli.run(["index", "-D", database, dir])
+  lock.close()
+  @fs.rmdir(dir, recursive=true)
+  assert_eq(result.exit_code(), 2)
+  match result {
+    @cli.Failure(text) => assert_true(text.contains("another process"))
+    _ => abort("expected the held lock to reject the writer")
+  }
+}
+
+///|
+async test "a corrupt database is rejected without crashing" {
+  @fs.mkdir("_build/test-db", recursive=true, allow_exist=true)
+  let database = test_database("corrupt")
+  @fs.write_binary(database, b"MSDB but not really"[:])
+  let search = @cli.run(["search", "-D", database, "a.txt"])
+  let info = @cli.run(["info", "-D", database, "--verify"])
+  assert_eq(search.exit_code(), 2)
+  assert_eq(info.exit_code(), 2)
+  match search {
+    @cli.Failure(text) => assert_true(text.contains("database"))
+    _ => abort("expected a database failure")
+  }
+  match info {
+    @cli.Failure(text) => assert_true(text.contains("database"))
+    _ => abort("expected a database failure")
+  }
+}
+
+///|
+async test "a database without trigram degrades name queries to a scan" {
+  let dir = make_fixture("moonsearch-no-trigram-db")
+  let real = real_dir(dir)
+  let database = test_database("no-trigram-db")
+  ignore(@cli.run(["index", "-D", database, "--no-trigram", dir]))
+  let info = @cli.run(["info", "-D", database])
+  let search = @cli.run([
+    "search", "-D", database, "--engine", "bitmap", "a.txt",
+  ])
+  @fs.rmdir(dir, recursive=true)
+  match info {
+    @cli.Success(text) => assert_true(text.contains("trigram: disabled"))
+    _ => abort("expected database info")
+  }
+  match search {
+    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    _ => abort("expected a name match without the trigram index")
+  }
+}
+
+///|
 async test "index excludes hidden entries and glob rules end to end" {
   let dir = @fs.tmpdir(prefix="moonsearch-hidden")
   @fs.write_text("\{dir}/keep.txt", "abc")
   @fs.write_text("\{dir}/drop.tmp", "x")
   @fs.write_text("\{dir}/.secret", "x")
-  let result = @cli.run(["index", "--exclude-hidden", "-x", "*.tmp", dir])
+  let result = @cli.run([
+    "index",
+    "-D",
+    test_database("hidden"),
+    "--exclude-hidden",
+    "-x",
+    "*.tmp",
+    dir,
+  ])
   @fs.rmdir(dir, recursive=true)
   match result {
     @cli.Success(text) =>
@@ -434,7 +595,7 @@ fn index_stdout(result : @cli.CliResult) -> String {
 ///|
 async test "index summarises a realistic tree" {
   let dir = make_tree_fixture()
-  let result = @cli.run(["index", dir])
+  let result = @cli.run(["index", "-D", test_database("tree"), dir])
   @fs.rmdir(dir, recursive=true)
   // root, sub, empty, .git; the symlink is a zero-sized file.
   assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
@@ -443,7 +604,13 @@ async test "index summarises a realistic tree" {
 ///|
 async test "index excludes hidden entries and their subtrees" {
   let dir = make_tree_fixture()
-  let result = @cli.run(["index", "--exclude-hidden", dir])
+  let result = @cli.run([
+    "index",
+    "-D",
+    test_database("hidden-subtree"),
+    "--exclude-hidden",
+    dir,
+  ])
   @fs.rmdir(dir, recursive=true)
   assert_eq(
     index_stdout(result),
@@ -455,11 +622,27 @@ async test "index excludes hidden entries and their subtrees" {
 async test "index applies basename and target restrictions to excludes" {
   let dir = make_tree_fixture()
   let files = @cli.run([
-    "index", "-x", "*.pdf", "--exclude-scope", "basename", "--exclude-target", "files",
+    "index",
+    "-D",
+    test_database("exclude-target"),
+    "-x",
+    "*.pdf",
+    "--exclude-scope",
+    "basename",
+    "--exclude-target",
+    "files",
     dir,
   ])
   let folders = @cli.run([
-    "index", "-x", "sub", "--exclude-scope", "basename", "--exclude-target", "folders",
+    "index",
+    "-D",
+    test_database("exclude-target"),
+    "-x",
+    "sub",
+    "--exclude-scope",
+    "basename",
+    "--exclude-target",
+    "folders",
     dir,
   ])
   @fs.rmdir(dir, recursive=true)
@@ -521,7 +704,14 @@ async test "invalid exclude settings are usage errors" {
 async test "nested roots require an explicit opt-in" {
   let dir = make_tree_fixture()
   let rejected = @cli.run(["index", dir, "\{dir}/sub"])
-  let accepted = @cli.run(["index", "--allow-nested-roots", dir, "\{dir}/sub"])
+  let accepted = @cli.run([
+    "index",
+    "-D",
+    test_database("nested"),
+    "--allow-nested-roots",
+    dir,
+    "\{dir}/sub",
+  ])
   @fs.rmdir(dir, recursive=true)
   match rejected {
     @cli.Failure(text) => {
@@ -537,7 +727,14 @@ async test "nested roots require an explicit opt-in" {
 ///|
 async test "duplicate roots are normalised before scanning" {
   let dir = make_tree_fixture()
-  let result = @cli.run(["index", dir, "\{dir}/", "\{dir}/."])
+  let result = @cli.run([
+    "index",
+    "-D",
+    test_database("duplicate-roots"),
+    dir,
+    "\{dir}/",
+    "\{dir}/.",
+  ])
   @fs.rmdir(dir, recursive=true)
   assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
 }
@@ -558,7 +755,7 @@ async test "a file used as a root is rejected" {
 ///|
 async test "indexing an empty directory reports zero files" {
   let dir = @fs.tmpdir(prefix="moonsearch-empty")
-  let result = @cli.run(["index", dir])
+  let result = @cli.run(["index", "-D", test_database("empty-dir"), dir])
   @fs.rmdir(dir, recursive=true)
   assert_eq(index_stdout(result), "roots: 1\nfolders: 1\nfiles: 0\nbytes: 0")
 }
@@ -566,7 +763,7 @@ async test "indexing an empty directory reports zero files" {
 ///|
 async test "quiet suppresses the summary but keeps success" {
   let dir = make_tree_fixture()
-  let result = @cli.run(["index", "--quiet", dir])
+  let result = @cli.run(["index", "-D", test_database("quiet"), "--quiet", dir])
   @fs.rmdir(dir, recursive=true)
   match result {
     @cli.SuccessWith(out, diagnostics) => {
@@ -582,9 +779,10 @@ async test "quiet suppresses the summary but keeps success" {
 async test "stats and verbose write diagnostics to stderr" {
   let dir = make_tree_fixture()
   let root = @fs.realpath(dir)
-  let stats = @cli.run(["index", "--stats", dir])
-  let verbose = @cli.run(["index", "--verbose", dir])
-  let both = @cli.run(["index", "--verbose", "--stats", dir])
+  let database = test_database("diagnostics")
+  let stats = @cli.run(["index", "-D", database, "--stats", dir])
+  let verbose = @cli.run(["index", "-D", database, "--verbose", dir])
+  let both = @cli.run(["index", "-D", database, "--verbose", "--stats", dir])
   @fs.rmdir(dir, recursive=true)
   match stats {
     @cli.SuccessWith(out, diagnostics) => {
@@ -630,7 +828,14 @@ async test "stats and verbose write diagnostics to stderr" {
 ///|
 async test "--no-trigram disables the posting build" {
   let dir = make_tree_fixture()
-  let result = @cli.run(["index", "--stats", "--no-trigram", dir])
+  let result = @cli.run([
+    "index",
+    "-D",
+    test_database("no-trigram"),
+    "--stats",
+    "--no-trigram",
+    dir,
+  ])
   @fs.rmdir(dir, recursive=true)
   match result {
     @cli.SuccessWith(_, diagnostics) => {
@@ -647,7 +852,13 @@ async test "--no-trigram disables the posting build" {
 async test "fast-fields selects the range indexes built eagerly" {
   let dir = make_tree_fixture()
   let result = @cli.run([
-    "index", "--stats", "--fast-fields", "size,depth,parent", dir,
+    "index",
+    "-D",
+    test_database("fast-fields"),
+    "--stats",
+    "--fast-fields",
+    "size,depth,parent",
+    dir,
   ])
   @fs.rmdir(dir, recursive=true)
   match result {
@@ -679,8 +890,21 @@ async test "an unknown fast field is rejected before scanning" {
 ///|
 async test "one-file-system warns when the backend has no device ids" {
   let dir = make_tree_fixture()
-  let result = @cli.run(["index", "--one-file-system", dir])
-  let quiet = @cli.run(["index", "--quiet", "--one-file-system", dir])
+  let result = @cli.run([
+    "index",
+    "-D",
+    test_database("one-file-system"),
+    "--one-file-system",
+    dir,
+  ])
+  let quiet = @cli.run([
+    "index",
+    "-D",
+    test_database("one-file-system"),
+    "--quiet",
+    "--one-file-system",
+    dir,
+  ])
   @fs.rmdir(dir, recursive=true)
   match result {
     @cli.SuccessWith(out, diagnostics) => {
@@ -708,7 +932,7 @@ async test "unicode and long names are indexed end to end" {
   long.write_string(".txt")
   @fs.write_text("\{dir}/发票 2024.pdf", "ab")
   @fs.write_text("\{dir}/\{long.to_string()}", "c")
-  let result = @cli.run(["index", dir])
+  let result = @cli.run(["index", "-D", test_database("unicode"), dir])
   @fs.rmdir(dir, recursive=true)
   assert_eq(index_stdout(result), "roots: 1\nfolders: 1\nfiles: 2\nbytes: 3")
 }
@@ -719,7 +943,14 @@ async test "index accepts a mix of option and positional roots" {
   let second = @fs.tmpdir(prefix="moonsearch-root-b")
   @fs.write_text("\{first}/a", "1")
   @fs.write_text("\{second}/b", "22")
-  let result = @cli.run(["index", "-r", first, second])
+  let result = @cli.run([
+    "index",
+    "-D",
+    test_database("mixed-roots"),
+    "-r",
+    first,
+    second,
+  ])
   @fs.rmdir(first, recursive=true)
   @fs.rmdir(second, recursive=true)
   assert_eq(index_stdout(result), "roots: 2\nfolders: 2\nfiles: 2\nbytes: 3")
@@ -729,7 +960,11 @@ async test "index accepts a mix of option and positional roots" {
 async test "global options work before the subcommand" {
   let dir = @fs.tmpdir(prefix="moonsearch-global")
   let result = @cli.run([
-    "-D", "/tmp/does-not-matter.msdb", "--quiet", "index", dir,
+    "-D",
+    test_database("global-before"),
+    "--quiet",
+    "index",
+    dir,
   ])
   @fs.rmdir(dir, recursive=true)
   match result {
@@ -747,20 +982,24 @@ async test "parse results distinguish help, version, and runs" {
 }
 
 ///|
-async test "commands without a store or implementation report errors" {
-  let search = @cli.run(["search", "report"])
-  let count = @cli.run(["count", "report"])
-  let info = @cli.run(["info"])
+async test "commands without a database report errors" {
+  let database = test_database("missing-commands")
+  @fs.remove(database, allow_missing=true) catch {
+    _ => ()
+  }
+  let search = @cli.run(["search", "-D", database, "report"])
+  let count = @cli.run(["count", "-D", database, "report"])
+  let info = @cli.run(["info", "-D", database])
   for result in [search, count] {
     assert_eq(result.exit_code(), 2)
     match result {
-      @cli.Failure(text) => assert_true(text.contains("--live"))
+      @cli.Failure(text) => assert_true(text.contains("no index database"))
       _ => abort("expected a failure")
     }
   }
   assert_eq(info.exit_code(), 2)
   match info {
-    @cli.Failure(text) => assert_true(text.contains("not implemented"))
+    @cli.Failure(text) => assert_true(text.contains("does not exist"))
     _ => abort("expected a failure")
   }
 }
@@ -773,7 +1012,7 @@ async test "success results map to the success exit code" {
 ///|
 async test "update is the same scan as index" {
   let dir = make_tree_fixture()
-  let result = @cli.run(["update", dir])
+  let result = @cli.run(["update", "-D", test_database("update"), dir])
   @fs.rmdir(dir, recursive=true)
   assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
 }
@@ -803,7 +1042,13 @@ async test "command-line errors surface as failures" {
 async test "verbose and the one-file-system warning combine" {
   let dir = make_tree_fixture()
   let result = @cli.run([
-    "index", "--verbose", "--stats", "--one-file-system", dir,
+    "index",
+    "-D",
+    test_database("verbose-warning"),
+    "--verbose",
+    "--stats",
+    "--one-file-system",
+    dir,
   ])
   @fs.rmdir(dir, recursive=true)
   match result {
@@ -826,7 +1071,13 @@ async test "unreadable directories are reported in the summary and warnings" {
   @fs.write_text("\{dir}/open.txt", "hi")
   @fs.chmod(locked, 0o000)
   let denied = !@fs.can_read(locked)
-  let result = @cli.run(["index", "--verbose", dir])
+  let result = @cli.run([
+    "index",
+    "-D",
+    test_database("unreadable"),
+    "--verbose",
+    dir,
+  ])
   @fs.chmod(locked, 0o755)
   @fs.rmdir(dir, recursive=true)
   match result {
@@ -1239,6 +1490,10 @@ async test "search --live runs the bitmap engine end to end" {
 async test "search --live accepts repeated roots and auto-index" {
   let first = @fs.tmpdir(prefix="moonsearch-root-a")
   let second = @fs.tmpdir(prefix="moonsearch-root-b")
+  let database = test_database("auto-index")
+  @fs.remove(database, allow_missing=true) catch {
+    _ => ()
+  }
   @fs.write_text("\{first}/one.txt", "1")
   @fs.write_text("\{second}/two.txt", "2")
   let first_real = real_dir(first)
@@ -1247,7 +1502,8 @@ async test "search --live accepts repeated roots and auto-index" {
     "search", "--live", "--root", first, "--root", second, "*.txt",
   ])
   let auto = @cli.run([
-    "search", "--auto-index", "--root", first, "--root", second, "*.txt",
+    "search", "--auto-index", "-D", database, "--root", first, "--root", second,
+    "*.txt",
   ])
   @fs.rmdir(first, recursive=true)
   @fs.rmdir(second, recursive=true)
@@ -1260,4 +1516,5 @@ async test "search --live accepts repeated roots and auto-index" {
     @cli.Success(text) => assert_eq(text, expected)
     _ => abort("expected --auto-index to scan the roots")
   }
+  assert_true(@fs.exists(database))
 }

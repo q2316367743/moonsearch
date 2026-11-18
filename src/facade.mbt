@@ -10,7 +10,9 @@
 /// low-cardinality sets and S08 adds the sorted range indexes for size, mtime,
 /// depth, child count, and parent. S09 adds the trigram inverted index over
 /// names, with posting intersection, stop-grams, and short-needle degradation.
-/// Later steps add persistence and the query compiler.
+/// S12 adds the MSDB v2 persistence layer, so a scan can be written once and
+/// loaded without rebuilding the dictionary, ranges, or trigram postings.
+/// Later steps add the remaining test suites and benchmarks.
 pub using @core {
   VERSION,
   VERSION_TEXT,
@@ -101,12 +103,16 @@ pub using @index {
   TRIGRAM_POSTING_LIMIT,
   TRIGRAM_STOP_GRAM_DIVISOR,
   type Builder,
+  type DbError,
+  type DbInfo,
+  type DbSectionInfo,
   type Dict,
   type ExcludeKind,
   type ExcludeRule,
   type ExcludeScope,
   type ExcludeTarget,
   type ExtensionEntry,
+  type Index,
   type IndexError,
   type RangeField,
   type RangeFieldSet,

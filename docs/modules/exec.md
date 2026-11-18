@@ -27,6 +27,8 @@
 | `plan_test.mbt` | S10：逐字段编译形状、优化前后等价、全语料对拍、explain golden |
 | `order_test.mbt` | S11：每个排序键、反向、分组、limit、top-K 与输入无关性 |
 | `format_test.mbt` | S11：各输出格式、占位符、转义、JSON 转义、相对路径 |
+| `differential_test.mbt` | S13：三层语料对拍 runner、多夹具、`--no-trigram`、explain 覆盖率门禁 |
+| `property_test.mbt` | S13：trigram 无漏报、数据库往返查询等价、输出顺序无关性 |
 
 ## 编译
 
@@ -308,3 +310,76 @@ matches (Array[EntryRef], 规范顺序)
 - `src/cli/cli_test.mbt` 逐项验证参数冲突与错误，并在同一夹具上对每个排序键、
   `--reverse`、`--folders-first`、`--limit` 与每种输出格式比较两套引擎的 stdout。
 - `tests/cli.md` 固化可执行文件的排序、格式、错误消息与退出码。
+
+## 对拍、性质与覆盖率（S13）
+
+S13 把“两套引擎必须逐条一致”从若干针对性用例扩展成可复用的 runner，并把输入的
+覆盖面交给确定性生成器。语料本身在 `testkit`（见 [testkit](testkit.md)），exec 只
+负责比较与断言。
+
+### 对拍 runner
+
+`differential_test.mbt` 的 `diff_check` 对一条查询做四件事：
+
+```text
+scan   = exec_scan_with(store, q)            // 规范顺序的 oracle
+expect = scan 的 id 序列（规范顺序）
+for optimize in [false, true]:
+    result = exec_indexed(index, q)          // 优化前/后的计划树
+    assert result.to_sorted_ids() == sorted(expect)          // 集合
+    assert canonical_expand(result) == expect                // 顺序
+    assert exec_indexed_count(index, q) == expect.length()   // 计数
+```
+
+- `canonical_expand` 走 `Store::entries_in_order()` 做 membership，与 CLI 输出层
+  的真实路径一致；因此一个“集合正确但顺序错误”的计划也会失败。
+- `exec_indexed_count` 必须等于扫描命中数，避免位图基数与集合体不一致。
+- 失败消息包含夹具标签、查询文本、`optimize` 模式与两侧 id 列表。
+
+夹具矩阵：
+
+| 夹具 | 目的 |
+| --- | --- |
+| 手写 7 条目 store | 固定的小规模语义边界 |
+| 空 store | 所有计划形态在零条目上仍可编译与求值 |
+| 三个随机树（seed 1/42/20241118，各 50 条目） | 目录层级、重复名字、大小/时间/隐藏/扩展名的组合 |
+| unicode store | 中文、带空格名、大小写混合、emoji |
+| stop-gram store（全部名字含 `test`） | 强制 `stop-grams` 降级 |
+| `--no-trigram` 索引 | 强制 `no-trigram` 降级 |
+
+每条查询在 normal 与 `--no-trigram` 索引上各跑一遍；随机树使用自己的 seed 生成
+语料，手写/空/unicode/stop-gram 使用固定 seed，保证失败可复现。日期查询只在
+exec 层运行，时钟固定为 2024-03-20 00:00:00 UTC。
+
+### explain 覆盖率门禁
+
+`the explain corpus reaches every plan node and degradation reason` 在三种索引
+（普通、stop-gram、`--no-trigram`）上编译 `explain_queries()`，对优化前后两棵
+计划树递归收集：
+
+- 节点形态：`const`、`trigram`、`scan`、`filter`、`and`、`or`、`not`；
+- 降级原因：`glob`、`regex`、`path`、`short-needle`、`no-trigram`、`stop-grams`、
+  `childfilecount`、`childfoldercount`、`contenttype`。
+
+集合必须完整覆盖上述清单。`no-index` 被排除：合法 trigram 索引跳过 posting 时
+必然把该 posting 计入 stop-gram，因此“跳过且 stop-gram 数为 0”不可达；测试同时
+断言该原因没有意外出现。新增算子或新降级路径时，必须扩展
+`testkit.explain_queries()` / `scan_reasons()`，否则门禁失败。
+
+### 性质测试
+
+`property_test.mbt`：
+
+- **trigram 无漏报**：在随机树上采样名字子串与任意短 needle，对默认、`case:`、
+  `exact:`、`case:exact:` 四组 flags，扫描命中必须全部落在候选集内；lookup 判定
+  missing 时扫描命中必须为 0。
+- **持久化等价**：随机树的 `Index::to_bytes` → `from_bytes(verify=true)` 之后，
+  对语料逐条比较 `exec_indexed` 与 `exec_indexed_count`；`--no-trigram` 库同样
+  往返，且恢复后 `trigram()` 必须为 `None`。
+- **顺序无关**：同一查询重复求值结果相同；索引集合的规范顺序展开等于扫描顺序；
+  正向扫描与反向扫描互为镜像；每个排序键在打乱输入后得到相同输出。唯一的例外是
+  `name` 正序且无 `--folders-first`：它按文档约定直接返回规范输入以便流式输出，
+  测试显式跳过该组合并用规范输入单独验证。
+
+这些性质与既有测试互补：`trigram_compat_test.mbt` 穷举固定夹具的全部子串，
+`plan_test.mbt` 断言逐字段编译形状；S13 负责随机输入、跨夹具与持久化之后的不变量。

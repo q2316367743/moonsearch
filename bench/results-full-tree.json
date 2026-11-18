@@ -1,0 +1,393 @@
+{
+  "generated_at": "2026-11-18T04:48:26+00:00",
+  "label": "workspace-2.36m",
+  "roots": [
+    "~/Documents/workspace"
+  ],
+  "database": "/tmp/moonsearch-bench/workspace.msdb",
+  "database_bytes": 174065814,
+  "entries": 2362503,
+  "info": {
+    "database": "/tmp/moonsearch-bench/workspace.msdb",
+    "format": "MSDB 2.0",
+    "built": "1794977171",
+    "roots": "1",
+    "folders": "230946",
+    "files": "2131557",
+    "names": "241462",
+    "size": "174065814 bytes",
+    "trigram": "47871 keys",
+    "checksum": "metadata",
+    "sections": "roots=64 names=4152583 folders=7852164 files=55420482 order=9450012 dict=3200612 ranges=56700086 postings=37289559 checksum=8",
+    "section_bytes": {
+      "roots": 64,
+      "names": 4152583,
+      "folders": 7852164,
+      "files": 55420482,
+      "order": 9450012,
+      "dict": 3200612,
+      "ranges": 56700086,
+      "postings": 37289559,
+      "checksum": 8
+    }
+  },
+  "build": {
+    "wall_s": 150.01,
+    "peak_rss_bytes": 1458552832,
+    "stdout": "roots: 1\nfolders: 230946\nfiles: 2131557\nbytes: 37298458289\n",
+    "stats": {
+      "scan_ms": 147208,
+      "database_bytes": 174065814,
+      "names": 2362503,
+      "name_bytes": 36269878,
+      "extensions": 318,
+      "hidden": 10201,
+      "ranges": "size=2362503 mtime=2362503",
+      "trigram": "47871 keys, 31393971 postings, 14554 short names, 4 stop-grams, 125575884 B"
+    }
+  },
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.9.6",
+    "cpu": "Apple M4 Pro",
+    "memory": "51539607552",
+    "os": "26.6.2",
+    "moon": "moon 0.1.20261104 (940aa18 2026-11-04) Feature flags enabled: rr_moon_mod,rr_moon_pkg",
+    "commit": "f9ff66f-dirty"
+  },
+  "load_ms": {
+    "bitmap": 2453.493833,
+    "scan": 2474.6713330000002
+  },
+  "engine_search": {
+    "bitmap": [
+      {
+        "engine": "bitmap",
+        "matches": 228,
+        "query": "ext:jpg",
+        "median_us": 34.14565488850772,
+        "mean_us": 34.200455190394514,
+        "min_us": 33.81791320754717,
+        "max_us": 34.56313598627787,
+        "batch_size": 2915,
+        "runs": 5
+      },
+      {
+        "engine": "bitmap",
+        "matches": 2,
+        "query": "ext:jpg size:>1mb",
+        "median_us": 728.3296296296296,
+        "mean_us": 725.908690962963,
+        "min_us": 701.5080844444444,
+        "max_us": 743.439074074074,
+        "batch_size": 135,
+        "runs": 5
+      },
+      {
+        "engine": "bitmap",
+        "matches": 0,
+        "query": "ext:jpg size:>1mb dm:lastweek",
+        "median_us": 4976.2875,
+        "mean_us": 4985.5738280000005,
+        "min_us": 4959.5529,
+        "max_us": 5030.04544,
+        "batch_size": 20,
+        "runs": 5
+      },
+      {
+        "engine": "bitmap",
+        "matches": 1389,
+        "query": "report",
+        "median_us": 116.94640771028037,
+        "mean_us": 117.17257995327103,
+        "min_us": 116.36023177570094,
+        "max_us": 118.35284322429906,
+        "batch_size": 856,
+        "runs": 5
+      },
+      {
+        "engine": "bitmap",
+        "matches": 0,
+        "query": "report pdf",
+        "median_us": 395.1781496062992,
+        "mean_us": 396.08707401574804,
+        "min_us": 386.56732283464567,
+        "max_us": 402.55242913385825,
+        "batch_size": 254,
+        "runs": 5
+      },
+      {
+        "engine": "bitmap",
+        "matches": 8,
+        "query": "*.pdf",
+        "median_us": 143066.833,
+        "mean_us": 143771.60652,
+        "min_us": 142398.317,
+        "max_us": 147029.5496,
+        "batch_size": 1,
+        "runs": 5
+      },
+      {
+        "engine": "bitmap",
+        "matches": 4899,
+        "query": "source map",
+        "median_us": 31979.625,
+        "mean_us": 31948.66008,
+        "min_us": 31628.6333,
+        "max_us": 32268.6876,
+        "batch_size": 4,
+        "runs": 5
+      }
+    ],
+    "scan": [
+      {
+        "engine": "scan",
+        "matches": 228,
+        "query": "ext:jpg",
+        "median_us": 98993.583,
+        "mean_us": 99817.80987999999,
+        "min_us": 97988.9252,
+        "max_us": 101802.8752,
+        "batch_size": 1,
+        "runs": 5
+      },
+      {
+        "engine": "scan",
+        "matches": 2,
+        "query": "ext:jpg size:>1mb",
+        "median_us": 103808.458,
+        "mean_us": 103821.01872,
+        "min_us": 103218.27560000001,
+        "max_us": 104858.609,
+        "batch_size": 1,
+        "runs": 5
+      },
+      {
+        "engine": "scan",
+        "matches": 0,
+        "query": "ext:jpg size:>1mb dm:lastweek",
+        "median_us": 115801.54200000002,
+        "mean_us": 115584.78511999999,
+        "min_us": 115089.7996,
+        "max_us": 116021.375,
+        "batch_size": 1,
+        "runs": 5
+      },
+      {
+        "engine": "scan",
+        "matches": 1389,
+        "query": "report",
+        "median_us": 144193.04200000002,
+        "mean_us": 144728.07520000002,
+        "min_us": 141147.42520000003,
+        "max_us": 151136.24180000002,
+        "batch_size": 1,
+        "runs": 5
+      },
+      {
+        "engine": "scan",
+        "matches": 0,
+        "query": "report pdf",
+        "median_us": 149271.833,
+        "mean_us": 150394.643,
+        "min_us": 148090.4332,
+        "max_us": 154754.9078,
+        "batch_size": 1,
+        "runs": 5
+      },
+      {
+        "engine": "scan",
+        "matches": 8,
+        "query": "*.pdf",
+        "median_us": 197248.584,
+        "mean_us": 197635.53656,
+        "min_us": 196942.29140000002,
+        "max_us": 198439.7244,
+        "batch_size": 1,
+        "runs": 5
+      },
+      {
+        "engine": "scan",
+        "matches": 4899,
+        "query": "source map",
+        "median_us": 154105,
+        "mean_us": 152958.78328,
+        "min_us": 147576.92479999998,
+        "max_us": 156153.3666,
+        "batch_size": 1,
+        "runs": 5
+      }
+    ]
+  },
+  "engine_count": [
+    {
+      "engine": "bitmap",
+      "matches": 9,
+      "query": "ext:mp4",
+      "median_us": 34.57652203161789,
+      "mean_us": 34.145315708039014,
+      "min_us": 33.222581096535485,
+      "max_us": 34.69598903464514,
+      "batch_size": 2973,
+      "runs": 5
+    }
+  ],
+  "engine_first": [
+    {
+      "engine": "bitmap",
+      "matches": 2362503,
+      "query": "",
+      "median_us": 33.71136627140975,
+      "mean_us": 33.755587852437415,
+      "min_us": 33.46519532279315,
+      "max_us": 33.99752687747036,
+      "batch_size": 3036,
+      "runs": 5
+    }
+  ],
+  "engine_scan_first": [
+    {
+      "engine": "scan",
+      "matches": 2362503,
+      "query": "",
+      "median_us": 34.34654195233431,
+      "mean_us": 35.100539262161284,
+      "min_us": 33.62100065295462,
+      "max_us": 38.859399869409074,
+      "batch_size": 3063,
+      "runs": 5
+    }
+  ],
+  "cli": [
+    {
+      "samples_ms": [
+        2516.108333,
+        2636.642542,
+        3516.605917
+      ],
+      "min_ms": 2516.108333,
+      "median_ms": 2636.642542,
+      "mean_ms": 2889.785597333333,
+      "kind": "search",
+      "query": "ext:jpg",
+      "target_ms": 1.0,
+      "note": "pure dictionary bitmap"
+    },
+    {
+      "samples_ms": [
+        2510.023667,
+        2521.967666,
+        2522.040292
+      ],
+      "min_ms": 2510.023667,
+      "median_ms": 2521.967666,
+      "mean_ms": 2518.0105416666665,
+      "kind": "search",
+      "query": "ext:jpg size:>1mb",
+      "target_ms": 5.0,
+      "note": "bitmap x range"
+    },
+    {
+      "samples_ms": [
+        2509.258583,
+        2516.093291,
+        2527.3755
+      ],
+      "min_ms": 2509.258583,
+      "median_ms": 2516.093291,
+      "mean_ms": 2517.575791333333,
+      "kind": "search",
+      "query": "ext:jpg size:>1mb dm:lastweek",
+      "target_ms": 8.0,
+      "note": "three sets"
+    },
+    {
+      "samples_ms": [
+        2559.324083,
+        2643.32975,
+        2735.673667
+      ],
+      "min_ms": 2559.324083,
+      "median_ms": 2643.32975,
+      "mean_ms": 2646.1091666666666,
+      "kind": "search",
+      "query": "report",
+      "target_ms": 20.0,
+      "note": "one trigram group"
+    },
+    {
+      "samples_ms": [
+        2482.538333,
+        2515.276667,
+        2563.667625
+      ],
+      "min_ms": 2482.538333,
+      "median_ms": 2515.276667,
+      "mean_ms": 2520.4942083333335,
+      "kind": "search",
+      "query": "report pdf",
+      "target_ms": 40.0,
+      "note": "two trigram groups"
+    },
+    {
+      "samples_ms": [
+        2661.950083,
+        2678.813167,
+        2697.602875
+      ],
+      "min_ms": 2661.950083,
+      "median_ms": 2678.813167,
+      "mean_ms": 2679.455375,
+      "kind": "search",
+      "query": "*.pdf",
+      "target_ms": 120.0,
+      "note": "glob, scan leaf"
+    },
+    {
+      "samples_ms": [
+        2583.382333,
+        2598.687042,
+        2605.56075
+      ],
+      "min_ms": 2583.382333,
+      "median_ms": 2598.687042,
+      "mean_ms": 2595.876708333333,
+      "kind": "search",
+      "query": "source map",
+      "target_ms": 40.0,
+      "note": "two common trigram groups"
+    },
+    {
+      "samples_ms": [
+        2501.639167,
+        2513.468792,
+        2560.143958
+      ],
+      "min_ms": 2501.639167,
+      "median_ms": 2513.468792,
+      "mean_ms": 2525.0839723333333,
+      "kind": "count",
+      "query": "ext:mp4",
+      "target_ms": 1.0,
+      "note": "count"
+    },
+    {
+      "samples_ms": [
+        2513.834375,
+        2526.256125,
+        2537.647834
+      ],
+      "min_ms": 2513.834375,
+      "median_ms": 2526.256125,
+      "mean_ms": 2525.912778,
+      "kind": "first",
+      "query": "",
+      "target_ms": 1.0,
+      "note": "empty query, -n 20"
+    }
+  ],
+  "query_rss_bytes": 712294400,
+  "query_count": "1389",
+  "extra_ratio": 1.5816124999738599
+}

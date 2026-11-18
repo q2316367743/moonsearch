@@ -31,6 +31,15 @@ pub struct TrigramPosting {
 }
 
 ///|
+/// Wrap an ascending, duplicate-free id array as a posting.
+///
+/// `TrigramIndex::build` and the database loader are the only producers; the
+/// caller guarantees the ordering invariant.
+pub fn TrigramPosting::from_sorted(ids : Array[Int32]) -> TrigramPosting {
+  { ids, }
+}
+
+///|
 /// Number of ids in the posting.
 pub fn TrigramPosting::len(self : TrigramPosting) -> Int32 {
   self.ids.length()
@@ -346,6 +355,31 @@ pub fn TrigramLookup::describe(self : TrigramLookup) -> String {
 }
 
 ///|
+/// Rebuild an index from persisted keys and postings.
+///
+/// The database loader supplies arrays it has already validated: keys strictly
+/// ascending and below `1 << 24`, postings ascending with ids below `total`.
+/// The cached counters are recomputed here so a loaded index reports the same
+/// statistics as one that was just built.
+pub fn TrigramIndex::restore(
+  total~ : Int32,
+  keys~ : Array[UInt32],
+  postings~ : Array[TrigramPosting],
+  short_names~ : Int32,
+) -> TrigramIndex {
+  let mut posting_count = 0
+  let mut stop_grams = 0
+  for posting in postings {
+    let count = posting.len()
+    posting_count = posting_count + count
+    if is_stop_gram_count(count, total) {
+      stop_grams = stop_grams + 1
+    }
+  }
+  { total, keys, postings, posting_count, short_names, stop_grams, }
+}
+
+///|
 /// Number of entries the index covers.
 pub fn TrigramIndex::entry_count(self : TrigramIndex) -> Int32 {
   self.total
@@ -379,8 +413,8 @@ pub fn TrigramIndex::stop_gram_count(self : TrigramIndex) -> Int32 {
 /// Bytes occupied by the posting arrays.
 ///
 /// This is the in-memory estimate `--stats` prints; keys and per-posting
-/// overhead are excluded. S12 replaces the arrays with delta-varint data on
-/// disk.
+/// overhead are excluded. The database stores the same postings as
+/// delta-varint ids.
 pub fn TrigramIndex::posting_bytes(self : TrigramIndex) -> Int64 {
   self.posting_count.to_int64() * 4L
 }

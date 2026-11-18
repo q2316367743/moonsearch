@@ -10,6 +10,15 @@ pub struct ExtensionEntry {
 }
 
 ///|
+/// Assemble an extension bucket from already-built parts.
+///
+/// The database loader uses this after decoding the DICT section; it performs
+/// no validation, which stays at the section boundary.
+pub fn ExtensionEntry::new(extension : Bytes, ids : @ids.Ids) -> ExtensionEntry {
+  { extension, ids, }
+}
+
+///|
 /// ASCII-folded extension bytes.
 pub fn ExtensionEntry::extension(self : ExtensionEntry) -> BytesView {
   self.extension[:]
@@ -279,6 +288,38 @@ fn extension_lookup(
     }
   }
   @ids.Ids::empty()
+}
+
+///|
+/// Restore a dictionary from parts that were already validated.
+///
+/// `Dict::build` is the normal producer. This constructor exists for the
+/// database loader, which decodes the same sets from disk and must not repeat
+/// the build pass. `total` must equal the owning store's entry count and every
+/// set must stay inside that id space; `extensions` must be in ascending byte
+/// order, one bucket per distinct extension.
+pub fn Dict::restore(
+  total~ : Int32,
+  all~ : @ids.Ids,
+  files_all~ : @ids.Ids,
+  folders_all~ : @ids.Ids,
+  hidden~ : @ids.Ids,
+  visible~ : @ids.Ids,
+  extensions~ : Array[ExtensionEntry],
+  categories~ : Array[@ids.Ids],
+  roots~ : Array[@ids.Ids],
+) -> Dict {
+  {
+    total,
+    all,
+    files_all,
+    folders_all,
+    hidden,
+    visible,
+    extensions,
+    categories,
+    roots,
+  }
 }
 
 ///|

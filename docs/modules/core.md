@@ -16,7 +16,7 @@
 | --- | --- |
 | `name_pool.mbt` | 分块名字池、`NameRef`、长度上限 |
 | `entry.mbt` | `Entry`、`EntryRef`、可见性/符号链接 flags、`GlobalId` 类型 |
-| `store.mbt` | 计数、id 访问、路径重建、扩展名、规范顺序、全局 id 映射 |
+| `store.mbt` | 计数、id 访问、路径重建、扩展名、规范顺序、全局 id 映射、数据库恢复构造 |
 | `exit.mbt` / `version.mbt` | CLI 退出码与版本文本 |
 
 ## 两套 id
@@ -41,6 +41,12 @@ GlobalId = folder id                             0 .. folder_count - 1
 `Store::new` 在构造时建立唯一一份预排序数组：文件夹与文件合并，按 `(name, path)` 的
 自然顺序排序，最后用输入下标兜底，保证不同扫描顺序下结果确定。查询输出与 `--limit`
 的提前停止都基于这份顺序，不再为每个排序键维护数组。
+
+数据库加载使用 `Store::restore`：它接收已经校验过的名字池、条目数组、根记录与
+ORDER 数组，跳过 `Store::new` 的排序，因为持久化的顺序就是原顺序。调用方负责保证
+`order` 是全局 id 的排列、父链无环、名字引用可读；越界 id 在查询侧仍由 `entry_at`
+降级为 `None`，不会直接索引越界。`RootInfo::new` 供扫描器与数据库加载器共同构造根
+统计记录。
 
 ## 扩展名
 

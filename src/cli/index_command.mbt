@@ -156,8 +156,8 @@ fn loaded_ranges(ranges : @index.Ranges) -> String {
 ///|
 /// Summarize the trigram index, or report that `--no-trigram` skipped it.
 ///
-/// The byte figure is the in-memory posting arrays only; S12 replaces them with
-/// the delta-varint `POSTINGS` section on disk.
+/// The byte figure is the in-memory posting arrays only; the database stores
+/// the same postings as delta-varint ids in `POSTINGS`.
 fn describe_trigram(trigram : @index.TrigramIndex?) -> String {
   match trigram {
     Some(index) =>
@@ -172,6 +172,8 @@ fn diagnostics_of(
   invocation : Invocation,
   report : @index.ScanReport,
   index : @index.Index,
+  database : String,
+  database_size : Int64,
   elapsed_ms : Int64,
 ) -> String {
   let matches = invocation.matches
@@ -192,6 +194,7 @@ fn diagnostics_of(
     let dict = index.dict()
     let ranges = index.ranges()
     out.write_string("scan: \{elapsed_ms} ms\n")
+    out.write_string("database: \{database} (\{database_size} bytes)\n")
     out.write_string(
       "names: \{report.store.name_count()} names, \{report.store.name_bytes()} bytes\n",
     )
@@ -221,9 +224,9 @@ fn trim_trailing_newline(text : String) -> String {
 ///|
 /// Run `index` or `update`.
 ///
-/// The store lives in memory until the persistence step; S07 materializes the
-/// field dictionary as part of the build even though nothing consumes it yet.
-/// Writing both to disk arrives with S12.
+/// The scan builds the store, the candidate sources, and the trigram postings
+/// in one pass, then writes the complete index to the database with an atomic
+/// replace. A later `search` loads the same parts without rebuilding them.
 async fn run_index(invocation : Invocation) -> CliResult {
   let config = match scan_config_of(invocation) {
     Ok(config) => config
@@ -231,6 +234,10 @@ async fn run_index(invocation : Invocation) -> CliResult {
   }
   let fast_fields = match fast_fields_of(invocation.matches) {
     Ok(fields) => fields
+    Err(message) => return Failure(message)
+  }
+  let database = match database_path(invocation) {
+    Ok(path) => path
     Err(message) => return Failure(message)
   }
   let started = @env.now()
@@ -243,19 +250,28 @@ async fn run_index(invocation : Invocation) -> CliResult {
   match outcome {
     Err(message) => Failure(message)
     Ok(report) => {
-      // Materialize the dictionary, the eager range indexes, and the trigram
-      // postings as part of the index build; S12 persists them and the indexed
-      // engine consumes them through `@index.Index`.
       let index = @index.Index::build(
         report.store,
         eager=fast_fields,
         trigram=!flag_set(invocation.matches, "no-trigram"),
       )
+      let written : Result[Unit, String] = Ok(
+        @index.Index::write_database(index, database),
+      ) catch {
+        err => Err("error: \{err.message()}")
+      }
+      match written {
+        Err(message) => return Failure(message)
+        Ok(_) => ()
+      }
+      let database_size = @fs.file_size(database) catch { _ => 0L }
       let quiet = flag_set(invocation.matches, "quiet")
       let mut diagnostics = if quiet {
         ""
       } else {
-        diagnostics_of(invocation, report, index, elapsed_ms)
+        diagnostics_of(
+          invocation, report, index, database, database_size, elapsed_ms,
+        )
       }
       if flag_set(invocation.matches, "one-file-system") &&
         !report.device_ids_available {

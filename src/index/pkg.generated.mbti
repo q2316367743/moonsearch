@@ -13,9 +13,22 @@ pub const TRIGRAM_POSTING_LIMIT : Int32 = 3
 
 pub const TRIGRAM_STOP_GRAM_DIVISOR : Int32 = 5
 
+pub async fn read_database_info(StringView, verify? : Bool) -> DbInfo raise DbError
+
 pub async fn[Source : @platform.ScanSource] scan(ScanConfig, Source) -> ScanReport raise IndexError
 
 // Errors
+pub suberror DbError {
+  NotFound(String)
+  Io(String)
+  Locked(String)
+  Truncated
+  Corrupt(String)
+  UnsupportedVersion(major~ : Int32, minor~ : Int32)
+  TooLarge(String)
+}
+pub fn DbError::message(Self) -> String
+
 pub suberror IndexError {
   RootMissing(String)
   RootNotDirectory(String)
@@ -43,6 +56,26 @@ pub fn Builder::root_count(Self) -> Int32
 pub fn Builder::set_child_counts(Self, Int32, UInt32, UInt32) -> Unit
 pub fn Builder::set_root_stats(Self, Int32, UInt32, UInt32, Int64) -> Unit
 
+pub(all) struct DbInfo {
+  format_major : Int32
+  format_minor : Int32
+  built_at : Int64
+  folder_count : Int32
+  file_count : Int32
+  root_count : Int32
+  name_count : Int32
+  trigram_count : Int32
+  file_size : Int64
+  sections : Array[DbSectionInfo]
+}
+pub fn DbInfo::entry_count(Self) -> Int32
+pub fn DbInfo::from_bytes(BytesView, verify? : Bool) -> Self raise DbError
+
+pub(all) struct DbSectionInfo {
+  name : String
+  length : Int64
+}
+
 pub struct Dict {
   // private fields
 }
@@ -57,6 +90,7 @@ pub fn Dict::files_all(Self) -> @ids.Ids
 pub fn Dict::folders_all(Self) -> @ids.Ids
 pub fn Dict::hidden(Self) -> @ids.Ids
 pub fn Dict::lookup_extensions(Self, Array[Bytes]) -> @ids.Ids
+pub fn Dict::restore(total~ : Int32, all~ : @ids.Ids, files_all~ : @ids.Ids, folders_all~ : @ids.Ids, hidden~ : @ids.Ids, visible~ : @ids.Ids, extensions~ : Array[ExtensionEntry], categories~ : Array[@ids.Ids], roots~ : Array[@ids.Ids]) -> Self
 pub fn Dict::root(Self, Int32) -> @ids.Ids?
 pub fn Dict::root_count(Self) -> Int32
 pub fn Dict::roots(Self) -> ArrayView[@ids.Ids]
@@ -98,6 +132,7 @@ pub struct ExtensionEntry {
 }
 pub fn ExtensionEntry::extension(Self) -> BytesView
 pub fn ExtensionEntry::ids(Self) -> @ids.Ids
+pub fn ExtensionEntry::new(Bytes, @ids.Ids) -> Self
 
 pub struct Index {
   // private fields
@@ -105,9 +140,14 @@ pub struct Index {
 pub fn Index::build(@core.Store, eager? : RangeFieldSet, trigram? : Bool) -> Self
 pub fn Index::dict(Self) -> Dict
 pub fn Index::entry_count(Self) -> Int32
+pub fn Index::from_bytes(BytesView, verify? : Bool) -> Self raise DbError
 pub fn Index::ranges(Self) -> Ranges
+pub async fn Index::read_database(StringView, verify? : Bool) -> Self raise DbError
+pub fn Index::restore(store~ : @core.Store, dict~ : Dict, ranges~ : Ranges, trigram? : TrigramIndex?) -> Self
 pub fn Index::store(Self) -> @core.Store
+pub fn Index::to_bytes(Self) -> Bytes raise DbError
 pub fn Index::trigram(Self) -> TrigramIndex?
+pub async fn Index::write_database(Self, StringView) -> Unit raise DbError
 
 pub(all) enum RangeField {
   Size
@@ -150,6 +190,7 @@ pub fn RangeIndex::len(Self) -> Int32
 pub fn RangeIndex::less_than(Self, Int64) -> @ids.Ids
 pub fn RangeIndex::lower_bound(Self, Int64) -> Int32
 pub fn RangeIndex::range(Self, Int64, Int64) -> @ids.Ids
+pub fn RangeIndex::restore(values~ : Array[Int64], ids~ : Array[Int32], total~ : Int32) -> Self
 pub fn RangeIndex::slice(Self, Int32, Int32) -> @ids.Ids
 pub fn RangeIndex::upper_bound(Self, Int64) -> Int32
 pub fn RangeIndex::value_at(Self, Int32) -> Int64?
@@ -169,6 +210,7 @@ pub fn Ranges::mtime(Self) -> RangeIndex
 pub fn Ranges::parent(Self) -> RangeIndex
 pub fn Ranges::parent_ids(Self, BytesView) -> @ids.Ids
 pub fn Ranges::parent_of(Self, BytesView) -> Int32?
+pub fn Ranges::restore(@core.Store, size_index? : RangeIndex?, mtime_index? : RangeIndex?, depth_index? : RangeIndex?, child_count_index? : RangeIndex?, parent_index? : RangeIndex?) -> Self
 pub fn Ranges::size(Self) -> RangeIndex
 
 pub(all) struct RootSpec {
@@ -213,6 +255,7 @@ pub fn TrigramIndex::posting(Self, UInt32) -> TrigramPosting?
 pub fn TrigramIndex::posting_at(Self, Int32) -> TrigramPosting?
 pub fn TrigramIndex::posting_bytes(Self) -> Int64
 pub fn TrigramIndex::posting_count(Self) -> Int32
+pub fn TrigramIndex::restore(total~ : Int32, keys~ : Array[UInt32], postings~ : Array[TrigramPosting], short_names~ : Int32) -> Self
 pub fn TrigramIndex::short_name_count(Self) -> Int32
 pub fn TrigramIndex::stop_gram_count(Self) -> Int32
 
@@ -229,6 +272,7 @@ pub fn TrigramLookup::stop_gram_count(Self) -> Int32
 pub struct TrigramPosting {
   // private fields
 }
+pub fn TrigramPosting::from_sorted(Array[Int32]) -> Self
 pub fn TrigramPosting::ids(Self) -> ArrayView[Int32]
 pub fn TrigramPosting::is_empty(Self) -> Bool
 pub fn TrigramPosting::len(Self) -> Int32

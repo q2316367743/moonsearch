@@ -255,6 +255,19 @@ fn range_index_partitioned(
 }
 
 ///|
+/// Wrap two arrays that a database loader already validated.
+///
+/// The caller must preserve the `(value, id)` ascending invariant and keep every
+/// id below `total`; `RangeIndex::build` remains the normal producer.
+pub fn RangeIndex::restore(
+  values~ : Array[Int64],
+  ids~ : Array[Int32],
+  total~ : Int32,
+) -> RangeIndex {
+  { values, ids, total, }
+}
+
+///|
 /// Number of entries in the index.
 pub fn RangeIndex::len(self : RangeIndex) -> Int32 {
   self.values.length()
@@ -742,6 +755,50 @@ fn build_parent(store : @core.Store, total : Int32) -> RangeIndex {
     }
   }
   range_index_partitioned(values, ids, total)
+}
+
+///|
+/// Restore the range indexes a database persisted.
+///
+/// Only the fields present in the file are installed; the rest stay lazy, so a
+/// query that needs one of them builds it from the restored store exactly as it
+/// would after a scan. This is what keeps `--fast-fields` meaningful across a
+/// save/load cycle: the saved index costs no more than the one that was written.
+pub fn Ranges::restore(
+  store : @core.Store,
+  size_index~ : RangeIndex? = None,
+  mtime_index~ : RangeIndex? = None,
+  depth_index~ : RangeIndex? = None,
+  child_count_index~ : RangeIndex? = None,
+  parent_index~ : RangeIndex? = None,
+) -> Ranges {
+  let mut eager = 0U
+  if size_index is Some(_) {
+    eager = eager | range_field_bit(Size)
+  }
+  if mtime_index is Some(_) {
+    eager = eager | range_field_bit(MTime)
+  }
+  if depth_index is Some(_) {
+    eager = eager | range_field_bit(Depth)
+  }
+  if child_count_index is Some(_) {
+    eager = eager | range_field_bit(ChildCount)
+  }
+  if parent_index is Some(_) {
+    eager = eager | range_field_bit(Parent)
+  }
+  {
+    store,
+    total: store.entry_count(),
+    eager: { bits: eager, },
+    size_index,
+    mtime_index,
+    depth_index,
+    child_count_index,
+    parent_index,
+    parent_paths: None,
+  }
 }
 
 ///|

@@ -36,6 +36,22 @@ pub fn Index::build(
 }
 
 ///|
+/// Restore an index whose parts were decoded from a database.
+///
+/// `Index::build` remains the scan-side constructor. The loader has already
+/// validated every part against the store; this function only bundles them so
+/// queries can run without rebuilding the dictionary, the ranges, or the
+/// trigram postings.
+pub fn Index::restore(
+  store~ : @core.Store,
+  dict~ : Dict,
+  ranges~ : Ranges,
+  trigram~ : TrigramIndex? = None,
+) -> Index {
+  { store, dict, ranges, trigram, }
+}
+
+///|
 /// The store the index was built over.
 pub fn Index::store(self : Index) -> @core.Store {
   self.store

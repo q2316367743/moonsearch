@@ -280,6 +280,12 @@ fn info_command() -> @argparse.Command {
     "info",
     about="Show index statistics",
     version=@core.VERSION_TEXT,
+    flags=[
+      @argparse.FlagArg(
+        "verify",
+        about="Verify every section checksum before reporting",
+      ),
+    ],
   )
 }
 

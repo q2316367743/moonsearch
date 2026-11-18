@@ -37,10 +37,10 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch search --bogus
 @STDERR (ignore)
 [2]
 
-$ moonx q2316367743/moonsearch/cmd/moonsearch 'ext:pdf'
+$ moonx q2316367743/moonsearch/cmd/moonsearch -D _build/cram-missing.msdb 'ext:pdf'
 @STDOUT (empty)
 @STDERR
-error: the index is not persisted yet (S12); pass --live --root <PATH> to scan roots for this query
+error: no index database at _build/cram-missing.msdb; run 'moonsearch index <ROOT>' to create it
 [2]
 $ moonx q2316367743/moonsearch/cmd/moonsearch index --help
 Usage: moonsearch index [options] [roots...]
@@ -106,30 +106,30 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch index
 error: no roots configured; pass --root <PATH> or a root argument
 [2]
 
-$ moonx q2316367743/moonsearch/cmd/moonsearch count 'ext:mp4'
+$ moonx q2316367743/moonsearch/cmd/moonsearch count -D _build/cram-missing.msdb 'ext:mp4'
 @STDOUT (empty)
 @STDERR
-error: the index is not persisted yet (S12); pass --live --root <PATH> to scan roots for this query
+error: no index database at _build/cram-missing.msdb; run 'moonsearch index <ROOT>' to create it
 [2]
 ```
 
 End-to-end indexing against the committed fixture tree:
 
 ```mooncram q2316367743/moonsearch
-$ moonx q2316367743/moonsearch/cmd/moonsearch index fixture
+$ moonx q2316367743/moonsearch/cmd/moonsearch index -D _build/cram/index.msdb fixture
 roots: 1
 folders: 2
 files: 3
 bytes: 12
 
-$ moonx q2316367743/moonsearch/cmd/moonsearch index --exclude-hidden -x '*.pdf' --exclude-scope basename fixture
+$ moonx q2316367743/moonsearch/cmd/moonsearch index -D _build/cram/index.msdb --exclude-hidden -x '*.pdf' --exclude-scope basename fixture
 roots: 1
 folders: 2
 files: 1
 bytes: 5
 skipped: 2
 
-$ moonx q2316367743/moonsearch/cmd/moonsearch index --quiet fixture
+$ moonx q2316367743/moonsearch/cmd/moonsearch index -D _build/cram/index.msdb --quiet fixture
 @STDOUT (empty)
 @STDERR (empty)
 
@@ -137,6 +137,34 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch index --bogus fixture
 @STDOUT (empty)
 @STDERR (ignore)
 [2]
+```
+
+A plain `info` and `search` read the database that `index` wrote; the search
+still works after the fixture tree is no longer relevant because the index is
+persisted:
+
+```mooncram q2316367743/moonsearch
+$ moonx q2316367743/moonsearch/cmd/moonsearch info -D _build/cram/index.msdb --verify
+database: _build/cram/index.msdb
+format: MSDB 2.0
+built: [0-9]+ (regex)
+roots: 1
+folders: 2
+files: 3
+names: 5
+size: [0-9]+ bytes (regex)
+trigram: [0-9]+ keys (regex)
+checksum: verified
+sections: [a-z]+=[0-9]+( [a-z]+=[0-9]+)* (regex)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search -D _build/cram/index.msdb a.txt
+*/fixture/a.txt (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch search -D _build/cram/index.msdb --engine bitmap ext:pdf
+*/fixture/sub/b.pdf (glob)
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch count -D _build/cram/index.msdb ext:pdf
+1
 ```
 
 The scan engine reads the same fixture through `--live`, so no database is

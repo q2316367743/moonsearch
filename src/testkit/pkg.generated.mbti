@@ -1,0 +1,33 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/testkit"
+
+// Values
+pub fn date_queries() -> Array[String]
+
+pub fn differential_queries(UInt64, Int32) -> Array[String]
+
+pub fn edge_queries() -> Array[String]
+
+pub fn explain_queries() -> Array[String]
+
+pub fn generated_queries(UInt64, Int32) -> Array[String]
+
+pub fn scan_reasons() -> Array[String]
+
+pub fn semantic_queries() -> Array[String]
+
+// Errors
+
+// Types and methods
+pub struct Rng {
+  mut state : UInt64
+}
+pub fn Rng::below(Self, Int32) -> Int32
+pub fn Rng::between(Self, Int32, Int32) -> Int32
+pub fn Rng::chance(Self, Int32) -> Bool
+pub fn Rng::new(UInt64) -> Self
+pub fn Rng::pick(Self, Array[String]) -> String
+
+// Type aliases
+
+// Traits

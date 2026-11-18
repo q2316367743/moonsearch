@@ -35,7 +35,7 @@ async fn execute(invocation : Invocation) -> CliResult {
     Update => run_index(invocation)
     Search => run_search(invocation)
     Count => run_count(invocation)
-    Info => Failure("error: 'info' is not implemented yet")
+    Info => run_info(invocation)
   }
 }
 

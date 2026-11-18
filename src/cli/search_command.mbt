@@ -192,31 +192,102 @@ async fn format_options_of(
 }
 
 ///|
-/// Produce the store a query runs against.
-///
-/// Until persistence lands in S12 the only usable source is a live scan, so
-/// `--live` and `--auto-index` both mean "scan the configured roots now". A
-/// plain search reports how to get a store instead of failing obscurely.
-async fn store_for_query(
-  invocation : Invocation,
-) -> Result[@core.Store, String] {
-  let matches = invocation.matches
-  if !(flag_set(matches, "live") || flag_set(matches, "auto-index")) {
-    return Err(
-      "error: the index is not persisted yet (S12); pass --live --root <PATH> to scan roots for this query",
-    )
+/// Where a query's store and candidate sources come from.
+priv enum QuerySource {
+  /// A scan performed for this query by `--live` or `--auto-index`.
+  Live(@core.Store)
+  /// The persisted index loaded from the database.
+  Persisted(@index.Index)
+}
+
+///|
+/// The store backing a query source.
+fn source_store(source : QuerySource) -> @core.Store {
+  match source {
+    Live(store) => store
+    Persisted(index) => index.store()
   }
+}
+
+///|
+/// Whether the source was scanned during this invocation.
+fn source_is_live(source : QuerySource) -> Bool {
+  match source {
+    Live(_) => true
+    Persisted(_) => false
+  }
+}
+
+///|
+/// Scan the configured roots into a store.
+async fn scan_store(invocation : Invocation) -> Result[@core.Store, String] {
   let config = match scan_config_of(invocation) {
     Ok(config) => config
     Err(message) => return Err(message)
   }
-  let outcome = Ok(@index.scan(config, @platform.system_source())) catch {
+  let outcome : Result[@index.ScanReport, String] = Ok(
+    @index.scan(config, @platform.system_source()),
+  ) catch {
     err => Err("error: \{err.message()}")
   }
   match outcome {
     Ok(report) => Ok(report.store)
     Err(message) => Err(message)
   }
+}
+
+///|
+/// Produce the store and index a query runs against.
+///
+/// `--live` scans the roots and does not touch the database. Otherwise the
+/// persisted index is loaded as-is: the dictionary, range indexes, and trigram
+/// postings come back without a rebuild. `--auto-index` scans and writes the
+/// database first when it is missing. A plain search with no database is a
+/// usage error that names the command which creates one.
+async fn query_source(invocation : Invocation) -> Result[QuerySource, String] {
+  let matches = invocation.matches
+  if flag_set(matches, "live") {
+    let store = match scan_store(invocation) {
+      Ok(store) => store
+      Err(message) => return Err(message)
+    }
+    return Ok(Live(store))
+  }
+  let database = match database_path(invocation) {
+    Ok(path) => path
+    Err(message) => return Err(message)
+  }
+  let exists = @fs.exists(database) catch { _ => false }
+  if exists {
+    let loaded : Result[@index.Index, String] = Ok(
+      @index.Index::read_database(database),
+    ) catch {
+      err => Err("error: \{err.message()}")
+    }
+    return match loaded {
+      Ok(index) => Ok(Persisted(index))
+      Err(message) => Err(message)
+    }
+  }
+  if flag_set(matches, "auto-index") {
+    let store = match scan_store(invocation) {
+      Ok(store) => store
+      Err(message) => return Err(message)
+    }
+    let index = live_index(store)
+    let written : Result[Unit, String] = Ok(
+      @index.Index::write_database(index, database),
+    ) catch {
+      err => Err("error: \{err.message()}")
+    }
+    return match written {
+      Ok(_) => Ok(Persisted(index))
+      Err(message) => Err(message)
+    }
+  }
+  Err(
+    "error: no index database at \{database}; run 'moonsearch index <ROOT>' to create it",
+  )
 }
 
 ///|
@@ -305,6 +376,8 @@ fn search_diagnostics(
   if flag_set(matches, "stats") {
     if live {
       out.write_string("scan: \{scan_ms} ms\n")
+    } else {
+      out.write_string("load: \{scan_ms} ms\n")
     }
     match index_ms {
       Some(ms) => out.write_string("index: \{ms} ms\n")
@@ -354,13 +427,14 @@ async fn run_search(invocation : Invocation) -> CliResult {
   let stream_order = order.streams_name_order()
   let reverse_name = stream_order && order.reverse
   let collect_limit = if stream_order { order.limit } else { 0 }
-  let live = flag_set(matches, "live") || flag_set(matches, "auto-index")
-  let scan_started = @env.now()
-  let store = match store_for_query(invocation) {
-    Ok(store) => store
+  let source_started = @env.now()
+  let source = match query_source(invocation) {
+    Ok(source) => source
     Err(message) => return Failure(message)
   }
-  let scan_ms = elapsed_ms(scan_started)
+  let source_ms = elapsed_ms(source_started)
+  let live = source_is_live(source)
+  let store = source_store(source)
   let mut hits : Array[@core.EntryRef] = []
   let mut index_ms : Int64? = None
   let mut plan = ""
@@ -388,9 +462,15 @@ async fn run_search(invocation : Invocation) -> CliResult {
       }
     }
     BitmapEngine => {
-      let build_started = @env.now()
-      let index = live_index(store)
-      index_ms = Some(elapsed_ms(build_started))
+      let index = match source {
+        Live(store) => {
+          let build_started = @env.now()
+          let index = live_index(store)
+          index_ms = Some(elapsed_ms(build_started))
+          index
+        }
+        Persisted(index) => index
+      }
       let exec_started = @env.now()
       let executed = Ok(@exec.exec_indexed(index, query)) catch {
         err => Err("error: \{err.message()}")
@@ -415,7 +495,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
     plan,
     store,
     hits.length(),
-    scan_ms,
+    source_ms,
     index_ms,
     exec_ms,
     live,
@@ -475,13 +555,14 @@ async fn run_count(invocation : Invocation) -> CliResult {
     Ok(query) => query
     Err(message) => return Failure(message)
   }
-  let live = flag_set(matches, "live") || flag_set(matches, "auto-index")
-  let scan_started = @env.now()
-  let store = match store_for_query(invocation) {
-    Ok(store) => store
+  let source_started = @env.now()
+  let source = match query_source(invocation) {
+    Ok(source) => source
     Err(message) => return Failure(message)
   }
-  let scan_ms = elapsed_ms(scan_started)
+  let scan_ms = elapsed_ms(source_started)
+  let live = source_is_live(source)
+  let store = source_store(source)
   let options = @exec.ScanOptions::new()
   let mut count = 0
   let mut index_ms : Int64? = None
@@ -503,9 +584,15 @@ async fn run_count(invocation : Invocation) -> CliResult {
       }
     }
     BitmapEngine => {
-      let build_started = @env.now()
-      let index = live_index(store)
-      index_ms = Some(elapsed_ms(build_started))
+      let index = match source {
+        Live(store) => {
+          let build_started = @env.now()
+          let index = live_index(store)
+          index_ms = Some(elapsed_ms(build_started))
+          index
+        }
+        Persisted(index) => index
+      }
       let exec_started = @env.now()
       let counted = Ok(@exec.exec_indexed_count(index, query)) catch {
         err => Err("error: \{err.message()}")
@@ -528,6 +615,8 @@ async fn run_count(invocation : Invocation) -> CliResult {
   if flag_set(matches, "stats") {
     if live {
       out.write_string("scan: \{scan_ms} ms\n")
+    } else {
+      out.write_string("load: \{scan_ms} ms\n")
     }
     match index_ms {
       Some(ms) => out.write_string("index: \{ms} ms\n")

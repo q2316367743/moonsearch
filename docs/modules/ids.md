@@ -7,7 +7,7 @@
 
 - 表示一个条目 id 集合，并在“升序数组”和“压缩位图”之间选择物理形态。
 - 提供集合代数：交、并、差、过滤、基数、成员判断。
-- 提供确定性序列化与带边界校验的反序列化，为 S12 的数据库 section 做准备。
+- 提供确定性序列化与带边界校验的反序列化，S12 的 `DICT` section 直接使用它。
 
 id 空间是 `Int32`，非负。S06 本身只处理裸 id，不关心条目类型；S07 起所有集合使用
 `core.GlobalId`：文件夹占 `0 .. folder_count - 1`，文件从 `folder_count` 开始，
@@ -21,6 +21,7 @@ id 空间是 `Int32`，非负。S06 本身只处理裸 id，不关心条目类�
 | `ids.mbt` | `Ids` ADT、形态选择阈值、集合运算、过滤器 |
 | `codec.mbt` | `Ids::to_bytes` / `Ids::from_bytes`、varint、边界校验 |
 | `*_test.mbt` | 与朴素集合对拍、阈值边界、序列化与损坏输入 |
+| `property_test.mbt` | S13：随机集合的代数恒等式、序列化往返与变异安全性 |
 
 ## `Ids`：两种物理形态
 
@@ -152,10 +153,25 @@ sorted: len 个无符号 LEB128 增量；首个值为绝对 id，后续为与前
 - 序列化往返（空集、小 Sorted、稠密 Bits、跨块 mixed），编码稳定性；
 - 损坏输入：截断、未知 tag、未知容器、基数不符、非升序、尾随字节、Int32 溢出。
 
+## 性质测试（S13）
+
+`property_test.mbt` 用 `testkit.Rng` 在三个 universe（128、5000、70000）上生成
+随机集合，同时覆盖稀疏 `Sorted`、稠密 `Bitmap` 与跨 65536 块边界的形态：
+
+- **代数恒等式**：并/交交换律，交对并的分配律
+  `A ∩ (B ∪ C) = (A ∩ B) ∪ (A ∩ C)`，差集恒等式 `A \ B = A ∩ (U \ B)`，
+  `normalize` 保持集合，基数与成员判断一致；每一步都与 `Array[Bool]` 掩码参考实现
+  逐 id 对拍。
+- **序列化**：随机集合 `to_bytes` → `from_bytes` 必须相等；随后随机翻转 1–4 个
+  字节，成功解码的结果仍须是严格升序、基数与元素数一致；任意截断必须返回
+  `IdsError`。
+
 ## 接入状态
 
 S07 已把 `Ids` 用作字段字典 `index::Dict` 的存储：`ext`、`files_all`/`folders_all`、
 `hidden`/`visible`、`root`、`TypeCat` 都是 `Ids`，构建时按总条目数调用
 `normalize(total)` 选择形态。S08 把范围查询结果构造成升序数组，再经
-`Ids::from_sorted(..., total)` 定形；S09 的 trigram 交集结果走同一条路径。CLI 的
-`--engine bitmap` 仍然报“未实现”，因为 S10 才会把 `Query` 编译到这些集合上。
+`Ids::from_sorted(..., total)` 定形；S09 的 trigram 交集结果走同一条路径；
+S10 的位图执行器直接在这套集合上做交、并、差。S12 的 `DICT` section 复用
+`Ids::to_bytes` / `from_bytes`，加载时校验每个 id 都落在条目范围内。
+S13 的性质测试与三引擎对拍（见 [exec](exec.md)）都以 `Ids` 的规范形态为不变量。

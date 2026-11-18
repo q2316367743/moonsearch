@@ -24,6 +24,12 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
 | `range.mbt` | `RangeField`、`RangeFieldSet`、`RangeIndex`、`Ranges`、`ParentPaths` |
 | `trigram.mbt` | `TrigramIndex`、`TrigramPosting`、`TrigramLookup`、提取与交集 |
 | `index.mbt` | S10：`Index` 聚合（store + dict + ranges + trigram） |
+| `db_format.mbt` | S12：MSDB 常量、`DbReader`、CRC-32、header/section table 校验 |
+| `db_write.mbt` | S12：`Index::to_bytes`，各 section 编码与原子写入用的字节布局 |
+| `db_read.mbt` | S12：`Index::from_bytes`、`DbInfo::from_bytes` 与逐段校验 |
+| `db.mbt` | S12：`DbError`、文件读写、写锁与原子替换、`info` 读取入口 |
+| `db_test.mbt` | S12：往返、逐截断/逐字节翻转、garbage 输入 |
+| `db_fuzz_test.mbt` | S13：随机多操作变异、garbage 缓冲、`verify=false` 的越界探测 |
 | `errors.mbt` | `IndexError` |
 
 ## 扫描与构建器
@@ -225,8 +231,8 @@ trigram: <keys> keys, <postings> postings, <short> short names, <stop> stop-gram
 ```
 
 `--no-trigram` 跳过 posting 构建，该行显示 `trigram: disabled`。`posting_bytes` 只统计
-posting 的 `Int32` 数组（4 B/条），不含键与对象头；S12 持久化后会用 delta-varint
-替换。`TrigramLookup::describe()` 提供稳定单行文本（`trigram: 3 keys, N candidate ids`
+posting 的 `Int32` 数组（4 B/条），不含键与对象头；数据库中的 `POSTINGS` 使用
+delta-varint，体积更小。`TrigramLookup::describe()` 提供稳定单行文本（`trigram: 3 keys, N candidate ids`
 / `trigram: scan` / `trigram: miss`），供 S10 的 `--explain` 使用。
 
 ### 复杂度与内存
@@ -235,7 +241,7 @@ posting 的 `Int32` 数组（4 B/条），不含键与对象头；S12 持久化�
   K 为不同 trigram 数。
 - 查询：O(k · (log K + log N)) 次二分，k ≤ 3；候选集只与命中规模相关。
 - 内存：键 4 B/个，posting 4 B/id。100 万条目、约 1300 万 posting 时 posting 数组
-  约 52 MB；这是内存定长形态，S12 的 delta-varint 会把磁盘体积压到计划估算的
+  约 52 MB；这是内存定长形态，数据库的 delta-varint 会把磁盘体积压到计划估算的
   ~25 MB 量级。
 
 ## `Index` 聚合（S10）
@@ -263,6 +269,111 @@ pub fn Index::build(store, eager? = all, trigram? = true) -> Index
   `Index`，不再分别传 store、dict、ranges、trigram 四个部件。S12 也以它为序列化与
   恢复的单位。
 
+## 持久化 `MSDB v2`（S12）
+
+`src/index` 的 `db*.mbt` 把完成的 `Index` 写成一个自校验文件，再从文件恢复同一个
+对象；恢复路径不重新扫描、不重建字典、不重排 trigram。字段级布局见
+[`docs/db-format.md`](../db-format.md)。
+
+### 写入
+
+```text
+Index::to_bytes:
+  1. 收集并去重全部条目名字，按字节序排序
+  2. 生成 ROOTS / NAMES / FOLDERS / FILES / ORDER
+  3. 生成 DICT（5 个基本键 + 扩展名 + 分类 + 根）
+  4. 生成 RANGES（只写已物化字段）
+  5. 生成 POSTINGS（trigram 存在时）
+  6. 计算 section table 偏移，写 header + table + payload
+  7. 一次 CRC 遍历：table 结束时取 metadata_crc，CHECKSUM 前取 full_crc
+```
+
+- `NAMES` 先按名字去重再排序，front coding 的公共前缀因此最大化；记录里的
+  `name_index` 是名字表序号，加载时把名字按顺序追加到新 `NamePool` 并保存返回的
+  `NameRef`，因此条目中的引用自然重建。
+- `ORDER` 直接写 `Store::entries_in_order` 的全局 id。恢复时校验它是排列，然后交给
+  `Store::restore`；不再执行 `Store::new` 的规范排序。
+- `DICT` 的 `Ids` 值使用 `@ids.Ids::to_bytes`，每个值前带 `u32` 字节长度，读取器可以
+  独立解码并拒绝尾随字节。
+- `RANGES` 只写 `Ranges::is_loaded` 为真的字段。未写出的字段在加载后仍按需从
+  `Store` 构建，所以 `--fast-fields` 的取舍在磁盘上保持一致。
+- 序列化是确定性的：同一 `Index` 的两次输出逐字节相同，便于 golden 与损坏测试。
+
+### 读取与校验
+
+```text
+Index::from_bytes:
+  parse_envelope      magic / 版本 / endian / 计数 / section table / CRC
+  parse_roots         路径 UTF-8、folder id
+  parse_names         front coding、严格递增、单条与总量上限、重建 NamePool
+  parse_entries       父 id、name_index、flags、size、mtime、子项计数
+  validate_parent_chains  父链环检测
+  parse_order         0..total-1 的排列
+  parse_dict          id 范围、基本键完整性、扩展名序、hidden/visible 划分
+  parse_ranges        (value,id) 升序、id 不重复且在范围内
+  parse_postings      key 严格递增、delta 累加不溢出、posting 升序且在范围内
+  Index::restore      组装，不触发任何构建
+```
+
+- 每次读取先校验 header + section table 的 `metadata_crc`；`verify=true` 再校验覆盖
+  全部载荷的 `full_crc`。
+- 所有 section 读取使用带边界检查的 `DbReader`，长度字段先检查再分配；损坏输入返回
+  `DbError`，不会触发数组越界或 `panic`。
+- 父链环检测保证 `folder_path` 的向上遍历终止；`ORDER` 排列校验保证查询不会拿到
+  越界 id。
+- `DbInfo::from_bytes` 只解析 header、section table 和 NAMES 计数，供 `info` 在不加载
+  存库的情况下报告版本、条目数、根数、文件大小与各 section 大小。
+
+### 文件事务
+
+- 写进程在 `<path>.lock` 上取独占锁；`try_lock` 失败返回 `DbError::Locked`。
+- 数据写入同目录的 `<path>.tmp.<timestamp>`，`sync=Full` 后 `rename` 覆盖旧文件。
+- 任一失败删除临时文件，旧数据库保持可用；读取方不加锁，依赖 `rename` 的原子性。
+- 默认数据库路径由 CLI 解析：`-D/--database`、`MOONSEARCH_DATABASE`、XDG 数据目录。
+
+### 恢复构造器
+
+加载器需要绕过“构建”路径直接安装已验证的数据，因此下列只在该包内使用的构造器
+被公开给 `db_read.mbt`：
+
+| 构造器 | 作用 |
+| --- | --- |
+| `Store::restore`（core） | 用持久化的 `order` 直接组装 Store |
+| `Dict::restore` / `ExtensionEntry::new` | 安装解码后的集合与扩展名桶 |
+| `RangeIndex::restore` / `Ranges::restore` | 安装已物化字段，其余保持惰性 |
+| `TrigramPosting::from_sorted` / `TrigramIndex::restore` | 安装 posting，并重算计数与 stop-gram |
+| `Index::restore` | 聚合四个部分 |
+
+这些构造器不做额外校验；校验责任留在 section 边界，正常扫描路径仍使用
+`Builder::finish`、`Dict::build`、`Ranges::build` 与 `TrigramIndex::build`。
+
+### 验收测量
+
+release 构建、单文件 100 万条目（1 个根 + 100 万文件，名字 `file<N>.txt`，全部五个范围
+字段与 trigram）：
+
+```text
+索引构建     339 ms
+序列化       965 ms   -> 100,761,247 bytes（约 96 MiB）
+加载+全量校验 387 ms
+```
+
+加载后 `Index::from_bytes` 直接返回可查询对象；同一份测试同时断言条目数、trigram
+存在与 `verify=true` 校验通过。
+
+### 测试
+
+- `db_test.mbt` 覆盖：全结构往返（store、roots、顺序、dict、5 个范围字段、trigram）、
+  空索引、`--no-trigram`、惰性字段跨往返、header/section 计数、`DbInfo`。
+- 损坏输入：每个截断长度、每个单字节翻转（`verify=true`）、随机垃圾字节，全部要求
+  返回错误而不是崩溃。S13 的 `db_fuzz_test.mbt` 再补随机多操作变异：翻转、删除片段、
+  插入片段、覆盖片段与截断随机组合；`verify=true` 下必须全部报错，`verify=false`
+  下若意外加载成功，则必须能安全访问 store、dict、ranges 与 trigram（所有返回 id
+  都在条目范围内），不允许 panic。
+- CLI 端到端：`index` 写库、`info --verify` 读头、删除源目录后 `search`/`count` 仍可用、
+  bitmap 引擎直接读持久化索引、`--no-trigram` 库退化为扫描、损坏数据库以退出码 2
+  失败。
+
 ## 测试
 
 - `dict_test.mbt`：统一 id、隐藏/可见划分、扩展名折叠与空扩展名、分类物化、根集合、
@@ -283,3 +394,8 @@ pub fn Index::build(store, eager? = all, trigram? = true) -> Index
   并断言“至少一次走 posting、至少一次走全扫”。
 - `exec/plan_test.mbt`：通过 `Index` 聚合构建三种索引，验证每个字段的编译结果、
   `--no-trigram` 退化，以及索引引擎与扫描引擎在全语料上的集合一致性。
+- `db_fuzz_test.mbt`（S13）：在固定种子下生成 600 个多操作变异（翻转/删除/插入/
+  覆盖/截断）与 300 个随机垃圾缓冲，断言 `Index::from_bytes(verify=true)` 与
+  `DbInfo::from_bytes(verify=true)` 全部拒绝；再用 `verify=false` 尝试加载，成功时
+  由 `fuzz_probe` 访问 store 条目、字典集合、五个范围字段与 trigram 候选集，并断言
+  每个返回 id 都小于条目数。变异与垃圾生成都只依赖 `testkit.Rng`，失败可从种子复现。

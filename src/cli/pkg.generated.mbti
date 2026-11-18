@@ -36,6 +36,7 @@ pub(all) struct Invocation {
   command : Command
   query : String
   matches : @argparse.Matches
+  env : Map[String, String]
 }
 
 pub(all) enum Parsed {

@@ -1,3 +1,7 @@
 import {
   "moonbitlang/core/buffer",
 }
+
+import {
+  "q2316367743/moonsearch/src/testkit",
+} for "test"

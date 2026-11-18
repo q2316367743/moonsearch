@@ -1,0 +1,4 @@
+// Test-only support package. It has no production dependencies on purpose so
+// every package's blackbox tests can import it without creating a cycle.
+import {
+}
