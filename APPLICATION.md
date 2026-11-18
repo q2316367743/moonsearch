@@ -1,49 +1,64 @@
 # moonsearch 项目申报书
 
-## 基本信息
-
 | 项目 | 内容 |
 | --- | --- |
-| 项目名称 | moonsearch：文件检索语义的 MoonBit 重实现与倒排索引执行引擎 |
-| 参赛者 | 落雨不悔 |
-| 联系方式 |  m17762618644@163.com |
-| GitHub 仓库链接 | https://github.com/q2316367743/moonsearch |
-| 项目方向 | MoonBit 系统工具 / 本地检索引擎 |
-| 是否为移植项目 | 是。迁移查询语义、扫描流程与持久化思路，执行引擎为独立设计 |
+| 项目名称 | moonsearch：MoonBit 原生的文件系统元数据检索引擎 |
+| 参赛者 | 落雨不悔（m17762618644@163.com），1 人 |
+| 项目方向 | 开发者工具 / 工具库：MoonBit 库 + native CLI |
+| 项目属性 | 参考已有开源项目的独立实现：查询语义对齐 FSearch，执行引擎、索引格式与代码重写（非代码移植） |
+| 参考项目 | FSearch 0.3-dev（commit `1208a34`），https://github.com/cboxdoerfer/fsearch，GPL-2.0 |
+| 许可证 | Apache-2.0（不复制上游代码） |
+| 仓库 | https://github.com/q2316367743/moonsearch，不少于 16 个有效提交 |
 
-## 项目简介
+## 一、项目价值与生态定位
 
-moonsearch 把 FSearch、Everything 这类桌面文件搜索工具的查询语言与索引流程搬到 MoonBit，并换掉它们的执行模型。
+**简介。** moonsearch 扫描目录树，把名字、路径、扩展名、大小、mtime、父目录、子项数写进可持久化的索引，用 FSearch 风格查询语言检索；形态是 MoonBit 库 + native CLI。
 
-这两类工具的共同架构是"预排序数组 + 全表线性扫描 + 逐条目求值"：代价按索引总条目数计，与查询多具体无关；过滤条件越多越慢，`ext:jpg size:>1mb dm:lastweek` 就是三次全表遍历。本项目保留它们的**语义**——布尔优先级与隐式 AND、前缀修饰符作用域、字段与内置类别、大小/日期/范围解析、自然排序、排除规则、grep 式退出码——把执行层换成 trigram 倒排 + 位图集合代数 + 范围有序数组，让代价由命中集大小而不是索引规模决定。
+**痛点。** 大型工作树上反复用 `find`/`fd` 找文件，每条命令都重走一遍目录树；shell 管道能组合条件，但没有持久索引，也没有 `childcount:`、`parent:` 这类结构谓词。编辑器、文件管理器、构建工具要做同样的检索时，要么反复调用外部 `find`，要么各自重写查询语言、范围索引、trigram 和持久化格式。
 
-选 MoonBit 不只是因为语法新。这套引擎的核心恰好是 C 里最难写干净的部分：候选集只有 id 集合一种中间表示，却有位图与有序数组两种物理形态，还有容器类型的动态切换、查询项的可索引性判定、计划重写。这些在 C 里是函数指针分派和 `void*` 万能节点，在 MoonBit 里是 `Ids = Bitmap | Sorted` 的 ADT 与 `match`，编译期就能排除"数值项拿到 needle""trigram 项混进日期"这类错误。
+**缺口。** mooncakes.io 上（截至 2026-11-18）已有 `Lucius646/MoonSearch`（全文检索）、`moonbit-community/rg`（内容 grep）、`cli/find`、`justjavac/walkdir`（遍历），但没有“文件系统元数据 + 持久索引 + 查询语言”这一层；FSearch 绑定 GTK/Linux，Everything 闭源且 Windows-only。moonsearch 补这一层：内容搜索用 MoonSearch/rg，元数据检索用 moonsearch。这不是再做一个搜索工具，而是补 MoonBit 工具链缺少的一层基础设施。
 
-## 核心功能范围
+**通用性与优势。** 对 MoonBit 工具链，它是发布后可直接 `moon add` 的检索层：只依赖 `readdir`/`stat`，macOS/Linux 通用，同一棵树、同一查询、同一排序输出确定，库与 CLI 共用同一套实现。对 FSearch/Everything，它把桌面 GUI 搜索拆成可嵌入的库 + 无 GUI 依赖的 CLI，以 Apache-2.0 授权；对 `find`，它把重复查询从目录遍历变成索引查找——但只在“索引常驻、反复查询”时成立。
 
-- **一个 id 空间，两种集合形态。** 文件夹占 `0..F-1`，文件从 `F` 起，字典、范围、倒排共用同一套 id，`ext:pdf OR folder:docs` 就是普通集合运算。`Ids` 在基数超过 4096、或密度超过 1/32 时自动从有序数组升级为位图。
-- **位图分块容器。** 每 65536 个 id 一块，块内不超过 4096 个 id 时用升序 `UInt16` 数组，超过时切换成 1024 字 `UInt64` 位图——两者在 8 KiB 处相等。四种形态组合各有策略：位图×位图按字并行，有序×有序归并，长度相差 32 倍以上改用 galloping，混合则用较短的有序侧探测位图。
-- **三类候选源按基数选结构。** 低基数字段（扩展名、文件/文件夹、隐藏、根、六个内置类别）物化成字典位图；范围字段（size、mtime、depth、childcount、parent）是有序 `(value, id)` 数组加两次二分，`parent` 用计数排序 O(N+F) 构建；名字子串走 trigram 倒排，ASCII 折叠后每个 3 字节窗口打包成 24 位键，查询取最短的三个 posting 求交。`parent:` 不能按文件夹各建一张位图：100 万目录就是 100 万个对象的头开销，这是该结构最容易踩的坑。
-- **两套引擎互为对照。** 线性扫描引擎不是遗留代码，它同时是 `--live` 直接扫目录的模式、索引缺失时的降级路径、以及位图引擎的 oracle。两者共用同一份词法、语法、字段解析和谓词实现，只在"候选集从哪来"处分叉。trigram 的验收性质是**候选集必须是扫描结果的超集**：允许误报，不允许漏报，误报交给最终字节验证消除。
-- **名字与路径按字节存。** MoonBit `String` 是 UTF-16 且必须合法，Unix 文件名却是任意字节流。索引内部不存 `String`：名字写进分块 `NamePool`，`Entry` 只存 `(offset, len)`，ASCII 查询直接在字节上匹配，只有正则才需要 lossy 解码。非法 UTF-8 文件名照常入索引、照常可匹配。
-- **确定性优先于遍历顺序。** 每个目录列表先按自然序排序再入索引，`readdir` 的顺序不会泄漏到结果；同一棵目录树在任何机器上得到同一份索引与同一份输出。自然序按 `strverscmp` 变体：`file2 < file10`，`007 < 07 < 7`，`/` 排在其他字节之前。
-- **语义边界写进类型和测试。** 修饰符是前缀修饰符，只作用于紧随的一个 term 或括号组，`file:a OR b` 不会把 `b` 也限制成文件；`size:1kb..2kb` 是半开区间；`dm:2024-03` 是整月；文件夹 `size` 是子树总和而 `childcount` 是直接子项数；符号链接不跟随、按 0 字节文件索引以避免环。
-- **查询编译与优化**（S10，下一步）：常量折叠、类型域剪枝（`files_all ∩ folders_all = ∅`）、按基数重排 `AND`、把 glob/正则这类不可索引谓词下推到候选集上；`--explain` 打印编译后的计划。
-- **持久化与扫描。** MSDB v2 分节数据库（DICT / RANGES / POSTINGS），原子替换与校验和，截断或翻转字节只返回 `DbError` 不 panic；扫描侧支持多根、真实路径去重、默认伪文件系统排除、可恢复错误收集。
+## 二、交付范围与工程边界
 
-## 预期验收产物
+**交付与核心功能。** MoonBit 库 + native CLI：`index`/`update`/`search`/`count`/`info`；查询语言（布尔、前缀修饰符、范围/日期/大小/结构字段、类别宏、glob/regex）；字典位图、范围数组、trigram 倒排；`Ids = Bitmap | Sorted` 集合代数；MSDB v2 持久化（分节、校验和、原子替换、损坏恢复）；排序/`--limit`/JSON/NUL/模板输出。S01–S14 已完成，527 个单元测试 + 42 个 cram 用例通过。
 
-- `moon add q2316367743/moonsearch` 可引入的库，以及 `moon run cmd/moonsearch` 可直接使用的 native CLI（`index` / `update` / `search` / `count` / `info`）。
-- 100 万条目可构建、保存、加载，加载后不重建任何索引结构；`ext:` + 范围 + 布尔的组合查询 < 5 ms，trigram 子串 < 20 ms，`count` 直接取集合基数。
-- 差分测试记录：同一查询在两套引擎上逐条一致；trigram 超集性质覆盖夹具名字的全部子串；损坏数据库不崩溃、不越界。
-- 文档：README 能力表与实测数字、`docs/db-format.md`、`docs/modules/` 下各包设计说明、`tests/cli.md` 端到端 golden 测试。
+**不做。** 不做 GUI；不做文件内容全文检索；不做 Windows MFT/USN 与 Windows 路径语义；不做分布式分片；v1 只做 ASCII 大小写折叠；`update` 当前全量重建，watcher 增量更新留到后续。
 
-## 移植或参考说明
+**边界。** 它是“索引常驻、反复查询”的工具，不是 `find` 的通用替代品。短 needle、stop-gram、glob/regex/`path:`、稠密范围会退回 O(N) 扫描；小树上索引没有稳定优势。优势是条件性的。
 
-- 参考项目：FSearch 0.3-dev（commit `1208a34`，GPL-2.0）、Everything（行为参考）。本项目为独立实现，不复制上游代码、注释、常量表或测试文本，只依据公开文档与"输入 → 输出"的行为观察对齐语义，许可证为 Apache-2.0。
-- 与参考实现相比的简化与重新设计：
-  - 只保留 CLI，去掉 GTK/GLib 对象系统、`GNode` 查询树、函数指针匹配器、chunked array 和线程池分片；
-  - 执行模型从"每次查询全表扫描"改为倒排 + 位图集合代数，`count` 走 popcount；
-  - 新增查询计划、可解释输出和两引擎对拍，作为正确性的主要手段；
-  - v1 只做 ASCII 大小写折叠，非 ASCII 折叠留表驱动方案；不做 inotify 增量更新、Windows 路径语义、文件内容全文搜索和分布式分片。
-- 当前进度：S09/14。扫描、查询语言、扫描引擎、`Ids`、字典、范围索引、trigram 倒排均已完成并与扫描引擎对拍；索引仍驻留内存，持久化（S12）与查询编译（S10）是后续两步。
+## 三、实现路径与技术理解
+
+**常见路径。** 每次查询遍历目录（`find`/`fd`），无构建成本但重复查询都是 O(N)；只在内存建索引（FSearch），查询快但每次启动/更新重建；持久化索引 + 查询编译，构建一次、加载多次，代价转到格式、加载和更新；FFI 绑定 C 库，省实现但失去 MoonBit 原生和许可证自由度。
+
+**选择的路径。** 持久化索引，并保留遍历作为 `--live`、索引缺失时的降级路径和位图引擎的 oracle。FSearch 本身是单遍遍历、逐条目求值，多条件增加的是谓词成本，不是遍历次数；moonsearch 把执行层改成：字典/范围/trigram 生成候选 id 集合，做位图集合代数，最后只对候选做字节/glob/正则验证。两套引擎共用词法/语法/谓词，只换候选源，正确性逐查询对拍。
+
+**需要的能力与独到理解。** 需要字节级文件名（MoonBit `String` 是 UTF-16 且必须合法，Unix 文件名是任意字节流，所以索引用分块 `NamePool` 存 `(offset, len)`）、倒排/位图/范围索引、查询编译、持久化与损坏恢复、确定性扫描、基准与差分测试。两个关键判断：成本由 posting 长度和候选规模决定，不由命中数决定（`source map` 450 命中 3.7 ms，`ing` 8,151 命中 0.6 ms）；trigram 的验收性质是“候选集必须是扫描结果的超集”，允许误报、不允许漏报。
+
+## 四、预期使用场景
+
+1. **monorepo 清理**：`moonsearch index -r ~/work/repo` 建一次索引，之后反复查 `folder:node_modules`、`ext:log size:>10mb dm:lastmonth`，用 `--null` 交给删除脚本；`find` 每次都要重走几十万条目。
+2. **编辑器快速打开**：库嵌入编辑器，启动加载一次（122 万条约 1.1 s），按键查 `report file:ext:md`，`-n 20` 返回自然序前 20 条；索引查询 34 µs–4.4 ms。
+3. **CI 产物审计**：`moonsearch count 'size:>100mb ext:zip dm:lastweek'`，按退出码判断是否遗留大产物；`--json` 输出清单，固定索引让同一提交的检查可复现。
+
+## 五、实测、证据与仓库
+
+**上游依据。** FSearch 0.3-dev（commit `1208a34`）：`src/fsearch_database_index_store.c:227` 的 worker 对每个 entry 调用 `fsearch_query_match()`，`src/fsearch_query.c:138` 的 `matches()` 在查询树上做 AND/OR 短路——一次查询只遍历一遍，多条件增加的是谓词成本，不是遍历次数。Everything 闭源，只作语义参考，不进入对照。
+
+**同条件对照。** 297,595 条目（25,424 文件夹 + 272,171 文件），FSearch core 无 GUI、固定 1 线程，同树同查询同时区，取多次运行中位数；FSearch 1T 走完整搜索，moonsearch `bitmap count` 只看集合基数、`bitmap full` 还按规范顺序物化命中；`FSearch/full >1` 表示 moonsearch 更快。
+
+| 查询 | 命中 | FSearch 1T | bitmap count | bitmap full | FSearch/full |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `report` | 192 | 14.403 | 0.049 | 2.730 | 5.3× |
+| `source map` | 450 | 15.995 | 3.741 | 6.874 | 2.3× |
+| `a`（1 字节） | 172,894 | 10.110 | 10.942 | 11.841 | 0.85× |
+| `*.pdf`（glob） | 0 | 13.866 | 14.415 | 14.757 | 0.94× |
+| `path:src` | 14,367 | 80.982 | 123.016 | 127.574 | 0.63× |
+| `size:>1kb`（稠密） | 201,582 | 6.729 | 10.454 | 11.470 | 0.59× |
+
+完整表中，选择性高且可索引的完整搜索相对 FSearch 单线程快 1.5–44×（`size:>1mb` 1.5×、`report pdf` 44×），`count` 快 4–300×；退化查询的 `FSearch/full` 为 0.19–0.94（moonsearch 慢 1.1–5.3×）。`source map` 只有 450 命中却要 3.741 ms，`ing` 有 8,151 命中只要 0.603 ms：成本由 posting 长度和候选规模决定，不由命中数决定。短 needle、stop-gram、glob/regex/`path:`、稠密范围退化为 O(N)，完整搜索可能比 FSearch 慢。代价：同一棵树构建 20.9 s（FSearch 4.8–7.6 s，但不建 trigram、不写库）、全量 `update` 21.2 s、查询态 96 MiB、加载 0.26 s；1,219,537 条目上（Apple M4 Pro，release）构建 75.4 s、加载 1.14 s、查询态 361.9 MiB。完整表格、原始 TSV 与 harness 见 [docs/benchmarks.md](docs/benchmarks.md) §6 与 [bench/fsearch-compare/](bench/fsearch-compare/)。
+
+https://github.com/q2316367743/moonsearch。不少于 16 个有效提交（2026-11-11 起，首个提交 `93f613a`），沿 S01–S14 路线推进，每次是实质增量（实现、测试、文档或 CI）；没有空提交或凑数拆分。CI 跑 `moon check`、`fmt --check`、`test`、`testcli`。
+
+后续：发布 mooncakes + 嵌入示例；常驻进程/共享缓存消掉每次 CLI 约 1.1 s 加载；watcher 增量更新；稠密范围分块与 mmap。

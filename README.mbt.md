@@ -1,221 +1,148 @@
 # moonsearch
 
-Fast file search over a persistent inverted index, written in MoonBit.
-
-`moonsearch` is an independent implementation inspired by
-[FSearch](https://github.com/cboxdoerfer/fsearch) and Everything. It keeps the
-query semantics of a desktop file search tool but replaces the "pre-sorted
-arrays + linear scan" execution model with a trigram inverted index, bitmap set
-algebra, and range arrays. The design is documented in
-[`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
-
-> Status: **S14 — benchmarks, documentation, and demo**. The complete S01–S13
-> stack is in place: `index` and `update` walk real directory trees, build an
-> in-memory `Store` with post-order statistics, and write the complete index to
-> an MSDB v2 database with an atomic replace. `src/query` parses the full
-> field/modifier macro syntax into a typed `Query` tree, and `src/exec` evaluates
-> it two ways. The S05 linear scan
-> is still the semantic oracle: `search --live --root <PATH>` and
-> `count --live --root <PATH>` work end to end. The S10 compiler turns the same
-> `Query` into an `Expr` over id sets: dictionary terms become constants, range
-> terms become sorted-array slices, name substrings become trigram candidates,
-> and globs/regexes/path terms become scan predicates that the optimizer pushes
-> under indexed candidates. The indexed engine (`--engine bitmap`) is
-> cross-checked against the scan engine on every field and boolean combination.
-> S11 adds the complete output layer: `--sort name|path|size|mtime|ext|type`,
-> `--reverse`, `--folders-first`, top-K `--limit`, `--null`, `--json`,
-> `--format`, `--basename`, and `--relative-to`, all shared by both engines.
-> All index structures — the S07 `Dict`, the S08 `Ranges`, and the S09
-> `TrigramIndex` — are bundled in `@index.Index`. S12 persists that bundle:
-> `search` and `count` load the database and run without rebuilding anything.
-> S13 makes the cross-check systematic: a three-layer query corpus, a
-> deterministic differential runner over several fixtures, quickcheck-style
-> properties, and a corruption fuzzer for the database reader. S14 adds the
-> benchmark harness, the measured target table, the database-format
-> specification, and a scripted demo.
-
-## Build and run
-
-The project targets the native backend; Wasm has no general-purpose filesystem.
+`moonsearch` 是一个带持久化倒排索引的文件搜索命令行工具，使用 MoonBit 编写。索引一次
+文件系统，之后用字段查询、布尔组合与 glob/正则反复检索，不必每次遍历目录。
 
 ```bash
-moon build --target native
-moon run cmd/moonsearch -- --help
-moon run cmd/moonsearch -- --version
-moon run cmd/moonsearch -- index -r /tmp/some-tree
-moon run cmd/moonsearch -- 'ext:pdf size:>1mb'
-moon run cmd/moonsearch -- search --live --root /tmp/some-tree 'ext:pdf size:>1mb'
-moon run cmd/moonsearch -- info --verify
+moonsearch index -r ~/Documents
+moonsearch 'ext:pdf size:>1mb' -n 20
 ```
 
-## Commands
+- 索引**文件系统条目**：名称、路径、扩展名、大小、mtime、父目录与子项计数。
+- **不是**全文搜索引擎。文档内容搜索请用
+  [`Lucius646/MoonSearch`](https://github.com/Lucius646/MoonSearch) 或
+  [`moonbit-community/rg`](https://github.com/moonbit-community/rg.mbt)。
+- **不是**每次调用都重新遍历的 `find`。一次性遍历直接用 `find` 更合适。
+- 索引只加速部分查询：短查询串、glob、正则与 `path:` 会退化为全扫描。原因与实测边界
+  见 [`docs/benchmarks.md`](docs/benchmarks.md)。
+
+## 安装
+
+```bash
+moon install q2316367743/moonsearch/cmd/moonsearch
+```
+
+`moon install` 从 mooncakes 取源码并在本机编译，可执行文件装进 `$HOME/.moon/bin`
+（Windows 为 `%USERPROFILE%\.moon\bin`），需要 MoonBit 工具链与 C 编译器。
+
+每个 Release 也附带预编译包：
+
+| 平台 | 文件 |
+| --- | --- |
+| Linux x86_64 | `moonsearch-<version>-linux-x86_64.tar.gz` |
+| macOS arm64 | `moonsearch-<version>-macos-arm64.tar.gz` |
+| Windows x86_64 | `moonsearch-<version>-windows-x86_64.zip` |
+
+macOS 包最低要求 macOS 15（在 macOS 15 runner 上构建）。解压后可直接运行，或把二进制
+放进 `PATH` 中的目录；`SHA256SUMS` 与压缩包放在同一 Release。
+
+## 构建
+
+需要 MoonBit 工具链；只支持 native 后端（Wasm 没有通用文件系统）。
+
+```bash
+moon build --target native --release
+./_build/native/release/build/cmd/moonsearch/moonsearch.exe --version
+```
+
+开发时可用 `moon run cmd/moonsearch -- <参数>` 代替上面的可执行文件路径。
+
+## 快速开始
+
+```bash
+# 建立索引，可指定多个根目录
+moonsearch index -r ~/Documents -r ~/Downloads
+
+# 查询（search 是默认子命令）
+moonsearch 'ext:pdf size:>1mb'
+moonsearch 'report dm:lastweek' --sort size --reverse -n 20
+
+# 只输出命中数量
+moonsearch count 'ext:mp4'
+
+# 检查数据库完整性并查看统计
+moonsearch info --verify
+```
+
+## 命令
 
 ```text
 moonsearch <command> [options] [query...]
 ```
 
-| Command | Purpose | Status |
-| --- | --- | --- |
-| `index` | Scan roots and write the persisted index | works |
-| `update` | Rescan the roots and replace the persisted index | works |
-| `search` | Query the persisted index (default subcommand) | works on either engine |
-| `count` | Print the number of matches | works on either engine |
-| `info` | Show persisted index statistics | works; `--verify` checks every section |
-
-`search` is the default, so a bare query works without the subcommand:
-
-```bash
-moonsearch 'ext:pdf size:>1mb'
-```
-
-`search` and `count` use the database written by `index`/`update`. Their default
-path is `$XDG_DATA_HOME/moonsearch/index.msdb` (or
-`$HOME/.local/share/moonsearch/index.msdb`); `-D/--database` and
-`MOONSEARCH_DATABASE` override it. `--live --root <PATH>` still scans for the
-current invocation without touching the database:
-
-```bash
-moonsearch search --live --root /home/user 'ext:jpg;png size:>1mb' -n 20
-moonsearch count --live --root /home/user 'dm:lastweek ext:mp4'
-```
-
-Global options are accepted before or after the subcommand:
-
-| Option | Meaning |
+| 命令 | 用途 |
 | --- | --- |
-| `-D, --database <PATH>` | Index database path (`MOONSEARCH_DATABASE`) |
-| `--config <PATH>` | Configuration file path (`MOONSEARCH_CONFIG`) |
-| `--no-config` | Do not read the configuration file |
-| `-v, --verbose` / `-q, --quiet` | Verbosity control |
-| `--stats` | Print timings and index sizes to stderr |
-| `--explain` | Print the execution plan to stderr |
-| `-h, --help` / `-V, --version` | Help and version |
+| `index` | 扫描根目录并写入索引数据库 |
+| `update` | 重新扫描根目录并替换索引数据库 |
+| `search` | 查询索引（默认子命令） |
+| `count` | 输出命中数量 |
+| `info` | 显示数据库统计信息；`--verify` 校验每个段 |
 
-Run `moonsearch <command> --help` for the full option list.
+`search` 是默认子命令，因此 `moonsearch 'ext:pdf'` 等价于
+`moonsearch search 'ext:pdf'`。完整选项列表用 `moonsearch <command> --help` 查看。
 
-## Query coverage and index sources
+### 全局选项
 
-The bitmap engine never walks the store for a term that an index can answer.
-`--explain` prints the chosen leaf and, for a fallback, the reason:
+可放在子命令之前或之后。
 
-| Query form | Candidate source | Notes |
-| --- | --- | --- |
-| `file:`, `folder:`, `hidden:`, `nohidden:` | `Dict` bitmap | one dictionary lookup |
-| `ext:jpg;png` | `Dict` extension buckets | union of the named buckets |
-| `app:`, `archive:`, `audio:`, `doc:`, `pic:`, `video:` | `Dict` category set | one set per category, built once |
-| `size:`, `dm:`, `depth:`, `childcount:`, `parent:`, `empty:` | `Ranges` sorted slice | two binary searches, then `Ids` |
-| name substring or `exact:` with ≥ 3 bytes | trigram postings | 3 shortest postings intersected, then byte verification |
-| name substring shorter than 3 bytes | full scan | `reason=short-needle` |
-| glob (`*.pdf`), regex, `path:` | full scan | `reason=glob`, `regex`, or `path`; pushed under any indexed sibling |
-| `childfilecount:`, `childfoldercount:`, `contenttype:` | full scan | no range/bitmap field yet |
-| `--no-trigram` database | full scan for names | dictionary and range terms still use their indexes |
-| empty query | `Dict.all()` | canonical-order membership, stops at `--limit` |
-| `--live` (both engines) | directory scan | no database is read or written |
+| 选项 | 说明 |
+| --- | --- |
+| `-D, --database <PATH>` | 数据库路径（`MOONSEARCH_DATABASE`） |
+| `--config <PATH>` | 预留：配置文件尚未读取（`MOONSEARCH_CONFIG`） |
+| `--no-config` | 预留：保留解析但不生效 |
+| `-v, --verbose` / `-q, --quiet` | 详细进度 / 只输出结果与错误 |
+| `--stats` | 向 stderr 输出耗时与索引体积 |
+| `--explain` | 向 stderr 输出解析后的查询与执行计划 |
+| `-h, --help` / `-V, --version` | 帮助 / 版本 |
 
-`AND` sides are sorted by estimated cardinality, `Scan` leaves are pushed below
-indexed sides, and `Or`/`Not` are evaluated as set algebra. A term that cannot
-use an index does not disable the indexes of the other terms.
+## 数据库
 
-## Benchmarks (S14)
+默认路径为 `$XDG_DATA_HOME/moonsearch/index.msdb`，未设置 `XDG_DATA_HOME` 时为
+`$HOME/.local/share/moonsearch/index.msdb`；Windows 上未设置 `HOME` 时用
+`%LOCALAPPDATA%\moonsearch\index.msdb`。`-D/--database` 与
+`MOONSEARCH_DATABASE` 可覆盖，路径开头的 `~/` 会展开。
 
-The primary dataset is 1,219,537 entries from three trees under
-`~/Documents/workspace` (`app`, `dashou-plugin`, `plugin`): 113,665 folders,
-1,105,872 files, and an 86.7 MiB database. Measurements are from a release
-build on an Apple M4 Pro (macOS 26.6.2); engine latency is the median from
-`moonsearch-bench`, which loads the database once and samples the in-process
-query path with a monotonic clock. `--stats` and `info --verify` numbers are
-from the same database.
+`search` 与 `count` 默认读取该数据库。数据库缺失时会报错并提示先运行 `index`；
+`--auto-index` 则在缺失时先扫描 `--root` 建库。
 
-| Scenario | Target (plan) | Measured (1.22M entries) | Status |
-| --- | --- | --- | --- |
-| Scan + build + write | < 90 s at 1M | 75.4 s | met |
-| Database load | < 800 ms at 1M | 1136 ms | missed |
-| `ext:jpg` | < 1 ms | 34.1 µs | met |
-| `ext:jpg size:>1mb` | < 5 ms | 0.31 ms | met |
-| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 4.41 ms | met |
-| `report` | < 20 ms | 76.6 µs | met |
-| `report pdf` | < 40 ms | 183 µs | met |
-| `*.pdf` | < 120 ms | 72.3 ms | met |
-| `count ext:mp4` | < 1 ms | 34.0 µs | met |
-| empty query + `-n 20` | < 1 ms | 33.4 µs | met |
-| Index extra size | < 1.5× names + entries | 1.58× | marginal |
-| Query-time resident memory | < 400 MB at 1M | 361.9 MiB | met |
+`--live` 完全跳过数据库，直接扫描 `--root` 指定的目录：
 
-Every query target is met on this dataset; indexed terms are up to ~1350×
-faster than the linear-scan oracle (glob-only `*.pdf`, which has no index to
-use, is the expected 1.3× exception). The two misses are
-database load (1.14 s at 1.22M entries, about 0.93 s normalized to 1M) and
-index size (1.58× against a 1.5× budget; `RANGES` and `POSTINGS` dominate).
-The full 2.36M-entry tree is a stress case: build 150 s, load 2.45 s, and dense
-range queries such as `size:>1kb` reach 84 ms because a large range slice is
-sorted and converted to a bitmap. Glob-only `*.pdf` is the only raw query miss
-there (143 ms at 2.36M entries, about 61 ms normalized to 1M). The tuning
-backlog is recorded in
-[`docs/benchmarks.md`](docs/benchmarks.md).
-
-- Raw reports: [`bench/results.md`](bench/results.md) (1.22M dataset) and
-  [`bench/results-full-tree.md`](bench/results-full-tree.md) (2.36M stress).
-- Reprocess: `python3 bench/run_bench.py --rebuild-index --root <DIR>`, after
-  `moon build --target native --release`.
-- Demo: `bash bench/demo.sh` (scripted terminal walkthrough suitable for a
-  recording; see [`docs/benchmarks.md`](docs/benchmarks.md)).
-
-## Core model (S02)
-
-The shared, byte-level data model lives in `src/core` and `src/util`:
-
-- `NamePool` — a chunked byte arena for file names. Names are appended as raw
-  bytes and read back as zero-copy `BytesView`s through
-  `NameRef { offset, length }`. The pool allocates one buffer per chunk, not per
-  name, and earlier references remain valid while the pool grows.
-- `Entry` — one file or folder: parent folder id, name reference, flags, size,
-  mtime, and direct child counts. Folder sizes accumulate with saturation at the
-  `Int64` bounds.
-- `cmp_paths` — natural path ordering. Digit runs compare numerically
-  (`file2 < file10`), `/` sorts before every other byte (`a/b < a.b`), and
-  leading-zero runs follow `strverscmp` semantics (`007 < 07 < 7`,
-  `09 > 010`).
-- `util` byte helpers — ASCII case folding, case-insensitive equality,
-  prefix/suffix tests, and byte/needle search over `BytesView`.
-
-## Scanner and in-memory store (S03)
-
-`index` and `update` share one scan pipeline:
-
-```text
-roots (normalized with realpath)
-  → platform scan source (async/fs)
-  → recursive scan: hidden/exclude filters, pre-order entries, post-order stats
-  → Builder: name pool + folder/file arrays
-  → Store: immutable in-memory view
+```bash
+moonsearch search --live --root ~/Documents 'ext:jpg;png size:>1mb'
+moonsearch count --live --root ~/Documents 'dm:lastweek ext:mp4'
 ```
 
-- **`platform`** isolates the file system behind a `ScanSource` trait
-  (`list`, `stat`, `realpath`, `has_devices`). The production backend uses
-  `moonbitlang/core/async/fs`. Tests implement the same trait in memory, so the
-  scanner is exercised without touching disk.
-- **Deterministic ids**: every directory listing is sorted by natural name
-  order before entries are added, so `readdir` order never reaches the index.
-- **Pre-order entries, post-order stats**: a folder gets its id before its
-  children are scanned; sizes and direct child counts are filled in once the
-  subtree returns. Folder sizes are subtree totals, `num_files`/`num_folders`
-  are direct-child counts.
-- **Symlinks are never followed.** They are indexed as file entries with the
-  symlink flag and contribute zero bytes, so a link to a directory cannot create
-  a cycle. Sockets, pipes, and device nodes get the special flag.
-- **Exclusions**: `--exclude-hidden` first, then `-x/--exclude` rules
-  (`fixed:`/`glob:`, default glob) with `--exclude-scope
-  full_path|basename` and `--exclude-target both|files|folders`. `/proc`,
-  `/sys`, `/dev`, and `/run` are skipped by default unless
-  `--no-default-excludes` is given. `regex:` rules are rejected until the query
-  regex engine exists.
-- **Roots**: normalized with `realpath`, exact duplicates are dropped, and
-  nested roots are rejected unless `--allow-nested-roots` is passed.
-- **Recoverable failures** (an unreadable directory, an entry that vanished
-  during the scan) are collected as `ScanIssue`s and reported with
-  `-v/--verbose`; the scan continues.
+## 建立索引
 
-`index` prints a stable summary to stdout:
+```bash
+moonsearch index -r ~/Documents ~/Downloads   # 位置参数也可以
+moonsearch update ~/Documents                 # 重新扫描并原子替换
+```
+
+`index` 与 `update` 行为相同：扫描、构建、原子写入；根目录必须显式给出。写入使用临时
+文件、`sync` 与 `rename`，失败时保留原数据库。
+
+| 选项 | 说明 |
+| --- | --- |
+| `-r, --root <PATH>` | 根目录，可重复；也可写成位置参数 |
+| `-x, --exclude <RULE>` | 排除规则，可重复 |
+| `--exclude-scope <SCOPE>` | 规则匹配对象：`full_path`（默认）或 `basename` |
+| `--exclude-target <T>` | 规则作用对象：`both`（默认）、`files` 或 `folders` |
+| `--exclude-hidden` | 跳过以点开头的名称 |
+| `--no-default-excludes` | 不跳过 `/proc`、`/sys`、`/dev`、`/run` |
+| `--allow-nested-roots` | 允许根目录相互嵌套 |
+| `--fast-fields <LIST>` | 预建区间字段，默认 `size,mtime`；可选 `size`、`mtime`、`depth`、`childcount`、`parent` |
+| `--no-trigram` | 不构建 trigram 倒排；名称查询将退化为全扫描 |
+| `--one-file-system` | 不跨文件系统；当前纯 MoonBit 后端上为空操作并打印警告 |
+
+排除规则写法：`fixed:` 做逐字节比较，`glob:` 支持 `*`、`?` 与 `\` 转义，不带前缀时
+默认按 glob 处理。`regex:` 暂时被拒绝。
+
+```bash
+moonsearch index -r ~/Projects -x 'glob:*/node_modules' -x 'glob:*.tmp' --exclude-hidden
+```
+
+扫描完成后 stdout 输出稳定摘要：
 
 ```text
 roots: 1
@@ -224,444 +151,226 @@ files: 3
 bytes: 6
 ```
 
-`skipped:` and `issues:` lines appear when non-zero. `--stats` adds timing,
-name-pool sizes, and the dictionary shape (extension count, category count,
-hidden entries) to stderr. The index is written to the database with a temporary
-file, `sync`, and an atomic `rename`; a writer lock serialises concurrent
-`index`/`update` runs and leaves the previous database intact on failure.
+`skipped:` 与 `issues:` 行仅在非零时出现；`-v/--verbose` 会逐条报告不可读目录、扫描中
+消失的条目等可恢复问题。`--stats` 追加计时、名称池、字典与 trigram 形态，以及数据库
+路径和大小。
 
-### Scanner backend limits
+## 查询
 
-The pure MoonBit backend is the plan's "stage A": it uses path-based syscalls,
-decodes names through `String` (so invalid UTF-8 names are mangled by the
-runtime), and cannot read `st_dev`. As a consequence `--one-file-system` is a
-no-op on this backend and prints a warning; the cross-device logic is already
-implemented and tested through injected `ScanSource` implementations. The POSIX
-FFI backend that fixes all three limitations is a later step and does not change
-the scanner API.
+### 基本匹配
 
-## Query language and AST (S04)
+裸词按**名称子串**匹配，默认 ASCII 大小写不敏感；包含 `/` 的裸词按**完整路径**匹配。
+`"..."` 原样保留空格与特殊字符，`\` 转义下一个字符。
 
-`src/query` turns a query string into a typed `Query` tree. Execution is handled
-by the scan engine in S05; this layer only fixes the language.
-
-- **Lexer** (`lex`) — tracks UTF-16 offsets for error positions. `"..."` quotes
-  text verbatim (so a regular expression keeps `\.`), `\` escapes the next
-  character outside quotes, `name:` becomes a field token, and only uppercase
-  whole words are operators (`AND` / `OR` / `NOT`, plus `&&` / `||` / `!`).
-  Field names are ASCII case-insensitive.
-- **Parser** (`parse`) — a precedence climber: `NOT` binds tighter than the
-  implicit or explicit `AND`, which binds tighter than `OR`. It follows the
-  upstream recovery rules: a binary operator with no operand is ignored,
-  consecutive `NOT`s cancel in pairs, and `--compat` turns an unknown field, a
-  malformed value, or a stray `)` into an empty set instead of an error.
-- **AST** — `Query { MatchAll, MatchNone, Term, And, Or, Not }` over
-  `TermBody { Name, Kind, Visibility, TypeCategory, Extensions, Size, Modified,
-  Depth, ChildCount, ChildFileCount, ChildFolderCount, Parent, Empty,
-  ContentType }`. `AND` and `OR` fold their neutral elements while the tree is
-  built.
-- **Modifiers** — `case:`/`nocase:`, `exact:`, `file:`/`files:`,
-  `folder:`/`folders:`, `hidden:`, `nohidden:`/`visible:`, `path:`/`nopath:`,
-  and `regex:`/`noregex:` are prefix modifiers scoped to one following term or
-  group. `file:(a OR b)` applies to both sides; `file:a OR b` does not leak past
-  `a`. A standalone `file:`, `folder:`, `hidden:`, or `nohidden:` becomes a
-  `Kind`/`Visibility` term, which is also how the CLI's `--type` option filters
-  an empty query.
-- **Built-in categories** — `app:`, `archive:`, `audio:`, `doc:`, `pic:`, and
-  `video:` parse to a `TypeCategory` term instead of expanding to an `ext:`
-  list. The field dictionary materializes each category as one set, while the
-  scan engine matches the same extension list directly.
-- **Term heuristics** — a needle containing `/` searches the full path, and a
-  needle containing a non-ASCII uppercase letter becomes case-sensitive, unless
-  the matching modifier was written explicitly.
-- **Values** — `size:` accepts decimal units (`1kb` = 1000 bytes), comparisons
-  (`>1mb`), and half-open ranges (`1kb..2mb` = `[1000, 2000000)`); counting
-  fields accept integers; `ext:` splits on `;` and folds ASCII case; `dm:`
-  keeps its date text for the predicate layer, which owns the calendar and time
-  zone.
-- **Macros** (`Macros`, `Macro`) — named query fragments expanded on `name:`,
-  looked up ASCII case-insensitively. Expansion uses an independent parser and
-  reports direct and indirect cycles. A user macro overrides the built-in
-  category of the same name. The built-in categories are not text macros: they
-  stay as `TypeCategory` terms and are materialized by the dictionary.
-
-`Query::describe()` renders a compact, stable tree, which the parser tests use
-for assertions:
-
-```text
-(and (ext "pdf" kind=file) (size > 1000000))
+```bash
+moonsearch report            # 名称包含 report
+moonsearch '"annual report"' # 单个词项内含空格时用引号
+moonsearch docs/report       # 路径包含 docs/report
+moonsearch '*.pdf'           # glob：以 .pdf 结尾
+moonsearch -r '^report.*\.pdf$'   # 正则：整条查询作为正则
 ```
 
-## Scan engine and predicates (S05)
+对应的一次性开关：
 
-`src/exec` is the baseline execution engine and, from S06 on, the oracle the
-bitmap engine is compared against. It walks the store once, per entry, and
-applies a compiled predicate:
-
-```text
-Query AST
-  → compile: flags → matchers, regex compiled once, dates resolved against now
-  → ScanExpr { All, None, Test, And, Or, Not }
-  → for entry in Store::entries_in_order():
-        eval(expr, store, entry)   → keep, stop at --limit
-```
-
-- **Canonical order** — the store builds one immutable order at construction:
-  folders and files merged by name, then full path, both in `cmp_paths` natural
-  order. `search` therefore prints name order with no per-query sort, and
-  `--limit` stops the walk early instead of collecting every hit first.
-- **Predicates** — name substring, exact match, glob (`*` / `?` / `\`; `?`
-  matches one byte in this version), and regex (MoonBit's `@string.Regex`,
-  case-insensitive via `(?i:...)`); `ext:`, `size:`, `dm:`, `depth:`,
-  `childcount:`, `childfilecount:`, `childfoldercount:`, `parent:`, `empty:`,
-  and `contenttype:`. `ext:` and `contenttype:` apply to files only; child
-  counts and `empty:` apply to folders only.
-- **Boolean algebra** — `AND` short-circuits at the first false branch, `OR` at
-  the first true one, and `NOT` complements over every entry (the plan's `Both`
-  domain). Kind filters from `file:` / `folder:` narrow any term, including a
-  parenthesized group.
-- **Paths** — name matching uses raw name bytes; `path:` (or a needle containing
-  `/`) uses the full path built from the parent chain. `parent:` compares the
-  parent folder path byte for byte, with trailing slashes normalized.
-- **Content types** — v1 maps common extensions to MIME types; a value without
-  `/` matches either the main type (`text` → every `text/*`) or the subtype
-  (`pdf` → `application/pdf`). A magic-based lookup is a later step.
-- **Unicode** — only ASCII case is folded. Invalid UTF-8 names still match byte
-  patterns, but are treated as non-matches by the regex predicate because they
-  cannot be decoded into a `String`.
-
-### Dates
-
-`dm:` is resolved by `src/util/time.mbt` in local time, with testable injection
-of the clock and zone:
-
-- `today`, `yesterday`, weekday names (`mon` / `monday`), and month names
-  (`jan` / `january`, the most recent occurrence);
-- `last` / `inthelast` / `prev` / `previous` + unit, optionally with a count as
-  digits or words (`lastfiveweeks`, `last3days`) — rolling windows ending now;
-- `this` + unit — the current calendar unit (week starts on Monday);
-- explicit `YYYY[-MM[-DD[THH[:MM[:SS]]]]]`, with two-digit years.
-
-A bare date names a whole unit, so `dm:2024-03` is the whole month; `>`, `>=`,
-`<`, and `<=` apply to that unit's half-open interval. Ranges stay half-open, so
-`dm:2020..2021` covers 2020 but not 2021. Calendar arithmetic follows daylight
-saving transitions, and tests pin the zone to UTC for determinism.
-
-### Current CLI surface
-
-The scan engine is the default (`--engine scan`); `--engine bitmap` runs the
-S10 compiler over a live index. Both engines feed the same S11 output layer, so
-they produce byte-identical output for the same query. `--explain` prints the
-parsed query and the engine-specific plan to stderr: the `ScanExpr` predicate
-tree for the scan engine, or the estimated `Expr` tree with trigram key counts
-and scan degradation reasons for the bitmap engine. `--stats` adds entry, match,
-and timing lines. Ordering and formats are described in the next section.
-
-## Id sets and compressed bitmaps (S06)
-
-`src/ids` is the set layer the indexed executor will evaluate on. It depends
-only on the core buffer package, so its algebra can be tested with plain arrays
-and checked against an independent membership-mask implementation. See
-[`docs/modules/ids.md`](docs/modules/ids.md) for the full design.
-
-- **`Ids`** — either `Sorted`, a strictly ascending duplicate-free `Int32`
-  array, or `Bitmap`, a compressed bitmap with an O(1) cached cardinality.
-  Sparse results stay arrays; dense results become bitmaps.
-- **Shape thresholds** — a set becomes a bitmap when its cardinality exceeds
-  4096 or, once the index size is known, when `cardinality * 32 > total`.
-  Exactly 4096 ids and exactly 1/32 density stay sorted; `normalize(total)`
-  re-applies the density rule after a range query.
-- **`Bitmap` / `Container`** — ids are split into 65536-id blocks. A block is an
-  ascending `UInt16` array while it holds at most 4096 ids and a 1024-word
-  `UInt64` bitmap above that; both forms occupy 8 KiB at the threshold. Inserts
-  and removes flip the container, and emptied blocks are trimmed.
-- **Set algebra** — bitmap×bitmap uses word-parallel operations, sorted×sorted
-  merges, and mixed pairs probe the bitmap with the smaller sorted side. A
-  sorted side larger than 4096 is converted first. `Ids::filter` narrows a
-  candidate set and re-normalizes the result.
-- **Serialization** — the plan's `IdsRef` layout: bitmap block streams with
-  explicit container tags, or delta-LEB128 sorted ids. Decoding validates tags,
-  block order, container contents, cardinality, and trailing bytes, and returns
-  `IdsError` instead of panicking on corrupted input.
-
-The bitmap engine is wired into the CLI: `--engine bitmap` evaluates the S10
-`Expr` plan over the S07–S09 candidate sources. The S05 scan engine remains the
-default and the oracle the indexed engine is checked against. Both engines feed
-the S11 ordering and formatting layer. S12 persists the whole `Index` and
-restores it without rebuilding.
-
-## Field dictionary (S07)
-
-`src/index/dict.mbt` builds the low-cardinality field dictionary after the scan.
-It is the first real consumer of `Ids` and the source of candidate sets the
-indexed executor consumes.
-
-- **One id space** — `Store::global_id` numbers folders `0 .. folder_count - 1`
-  and files from `folder_count` upward. Every dictionary set uses it, so
-  `files_all ∪ folders_all` and `ext:pdf OR folder:docs` are ordinary set
-  algebra. `Store::entry_at` is the validating reverse mapping.
-- **`Dict`** — built once from an immutable store:
-  - `extensions` — one bucket per ASCII-folded extension, sorted by bytes; the
-    empty extension is a real bucket for `ext:` with no extension;
-  - `files_all`, `folders_all`, `all`, `hidden`, `visible`;
-  - `roots` — one subtree set per configured root, in `Store::roots()` order;
-  - `categories` — one materialized set per built-in category, so `pic:` costs
-    an array index rather than a per-query union.
-- **Shared rules** — `util.extension_of` is the only extension extractor;
-  `util.TypeCategory::extensions` is the only category data. The scan predicate
-  and the dictionary therefore cannot disagree about which file is a `pdf` or a
-  `pic`.
-- **Cross-check** — `exec/dict_compat_test.mbt` expands each dictionary set back
-  to paths and compares it with the S05 scan engine for `file:`, `folder:`,
-  `hidden:`, `nohidden:`, `file:hidden:`, `folder:hidden:`, `ext:`, the empty
-  extension, and all six built-in macros.
-- **CLI** — `index` and `update` materialize the dictionary as part of the
-  build. `--stats` also prints its shape:
-  `dict: <extensions> extensions, 6 categories, <hidden> hidden`.
-
-The dictionary is persisted as the `DICT` section and restored as-is; the S10
-compiler turns these sets into `Const` leaves of an indexed plan.
-
-## Range indexes (S08)
-
-`src/index/range.mbt` adds the second kind of candidate source: five sorted
-`(value, id)` arrays, one per range field.
-
-- **Fields** — `size` (files and folders; a folder value is its subtree total),
-  `mtime` (Unix seconds), `depth` (roots 0, files take their parent's depth + 1),
-  `childcount` (folders only), and `parent` (a folder id; roots excluded).
-- **`RangeIndex`** — two parallel arrays sorted by value, then id. `lower_bound`
-  and `upper_bound` are the only search primitives; equality is the run between
-  them, and ranges are half-open `[lo, hi)`. An empty or inverted interval
-  returns the empty set without touching the arrays. Slices are canonicalized
-  back into `Ids`, so a narrow range stays `Sorted` while a broad one becomes a
-  `Bitmap` by the S06 density rule.
-- **Parent by counting sort** — parent values are folder ids, so the index is
-  built in O(N + F) with a counting pass, prefix sums, and one append per entry
-  in id order. `parent:<path>` resolves through `ParentPaths`, a byte-sorted
-  table of folder paths searched by binary search.
-- **Lazy fields and `--fast-fields`** — `Ranges::build` builds only the selected
-  fields; the rest materialize on first access and stay cached. The CLI default
-  is `size,mtime`; `index --fast-fields size,depth,parent` changes the eager set.
-  `--stats` reports only loaded fields (`ranges: size=... mtime=...`), so
-  printing statistics never forces a lazy build.
-- **Cross-check** — `exec/range_compat_test.mbt` compares every field set against
-  the scan engine: the six comparison forms plus inverted ranges for `size`,
-  month and comparison dates for `dm`, multi-level `depth`, `childcount` with
-  `empty:`, and `parent:` paths that exist or do not.
-
-The range arrays are persisted as the `RANGES` section. Only materialized fields
-are written; the rest stay lazy after loading.
-
-## Trigram inverted index (S09)
-
-`src/index/trigram.mbt` adds the candidate source for ordinary substring terms:
-one posting per distinct ASCII-folded 3-byte window of every entry name.
-
-- **Extraction** — names are folded with `util.ascii_lower` (ASCII only), each
-  3-byte window is packed into a 24-bit `UInt32`, and repeated windows inside one
-  name are removed before its id is appended. Names shorter than three bytes
-  carry no trigram and are only counted; a longer needle cannot match them.
-- **Storage** — an ascending `keys : Array[UInt32]` plus parallel
-  `TrigramPosting` arrays, so a lookup is a binary search and the build-time hash
-  map is released. Ids arrive in store-wide order, which makes every posting
-  ascending without a final sort.
-- **Lookup** — a needle shorter than three bytes returns a full scan; a missing
-  trigram returns the empty candidate set; postings above 20% of the index are
-  stop-grams and are skipped; the three shortest remaining postings are
-  intersected. The result is a superset that still needs byte verification.
-- **Intersection** — a merge when the lists are comparable in length, and
-  galloping (exponential probe, then binary search) when one list is at least
-  32× shorter. Both branches keep the result ascending and duplicate-free.
-- **CLI** — `index`/`update` build the postings unless `--no-trigram` is passed.
-  `--stats` reports
-  `trigram: <keys> keys, <postings> postings, <short> short names, <stop> stop-grams, <bytes> B`,
-  or `trigram: disabled`.
-- **Cross-check** — `exec/trigram_compat_test.mbt` enumerates every substring of
-  every fixture name and asserts that the scan-engine results for the default,
-  `case:`, and `exact:` queries are all contained in the trigram candidates. It
-  also pins the fallbacks: short needles, missing trigrams, short names,
-  stop-grams, and the fact that name-only postings do not cover `path:` terms.
-
-The postings are persisted as the `POSTINGS` section with delta-varint ids.
-
-## Indexed query compiler and plans (S10)
-
-`src/exec/plan.mbt` compiles a `Query` into an `Expr` over id sets and evaluates
-it with set algebra. The scan engine and the indexed engine share the parser,
-the field rules, and the per-entry predicates; they differ only in how the
-candidate set is produced.
-
-```text
-Query
-  → compile: domain pruning + leaf selection (Const / Trigram / Scan / Filter)
-  → optimize: constant folding, cardinality reordering, predicate pushdown
-  → evaluate: Ids intersection, union, and difference
-```
-
-- **Leaves** — `Const` is a set already materialized by `Dict` or `Ranges`;
-  `Trigram` is a posting candidate set that still needs byte verification;
-  `Scan` is a predicate with no index support; `Filter` is a pushed-down scan
-  predicate over another node. Every leaf keeps the term text so `--explain`
-  stays readable.
-- **Compilation** — `file:`, `folder:`, `hidden:`, `ext:`, built-in categories,
-  `size:`, `dm:`, `depth:`, `childcount:`, `parent:`, and `empty:` become
-  constants or range slices. A plain substring or `exact:` term with a needle of
-  at least three bytes becomes a trigram leaf. Glob, regex, `path:`, short
-  needles, all-stop-gram needles, and disabled postings become scan leaves with
-  the reasons `glob`, `regex`, `path`, `short-needle`, `stop-grams`, and
-  `no-trigram`. `childfilecount:`, `childfoldercount:`, and `contenttype:` are
-  scan leaves until a range index exists for them.
-- **Type domains** — every subtree is classified `FilesOnly`, `FoldersOnly`,
-  `Both`, or `Never`. `file:` combined with `folder:`, or `ext:` under a folder
-  modifier, is `Never` and compiles to the empty set without touching the index.
-  A negation is always complemented over every entry, matching the scan engine.
-- **Optimizer** — adjacent constants merge; `And(empty, x)` is empty;
-  `Or(universe, x)` is the universe; `Not(Const)` becomes a constant; double
-  negation collapses. `And` sides are ordered by estimated cardinality, and a
-  scan predicate is pushed below the indexed side (`And(Scan(p), x)` becomes
-  `Filter(p, x)`) so globs and regexes only visit candidates.
-- **Evaluation** — `And` short-circuits on an empty left side, and `Not` uses
-  `Dict::all()` as the universe. `exec_indexed` returns an `Ids` set;
-  `exec_indexed_count` returns its cardinality. `search --engine bitmap` walks
-  the canonical order and checks membership, which preserves `name` order and
-  early-stops at `--limit`; other orders go through the S11 ordering layer.
-- **`--explain`** — a single deterministic line per node, for example
-  `(filter#4 (glob "*.pdf" nocase) (const#4 (size > 1000)))` or
-  `(scan#9 reason=short-needle (substring "re" nocase))`. `node#N` is the
-  estimated cardinality, `keys=` the number of intersected postings, and
-  `reason=` the degradation behind a scan leaf.
-- **Cross-check** — `exec/plan_test.mbt` asserts the compiled shape of every
-  field, compares optimized and unoptimized plans against `exec_scan` over the
-  full query corpus (including `--no-trigram` and an empty store), and pins the
-  explain goldens.
-
-`@index.Index` bundles the store and the three candidate sources, so the
-compiler, the CLI, and the persistence layer pass one object instead of four.
-
-## Persistence (S12)
-
-`src/index/db*.mbt` writes and reads the MSDB v2 format. The file contains the
-header, a section table, roots, a deduplicated and front-coded name table,
-folder/file records, the canonical order, the dictionary (`DICT`), the
-materialized range arrays (`RANGES`), and the delta-varint trigram postings
-(`POSTINGS`). Loading restores those structures directly: no rescan, no
-dictionary rebuild, no posting rebuild.
-
-- **Integrity** — a metadata CRC covers the header and section table on every
-  load; `info --verify` (or `verify=true` in the library) checks the full-file
-  CRC. Every length, offset, id, parent link, and name reference is validated
-  before use, and parent cycles are rejected.
-- **Atomic replace** — the writer takes `<path>.lock` exclusively, writes
-  `<path>.tmp.<timestamp>`, syncs, then renames over the old database. Readers
-  never lock; a failed write leaves the previous database in place.
-- **`info`** — reads only the header and section table, so it reports counts,
-  format version, file size, trigram key count, and per-section sizes without
-  loading the store.
-- **Degradation** — a database written with `--no-trigram` loads with
-  `Index::trigram() = None`; the compiler falls back to full scans for name
-  terms. Lazy range fields that were not materialized stay lazy and build from
-  the restored store on first use.
-
-The field-level specification is [`docs/db-format.md`](docs/db-format.md).
-
-## Result ordering and output formats (S11)
-
-`src/exec/order.mbt` and `src/exec/format.mbt` turn a match set into the lines a
-user sees. Both engines feed the same two stages, so `--engine scan` and
-`--engine bitmap` produce byte-identical output for the same query.
-
-- **Sort keys** — `name` (the canonical `(name, path)` order, default), `path`,
-  `size`, `mtime`, `ext`, and `type`. Every comparator falls back to canonical
-  order, then the store-wide id, so the result never depends on scan order.
-  Folders report their subtree size for `size`; `ext` is ASCII-folded with
-  folders treated as having no extension; `type` orders folders first, then the
-  built-in categories, then files with unlisted extensions.
-- **`--reverse` / `--folders-first`** — `--reverse` reverses the whole order,
-  including tie-breaks. `--folders-first` groups folders ahead of files and
-  keeps the selected key and direction inside each group.
-- **`--limit`** — applied after ordering, so `--sort size -n 20` keeps the
-  twenty smallest matches. Plain `name` order streams in either direction and
-  early-stops at the limit (`--reverse` walks the canonical order backwards);
-  other orders collect the match set, then use a bounded top-K heap.
-- **Formats** — full paths by default; `--basename` for names; `--json` for one
-  JSON object per line (`path`, `name`, `size`, `mtime`, `ext`, `type`,
-  `kind`); `--format` for templates with `{path}`, `{name}`, `{dir}`, `{size}`,
-  `{mtime}`, `{ext}`, `{type}`, `{kind}` and `\n`, `\t`, `\0`, `\\` escapes.
-  Invalid templates are usage errors before any scan runs.
-- **`--null`** — terminates every record, including the last, with NUL. The
-  entry point detects the trailing NUL and writes the bytes directly instead of
-  appending a newline, so `--null | xargs -0` works.
-- **`--relative-to <DIR>`** — the base is resolved with `realpath`; a match equal
-  to the base prints `.`, matches below it lose the base and one separator, and
-  paths outside it stay absolute. It applies to `{path}` and the JSON `path`.
-- **Type names** — folders are `folder`; files are `app`, `archive`, `audio`,
-  `doc`, `pic`, or `video`; unlisted extensions are `other`. `{ext}` and JSON
-  `ext` are lowercase and empty for folders.
-- **Encoding** — paths are stored as raw bytes but formatted as lossy UTF-8, so
-  invalid UTF-8 names display with replacement characters.
-
-Tests: `exec/order_test.mbt` pins every key, tie-breaks, reversal, grouping,
-limit placement, top-K equivalence, and input-order independence;
-`exec/format_test.mbt` covers every format, escape, JSON escaping, relative
-paths, and template errors; `src/cli/cli_test.mbt` compares both engines across
-all orders and formats; `tests/cli.md` covers the executable end to end. The CLI
-wiring and option-conflict rules live in
-[`docs/modules/cli.md`](docs/modules/cli.md).
-
-## Cross-check, properties, and fuzzing (S13)
-
-The two engines share the lexer, parser, field rules, predicates, ordering, and
-formatting; they differ only in how they produce candidate ids. S13 turns that
-contract into a gate that runs on every change:
-
-- **Three-layer corpus** — `src/testkit/corpus.mbt` holds a handwritten
-  semantic corpus (every field, modifier, operator, and boundary), a
-  deterministic quickcheck-style generator (depth-limited boolean expressions
-  over a fixed leaf vocabulary), and an explain-coverage supplement (one query
-  per plan node and per degradation reason). `testkit.Rng` is an xorshift64
-  generator, so a failing seed reproduces the same inputs on every platform.
-- **Differential runner** — `exec/differential_test.mbt` evaluates each query
-  with `exec_scan_with` and with `exec_indexed` (both optimized and unoptimized
-  plan trees), then compares the sorted id sets, the canonical-order expansion,
-  and `exec_indexed_count`. Fixtures cover an empty store, a hand-written tree,
-  three deterministic random trees, unicode names, a store where every name
-  shares the same trigrams, and `--no-trigram` builds.
-- **Explain coverage gate** — the runner walks optimized and raw plan trees,
-  collects node kinds (`const`/`trigram`/`scan`/`filter`/`and`/`or`/`not`) and
-  degradation reasons, and fails unless every one is observed. A new operator
-  or fallback path must extend the corpus first.
-- **Properties** — trigram candidate sets never miss a linear-scan match (for
-  default, `case:`, `exact:`, and `case:exact:` queries); a database round trip
-  answers the corpus identically with and without postings; query output is
-  independent of repetition and shuffled input; `Ids` obeys the set-algebra
-  identities against a boolean-mask reference and survives serialization
-  mutation.
-- **Corruption fuzz** — `index/db_fuzz_test.mbt` applies deterministic
-  multi-operation mutations (flips, deletions, insertions, overwrites,
-  truncations) and random garbage. Full verification must reject every mutant;
-  an unverified load that slips through is probed through every store,
-  dictionary, range, and trigram accessor to prove it stays in bounds.
-- **End-to-end** — `cli/differential_test.mbt` compares stdout bytes and exit
-  codes for `search` and `count` between engines on a persisted database, a
-  `--no-trigram` database, a live scan, and the full sort/format option matrix.
-
-All seeds are constants in the test files; there is no clock or entropy input,
-so CI runs exactly the cases a local run does. Module-level notes are in
-[`docs/modules/testkit.md`](docs/modules/testkit.md),
-[`docs/modules/exec.md`](docs/modules/exec.md), and
-[`docs/modules/index.md`](docs/modules/index.md).
-
-## Exit codes
-
-| Code | Meaning |
+| 选项 | 说明 |
 | --- | --- |
-| `0` | Success, help, or version |
-| `1` | No match |
-| `2` | Argument, query, IO, or database error |
-| `130` | Interrupted by SIGINT |
+| `-c, --case-sensitive` | 大小写敏感 |
+| `-e, --exact` | 整名精确匹配 |
+| `-p, --search-path` | 按完整路径匹配 |
+| `-r, --regex` | 整条查询作为正则 |
+| `--type <any\|file\|folder>` | 限制结果类型，默认 `any` |
+| `--engine <scan\|bitmap>` | 执行引擎，默认 `scan` |
+| `--root <PATH>` | `--live` / `--auto-index` 使用的根目录，可重复 |
+| `--live` | 跳过数据库，直接扫描 `--root` |
+| `--auto-index` | 数据库缺失时先按 `--root` 建库 |
+| `--compat` | 兼容上游错误恢复：未知字段、非法值变成空集 |
 
-## Development
+### 布尔运算
+
+`AND` / `OR` / `NOT`（必须整词大写），也可写 `&&` / `||` / `!`。相邻词项隐式按
+`AND` 组合；优先级为 `NOT` > `AND` > `OR`，括号可改变顺序。
+
+```bash
+moonsearch 'report AND pdf'
+moonsearch '(report OR summary) NOT draft'
+moonsearch 'file:(pdf OR doc) dm:lastweek'
+```
+
+### 字段
+
+| 字段 | 含义 | 示例 |
+| --- | --- | --- |
+| `ext:` | 扩展名，`;` 分隔；空值表示无扩展名 | `ext:jpg;png`、`ext:` |
+| `size:` | 大小（文件与目录；目录为子树总量） | `size:>1mb`、`size:1kb..2mb` |
+| `dm:` | 修改时间（别名 `datemodified:`） | `dm:today`、`dm:2024-03` |
+| `depth:` | 深度，根目录为 0（别名 `parents:`） | `depth:<=2` |
+| `childcount:` | 直接子项数（目录） | `childcount:0` |
+| `childfilecount:` | 直接子文件数（目录） | `childfilecount:>10` |
+| `childfoldercount:` | 直接子目录数（目录） | `childfoldercount:1..3` |
+| `parent:` | 父目录完整路径（不展开 `~`） | `parent:/home/user/Documents` |
+| `empty:` | 空目录（不带值） | `empty:` |
+| `contenttype:` | MIME 类型；只写主类型或子类型均可 | `contenttype:pdf`、`contenttype:text` |
+
+`ext:` 与 `contenttype:` 仅匹配文件；子项计数与 `empty:` 仅匹配目录。
+
+### 修饰符
+
+修饰符是前缀写法，只作用于紧随其后的**一个词项或一个括号组**，不会泄漏到组外。
+
+| 修饰符 | 作用 |
+| --- | --- |
+| `case:` / `nocase:` | 大小写敏感 / 不敏感 |
+| `exact:` | 整名精确匹配 |
+| `path:` / `nopath:` | 匹配完整路径 / 仅匹配名称 |
+| `regex:` / `noregex:` | 正则 / 关闭正则 |
+| `file:` / `files:` | 仅文件 |
+| `folder:` / `folders:` | 仅目录 |
+| `hidden:` | 仅隐藏条目 |
+| `nohidden:` / `visible:` | 仅非隐藏条目 |
+
+可以链式组合，例如 `file:hidden:doc:report`；`file:(a OR b)` 对两侧都生效，而
+`file:a OR b` 只约束 `a`。单独使用 `file:`、`folder:`、`hidden:`、`nohidden:` 也是
+有效的过滤器，等价于 `--type` / 可见性筛选。
+
+### 取值
+
+- 大小使用十进制单位：`k`/`kb` = 1000，`m`/`mb` = 10⁶，`g`/`gb` = 10⁹，
+  `t`/`tb` = 10¹²；不带单位表示字节。
+- 比较符：`>`、`>=`、`<`、`<=`、`=`；不写比较符表示精确值。
+- 区间为半开 `lo..hi`，两端可省略：`1kb..2mb` = `[1000, 2000000)`；
+  `..1mb` 只给上界，`1mb..` 只给下界。
+- 计数字段（`depth:`、`childcount:` 等）接受非负整数，同样支持比较符与区间。
+- `dm:` 的区间同样是半开的：`dm:2020..2021` 覆盖 2020 但不覆盖 2021。
+
+### 日期
+
+`dm:` 按本地时区解析，支持：
+
+- `today`、`yesterday`；星期名（`mon` / `monday`，最近一次出现）；月份名
+  （`jan` / `january`，最近一次出现）；
+- `last` / `inthelast` / `prev` / `previous` + 单位，可带计数：`lastweek`、
+  `last3days`、`lastfiveweeks`；单位为 `year(s)`、`month(s)`、`week(s)`、`day(s)`、
+  `hour(s)`、`min(s)`、`sec(s)`；
+- `this` + 单位，表示当前日历单位（周从周一开始）；
+- 显式日期 `YYYY[-MM[-DD[THH[:MM[:SS]]]]]`，支持两位年份。
+
+裸日期表示整个单位，`dm:2024-03` 是整月；比较符作用于该单位的半开区间。
+
+### 内置分类
+
+`app:`、`archive:`、`audio:`、`doc:`、`pic:`、`video:` 直接匹配一组扩展名：
+
+| 分类 | 扩展名 |
+| --- | --- |
+| `app:` | app, appimage, deb, desktop, dmg, exe, flatpak, msi, pkg, rpm, snap |
+| `archive:` | 7z, bz2, cab, gz, gzip, iso, jar, lz4, lzma, rar, tar, tbz2, tgz, txz, xz, zip, zst |
+| `audio:` | aac, ac3, aiff, alac, ape, au, flac, m4a, mka, mp3, oga, ogg, opus, wav, wma, wv |
+| `doc:` | c, cc, chm, cpp, csv, cxx, doc, docx, epub, go, h, hpp, htm, html, ini, java, js, json, log, lua, md, mobi, mbt, odt, pdf, ppt, pptx, py, rb, rs, rtf, sh, tex, toml, ts, tsv, txt, xls, xlsx, xml, yaml, yml |
+| `pic:` | avif, bmp, gif, heic, ico, jpeg, jpg, png, psd, svg, tif, tiff, webp, xcf |
+| `video:` | 3gp, avi, flv, m4v, mkv, mov, mp4, mpeg, mpg, ogv, rmvb, vob, webm, wmv |
+
+### 示例
+
+```bash
+# 大于 1 MB 的 PDF
+moonsearch 'ext:pdf size:>1mb'
+
+# 最近一周修改过的图片和视频
+moonsearch 'pic: OR video: dm:lastweek'
+
+# 两层以内的目录
+moonsearch 'folder: depth:<=2' --sort path
+
+# docs 目录下的非隐藏文件，按大小排序
+moonsearch 'parent:/home/user/Documents/docs nohidden:file:' --sort size --reverse
+
+# 空目录
+moonsearch 'folder: empty:'
+
+# 整个索引按名称列出前 20 条（空查询）
+moonsearch '' -n 20
+
+# 只统计数量
+moonsearch count 'ext:mp4 dm:last30days'
+```
+
+### 什么时候查询会变慢
+
+- 子串短于 3 字节（如 `re`）无法使用 trigram，退化为全扫描；
+- glob、正则与 `path:` 没有索引支持，会在候选集上逐条验证；只有它们时就是全扫描；
+- 高频 trigram（超过索引 20%）被当作停用词跳过；
+- `childfilecount:`、`childfoldercount:`、`contenttype:` 尚无区间索引；
+- 稠密区间（如 `size:>1kb`）需要把大切片排序并转成位图。
+
+用 `--explain` 可以看到每个词项选了哪种来源、为什么退化。
+
+## 排序与输出
+
+`search` 的输出选项：
+
+| 选项 | 说明 |
+| --- | --- |
+| `--sort <name\|path\|size\|mtime\|ext\|type>` | 排序键，默认 `name` |
+| `--reverse` | 反转整个顺序（含平局判定） |
+| `--folders-first` | 目录排在文件之前，组内保持所选键与方向 |
+| `-n, --limit <N>` | 最多输出 N 条；`0` 表示不限，默认 `0` |
+| `--basename` | 只输出名称 |
+| `--json` | 每行一个 JSON 对象 |
+| `--format <TEMPLATE>` | 自定义每条结果的格式 |
+| `-0, --null` | 每条记录以 NUL 结尾（含最后一条），便于 `xargs -0` |
+| `--relative-to <DIR>` | 输出相对该目录的路径 |
+
+- `--limit` 在排序之后应用，因此 `--sort size -n 20` 得到最小的二十条；默认 `name`
+  顺序会流式输出并在达到限制时提前停止。
+- `--json` 字段：`path`、`name`、`size`、`mtime`、`ext`、`type`、`kind`。
+- `--format` 占位符：`{path}`、`{name}`、`{dir}`、`{size}`、`{mtime}`、`{ext}`、
+  `{type}`、`{kind}`；转义：`\n`、`\t`、`\0`、`\\`。非法模板在扫描前即以退出码 2
+  失败。
+- `--basename`、`--json`、`--format` 两两互斥；`--null` 可与任意格式组合。
+- `--relative-to` 先解析 `realpath`：等于基准输出 `.`，其下路径去掉基准与一个分隔符，
+  基准之外的路径保持绝对。
+- 类型名：目录为 `folder`，文件为 `app`/`archive`/`audio`/`doc`/`pic`/`video`，
+  未列出的扩展名为 `other`；目录的 `ext` 为空。
+- `count` 只接受过滤选项，拒绝所有输出选项。
+
+## 诊断
+
+```bash
+moonsearch --stats 'ext:pdf'          # 条目数、命中数、耗时；读库时还有 load，实时扫描为 scan
+moonsearch --explain 'report pdf'     # 解析后的查询 + 执行计划
+moonsearch info --verify              # 数据库各段校验
+```
+
+`--engine bitmap` 使用持久化索引执行，`--engine scan`（默认）线性扫描；两者结果一致，
+后者是前者的语义基准。`--live` 下也可以指定 `--engine bitmap`，此时在内存中建索引。
+
+## 退出码
+
+| 码 | 含义 |
+| --- | --- |
+| `0` | 成功、帮助或版本 |
+| `1` | 无命中 |
+| `2` | 参数、查询、IO 或数据库错误 |
+| `130` | 被 SIGINT 中断 |
+
+## 文档
+
+本文件是使用说明；实现与设计细节在 `docs/`：
+
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/modules/cli.md`](docs/modules/cli.md) | 命令解析、执行编排、输出规则 |
+| [`docs/modules/query.md`](docs/modules/query.md) | 词法、语法与查询 AST |
+| [`docs/modules/exec.md`](docs/modules/exec.md) | 扫描引擎、查询编译与位图执行 |
+| [`docs/modules/index.md`](docs/modules/index.md) | 扫描器、字典、区间索引、trigram 倒排、持久化 |
+| [`docs/db-format.md`](docs/db-format.md) | MSDB v2 数据库格式 |
+| [`docs/benchmarks.md`](docs/benchmarks.md) | 基准口径、实测结果与调优待办 |
+| [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) | 迁移计划与设计取舍 |
+
+迁移计划的 S01–S14 已完成；剩余计划项为 P1/P2 扩展（Unicode casefold、libmagic
+内容类型、PCRE2 正则、路径 trigram、增量监控、POSIX FFI 扫描后端）。
+
+## 开发
 
 ```bash
 moon check --target native --deny-warn
@@ -671,49 +380,10 @@ moon info
 moon testcli test tests/cli.md --target native
 ```
 
-Benchmarks and demo:
+基准与演示脚本位于 `bench/`，用法见 [`docs/benchmarks.md`](docs/benchmarks.md)。
 
-```bash
-moon build --target native --release
-python3 bench/run_bench.py --label my-tree --root /path/to/tree --rebuild-index
-bash bench/demo.sh
-```
+## 许可证
 
-`bench/run_bench.py` builds the database when it is missing (or when
-`--rebuild-index` is passed), records build time and peak RSS, runs
-`moonsearch-bench` for in-process engine latency, and measures CLI wall time.
-It writes `bench/results.md` and `bench/results.json`; `--output` and
-`--json-output` redirect them.
-
-Layout:
-
-```text
-src/util/          byte helpers, extension/category rules, path/glob/date parsing
-src/core/          version, exit codes, name pool, entry/store model, global ids
-src/platform/      ScanSource trait and the async/fs backend
-src/index/         excludes, builder, scanner, dictionary, ranges, trigram postings
-src/query/         lexer, parser, query AST, flags, values, macros, categories
-src/exec/          scan engine, query compiler, optimizer, result order/formatting
-src/ids/           Ids set algebra, compressed bitmap containers, serialization
-src/cli/           command specification, invocation, index/search commands
-src/testkit/       deterministic RNG and the three-layer query corpus (tests only)
-src/               public facade
-cmd/moonsearch/    executable entry point
-cmd/moonsearch-bench/  in-process benchmark driver (load once, sample queries)
-bench/             benchmark harness, demo script, measured results
-tests/cli.md       end-to-end CLI golden tests
-```
-
-The migration plan's S01–S14 are complete. Module notes live in `docs/modules/`;
-the database format is specified in [`docs/db-format.md`](docs/db-format.md);
-benchmark methodology and the tuning backlog are in
-[`docs/benchmarks.md`](docs/benchmarks.md). The remaining plan items are the P1
-and P2 extensions (Unicode casefold, `libmagic` content types, PCRE2 regex,
-path trigrams, incremental monitoring, and a POSIX FFI scanner backend).
-
-## License
-
-Apache-2.0. This is an independent implementation: no FSearch code, comments,
-constant tables, or test text are copied. FSearch and Everything are credited as
-behavioral references only. The pinned runtime dependencies are
-`moonbitlang/core` and `moonbitlang/x` (Apache-2.0).
+Apache-2.0。本项目为独立实现：未复制任何 FSearch 代码、注释、常量表或测试文本。
+FSearch 与 Everything 仅作为行为参考致谢。固定运行时依赖为 `moonbitlang/core` 与
+`moonbitlang/x`（Apache-2.0）。

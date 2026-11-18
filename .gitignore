@@ -4,4 +4,4 @@ target/
 target
 .mooncakes/
 .moonagent/
-bench/.work/
+bench

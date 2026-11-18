@@ -6,6 +6,8 @@
 - `bench/results.md` / `bench/results.json`：主数据集，1,219,537 条目。
 - `bench/results-full-tree.md` / `bench/results-full-tree.json`：全量压力数据集，
   2,362,503 条目。
+- `bench/fsearch-compare/results-plugin.md`：与 FSearch core library 的同条件
+  对照，297,595 条目（见 §6）。
 
 ## 1. 测量口径
 
@@ -171,7 +173,132 @@ moon run cmd/moonsearch-bench -- --database DB --engine bitmap --first 20 ''
    362 MiB / 679 MiB。可把 trigram 构建拆成分片、尽早释放哈希表，或改成两遍扫描
    （先计数再写 posting）。
 
-## 6. 演示与录屏
+## 6. 与 FSearch 的同条件对照（S14 补充）
+
+评审反馈要求补足上游依据和同条件对照。本节使用 FSearch 自身的 core library
+（无 GUI）在同一棵树上测查询，回答“单遍逐条目求值”与“索引候选生成 + 集合代数”
+在同数据、同查询下的实际差异。完整表格、原始 TSV 和复现脚本在
+`bench/fsearch-compare/`；汇总报告是 `bench/fsearch-compare/results-plugin.md`。
+
+### 6.1 方法
+
+- 上游：FSearch 0.3-dev，commit `1208a34`。查询路径是单遍、逐条目求值：
+  `src/fsearch_database_index_store.c:227` 的 worker 对每个 entry 调用
+  `fsearch_query_match()`；`:1401` 的 `index_store_search()` 按线程切分；
+  `src/fsearch_query.c:138` 的 `matches()` 对查询树做 AND/OR 短路。因此不存在
+  “每个条件遍历一遍”。
+- 数据：`~/Documents/workspace/plugin`，25,424 个文件夹 + 272,171 个文件 =
+  297,595 个条目，2026-11-18 快照。
+- 口径：FSearch worker pool 固定 1 线程，与单线程 moonsearch 对齐；取多次运行的
+  中位数。另测 FSearch 默认多线程作为产品参考。
+- 缓存：查询都在索引驻留后测量（FSearch 先建内存索引并热身，moonsearch 先加载
+  数据库）；构建与加载是单独的冷路径，不计入查询延迟。
+- 结果模式：`count` 只取集合基数；`full` 额外按规范顺序遍历并物化命中。两者分开，
+  避免把“集合大小”当成“完整搜索结果”。
+- moonsearch 的扫描引擎与位图引擎共用词法/语法/谓词，FSearch 与扫描引擎在语义上
+  同构，因此“扫描 → 位图”的差异可以归因于候选源替换。
+- Everything 闭源，只作语义参考，不作为性能基线。
+
+### 6.2 代表性与退化结果（毫秒）
+
+| 查询 | 命中 | FSearch 1T | moonsearch scan | bitmap count | bitmap full | FSearch/full |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ext:jpg` | 9 | 8.581 | 7.060 | 0.037 | 1.030 | 8.3× |
+| `ext:jpg size:>1mb` | 2 | 8.085 | 7.488 | 0.058 | 0.627 | 12.9× |
+| `report` | 192 | 14.403 | 10.343 | 0.049 | 2.730 | 5.3× |
+| `report pdf` | 0 | 16.327 | 11.433 | 0.054 | 0.371 | 44.0× |
+| `index` | 18,139 | 13.904 | 11.829 | 1.071 | 5.062 | 2.7× |
+| `size:>1mb` | 1,552 | 6.875 | 4.516 | 0.056 | 4.480 | 1.5× |
+| `source map` | 450 | 15.995 | 11.051 | 3.741 | 6.874 | 2.3× |
+| `a` (1 字节) | 172,894 | 10.110 | 9.709 | 10.942 | 11.841 | 0.85× |
+| `ab` (2 字节) | 6,088 | 13.090 | 12.112 | 14.883 | 20.245 | 0.65× |
+| `.js` (stop-gram) | 142,693 | 13.361 | 11.812 | 12.379 | — | — |
+| `size:>1kb` (稠密) | 201,582 | 6.729 | 5.699 | 10.454 | 11.470 | 0.59× |
+| `dm:thisyear` (99.98%) | 297,536 | 7.334 | 5.692 | 7.760 | 8.497 | 0.86× |
+| `*.pdf` (glob) | 0 | 13.866 | 17.558 | 14.415 | 14.757 | 0.94× |
+| `regex:^report.*\.pdf$` | 0 | 9.934 | 19.496 | 18.547 | 18.900 | 0.53× |
+| `path:src` | 14,367 | 80.982 | 140.808 | 123.016 | 127.574 | 0.63× |
+| 空查询 | 297,595 | 0.136 | 1.011 | 0.036 | 0.726 | 0.19× |
+
+关键读数：
+
+- 选择性高的可索引查询，完整搜索相对 FSearch 单线程快 1.5–44×；退化查询
+  （短 needle、stop-gram、glob/regex/`path:`、稠密范围、空查询）反而更慢，
+  `FSearch/完整` 为 0.19–0.94（即 moonsearch 慢 1.1–5.3×）。
+- `source map` 只有 450 个命中却要 3.741 ms；`ing` 有 8,151 个命中只要 0.603 ms。
+  成本由 posting 长度/交集决定，不由命中数决定。
+- 结果物化不可忽略：`ext:jpg` 的集合是 0.037 ms，完整搜索是 1.030 ms；空查询是
+  0.036 ms → 0.726 ms。
+- 与 FSearch 默认多线程相比，完整搜索在 `report`（2.730 vs 2.075 ms）、
+  `source map`（6.874 vs 2.301 ms）等场景已经落后；`count` 仍有优势（`report`
+  0.049 vs 2.075 ms）。当前实现是单线程的，不能把这些场景说成“更快”。
+- `size:>1kb` 的命中数 FSearch 为 201,582、moonsearch 为 201,557；差异来自
+  符号链接尺寸（FSearch 计入文件夹子树的 `st_size`，moonsearch 按 0 字节索引）。
+  `file:size:>1000` 两边一致（179,570）。
+
+### 6.3 构建、更新与内存
+
+| 指标 | moonsearch + trigram | moonsearch `--no-trigram` | FSearch 1T |
+| --- | ---: | ---: | ---: |
+| 构建 | 20.9 s | 18.0 s | 4.8–7.6 s |
+| 构建峰值 RSS | 172 MiB | 160 MiB | 49 MiB |
+| 数据库 | 22.5 MB | 17.5 MB | 未测 |
+| 加载 | ~0.26 s | ~0.24 s | 未测 |
+| 查询态 RSS | 96 MiB | — | 49 MiB（构建 + 查询） |
+| `update` | 21.2 s，全量重建 | — | — |
+
+FSearch 的数字是内存索引构建，不建 trigram、不写数据库；这不是同工作量的对比。
+moonsearch 的构建成本不占优，用构建/更新/内存换查询。Trigram 的代价约为
++2.9 s（+16%）、+5.0 MB 数据库（+29%）、+11 MiB 峰值 RSS；收益集中在名字子串
+（`report` 263×、`the` 228×、`node_modules` 99×、`index` 12.6×、`source map`
+4.2×），对 glob/regex/`path:`/短 needle 没有帮助。
+
+### 6.4 小树交叉点
+
+同一套代码在 2,272 条目的 moonsearch 仓库上：moonsearch 构建 0.17 s、数据库
+271 KB、加载 1.5–1.9 ms；FSearch 构建 0.024 s。查询上 FSearch 为 0.002–0.088 ms，
+moonsearch 为 0.034–0.128 ms。小树上索引没有稳定优势，加载时间比多数查询还大。
+
+### 6.5 结论
+
+优势应表述为条件化的：大索引 + 选择性高且可索引的谓词，完整搜索相对 FSearch
+单线程快 1.5–44×、count 快 4–300×；短 needle、stop-gram、glob/regex/`path:`、
+稠密范围、小树和一次性搜索不占优，完整结果物化与 FSearch 多线程相比也可能落后。
+代价是 20.9 s 构建、21.2 s 全量更新、96 MiB 查询态内存和每进程约 0.26 s 的加载。
+这比“多条件必然多次全表遍历”“成本只由命中集决定”更准确，也更可检验。
+
+复现：
+
+```bash
+# 示例查询；完整查询集合见 bench/fsearch-compare/results/*.tsv 的 QUERY/BENCH 名称
+# 同一棵树上的 FSearch core harness（1 线程）
+TZ=Asia/Shanghai /tmp/bench_fsearch --threads 1 --root ~/Documents/workspace/plugin \
+  --runs 5 'ext:jpg' 'report' 'a' 'size:>1kb'
+
+# moonsearch 两引擎
+_build/native/release/build/cmd/moonsearch-bench/moonsearch-bench.exe \
+  --database /tmp/plugin.msdb --engine bitmap --runs 5 'report'
+
+# 合并报告（base + extra + common + stopgram 全量输入）
+python3 bench/fsearch-compare/compare.py \
+  --fsearch bench/fsearch-compare/results/fsearch-plugin-st.tsv \
+  --fsearch bench/fsearch-compare/results/fsearch-plugin-extra.tsv \
+  --fsearch bench/fsearch-compare/results/fsearch-common.tsv \
+  --fsearch bench/fsearch-compare/results/fsearch-stopgram.tsv \
+  --scan bench/fsearch-compare/results/scan.tsv \
+  --scan bench/fsearch-compare/results/scan-extra.tsv \
+  --scan bench/fsearch-compare/results/scan-common.tsv \
+  --scan bench/fsearch-compare/results/scan-stopgram.tsv \
+  --bitmap bench/fsearch-compare/results/bitmap.tsv \
+  --bitmap bench/fsearch-compare/results/bitmap-extra.tsv \
+  --bitmap bench/fsearch-compare/results/bitmap-common.tsv \
+  --bitmap bench/fsearch-compare/results/bitmap-stopgram.tsv \
+  --bitmap-full bench/fsearch-compare/results/bitmap-fullwalk-all.tsv \
+  --no-trigram bench/fsearch-compare/results/bitmap-notrigram.tsv \
+  --label plugin-297k --markdown /tmp/results.md
+```
+
+## 7. 演示与录屏
 
 `bench/demo.sh` 在临时目录生成一棵小树，依次演示建索引、trigram 查询、位图 ×
 范围、`--explain`、`count`、排序/JSON、扫描引擎对照和 `info --verify`。脚本只依

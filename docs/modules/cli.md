@@ -11,11 +11,12 @@
 | `spec.mbt` | argparse 规格：全局选项、`index/update/search/count/info` 子命令、help 文本 |
 | `invocation.mbt` | `Command`、`Invocation`、`parse` 与默认子命令 `search` |
 | `run.mbt` | `CliResult`、退出码映射、子命令分发 |
-| `database.mbt` | 数据库路径解析：`-D`、`MOONSEARCH_DATABASE`、XDG/HOME 默认值 |
+| `database.mbt` | 数据库路径解析：`-D`、`MOONSEARCH_DATABASE`、XDG/HOME/LOCALAPPDATA 默认值 |
 | `index_command.mbt` | `index` / `update`：扫描、构建 `@index.Index`、原子写库、汇总与 `--stats` |
 | `search_command.mbt` | `search` / `count`：查询构建、索引来源、引擎选择、排序、格式化、诊断 |
 | `info_command.mbt` | `info`：只读 header/section table，报告版本、条目数、大小与校验状态 |
 | `cli_test.mbt` | 进程内 CLI 测试：help golden、参数错误、真实目录端到端、两引擎对拍 |
+| `database_wbtest.mbt` | 白盒测试：`resolve_home` / `resolve_data_home` 的平台回退顺序 |
 | `differential_test.mbt` | S13：三层语料在持久化库、`--no-trigram` 库、`--live` 与全部输出选项上的端到端字节对拍 |
 
 ## 执行流程
@@ -42,8 +43,15 @@ argv
 `Index::write_database` 做原子替换：临时文件 + `sync` + `rename`。`info` 只读
 header 与 section table；`--verify` 额外校验全文件 CRC。默认数据库路径为
 `$XDG_DATA_HOME/moonsearch/index.msdb`，未设置时为
-`$HOME/.local/share/moonsearch/index.msdb`；`-D/--database` 与
-`MOONSEARCH_DATABASE` 覆盖默认值，路径开头的 `~/` 会按 `$HOME` 展开。
+`$HOME/.local/share/moonsearch/index.msdb`；Windows 上 `HOME` 未设置时回退到
+`%LOCALAPPDATA%\moonsearch\index.msdb`，再回退到
+`%USERPROFILE%\.local\share\moonsearch\index.msdb`。`-D/--database` 与
+`MOONSEARCH_DATABASE` 覆盖默认值，路径开头的 `~/` 会按 `$HOME`
+（Windows 上为 `%USERPROFILE%`）展开。
+
+路径解析拆成两个纯函数：`resolve_home` 与 `resolve_data_home` 接受
+`(String) -> String?` 查找器，因此 `database_wbtest.mbt` 可以在不触碰进程环境的
+前提下覆盖各平台的回退顺序；`environment_value` 仍按“调用方 map → 进程环境”取值。
 
 两个引擎产生同一命中集合；排序与格式化完全在 `@exec` 中共享，因此相同查询的输出
 逐字节一致。`name` 顺序（正序或 `--reverse`，且无 `--folders-first`）把 `--limit`

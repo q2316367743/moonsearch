@@ -44,3 +44,52 @@ jobs:
           moon info
           git diff --exit-code
           test -z "$(git status --porcelain)"
+
+  # The release ships macOS and Windows binaries; compile them on every push so
+  # a platform break surfaces here instead of during a release. The test suite
+  # still assumes Unix paths, so only the Linux job runs it.
+  cross-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up MoonBit (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Set up MoonBit (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Show toolchain versions
+        run: moon version --all
+
+      - name: Update MoonBit dependencies
+        run: moon update
+
+      - name: Check
+        run: moon check --target native --deny-warn
+
+      - name: Build native
+        run: moon build --target native --release
+
+      - name: Smoke test the binary
+        run: _build/native/release/build/cmd/moonsearch/moonsearch.exe --version
+

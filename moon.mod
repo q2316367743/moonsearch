@@ -12,6 +12,8 @@ keywords = [ "search", "index", "cli", "filesystem" ]
 
 preferred_target = "native"
 
+supported_targets = "native"
+
 description = "Fast file search over a persistent inverted index"
 
 import {
