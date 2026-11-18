@@ -239,7 +239,7 @@ async test "info help is stable" {
 
 ///|
 async test "version" {
-  inspect(stdout_of(@cli.run(["--version"])), content="moonsearch 1.0.0")
+  inspect(stdout_of(@cli.run(["--version"])), content="moonsearch 0.1.0")
 }
 
 ///|

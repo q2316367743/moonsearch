@@ -20,9 +20,9 @@ pub const MAX_NAME_LEN : Int32 = 65535
 
 pub const NO_PARENT : Int32 = -1
 
-pub const VERSION : String = "1.0.0"
+pub const VERSION : String = "0.1.0"
 
-pub const VERSION_TEXT : String = "moonsearch 1.0.0"
+pub const VERSION_TEXT : String = "moonsearch 0.1.0"
 
 // Errors
 pub suberror NamePoolError {
