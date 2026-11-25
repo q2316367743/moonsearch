@@ -30,7 +30,7 @@ pub fn explain_indexed(@index.Index, @query.Query, options? : PlanOptions, compa
 
 pub fn explain_query(@query.Query, options? : ScanOptions, compat? : Bool) -> String raise @query.QueryError
 
-pub fn format_hits(@core.Store, Array[@core.EntryRef], FormatOptions) -> String
+pub fn format_hits(@core.Store, Array[@core.EntryRef], FormatOptions) -> FormatOutput
 
 pub fn order_hits(@core.Store, Array[@core.EntryRef], OrderOptions) -> Array[@core.EntryRef]
 
@@ -58,9 +58,17 @@ pub fn Expr::estimate(Self, Int32) -> Int32
 pub(all) struct FormatOptions {
   format : OutputFormat
   null_terminated : Bool
-  relative_to : String?
+  relative_to : Bytes?
 }
-pub fn FormatOptions::new(format? : OutputFormat, null_terminated? : Bool, relative_to? : String?) -> Self
+pub fn FormatOptions::new(format? : OutputFormat, null_terminated? : Bool, relative_to? : Bytes?) -> Self
+
+pub struct FormatOutput {
+  bytes : Bytes
+  invalid_utf8_records : Int32
+  null_terminated : Bool
+}
+pub fn FormatOutput::stdout_bytes(Self) -> Bytes
+pub fn FormatOutput::warning(Self) -> String?
 
 pub struct FormatTemplate {
   // private fields

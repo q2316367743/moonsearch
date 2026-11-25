@@ -103,7 +103,7 @@ pub fn find_bytes(BytesView, BytesView, from? : Int32) -> Int32?
 
 pub fn find_bytes_with(BytesView, BytesView, Bool, from? : Int32) -> Int32?
 
-pub fn format_hits(@core.Store, Array[@core.EntryRef], @exec.FormatOptions) -> String
+pub fn format_hits(@core.Store, Array[@core.EntryRef], @exec.FormatOptions) -> @exec.FormatOutput
 
 pub fn glob_match(BytesView, BytesView) -> Bool
 
@@ -119,9 +119,9 @@ pub fn is_ascii_lower(Byte) -> Bool
 
 pub fn is_ascii_upper(Byte) -> Bool
 
-pub fn is_within(StringView, StringView) -> Bool
+pub fn is_within(BytesView, BytesView) -> Bool
 
-pub fn join_path(StringView, StringView) -> String
+pub fn join_path(BytesView, BytesView) -> Bytes
 
 pub fn kind_query(@query.KindFilter) -> @query.Query
 
@@ -205,6 +205,8 @@ pub using @query {type Flags}
 pub type FolderId = Int32
 
 pub using @exec {type FormatOptions}
+
+pub using @exec {type FormatOutput}
 
 pub using @exec {type FormatTemplate}
 

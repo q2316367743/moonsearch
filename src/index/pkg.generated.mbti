@@ -30,9 +30,9 @@ pub suberror DbError {
 pub fn DbError::message(Self) -> String
 
 pub suberror IndexError {
-  RootMissing(String)
-  RootNotDirectory(String)
-  NestedRoots(outer~ : String, nested~ : String)
+  RootMissing(Bytes)
+  RootNotDirectory(Bytes)
+  NestedRoots(outer~ : Bytes, nested~ : Bytes)
   UnsupportedExclude(String)
   NameTooLong(Int32)
   NamePoolFull
@@ -44,10 +44,10 @@ pub fn IndexError::message(Self) -> String
 pub struct Builder {
   // private fields
 }
-pub fn Builder::add_file(Self, Int32, StringView, Int64, Int64, flags? : UInt16) -> Int32 raise IndexError
-pub fn Builder::add_folder(Self, Int32, StringView, Int64, flags? : UInt16) -> Int32 raise IndexError
+pub fn Builder::add_file(Self, Int32, BytesView, Int64, Int64, flags? : UInt16) -> Int32 raise IndexError
+pub fn Builder::add_folder(Self, Int32, BytesView, Int64, flags? : UInt16) -> Int32 raise IndexError
 pub fn Builder::add_folder_size(Self, Int32, Int64) -> Unit
-pub fn Builder::add_root(Self, StringView, Bool, Int64) -> Int32 raise IndexError
+pub fn Builder::add_root(Self, BytesView, Bool, Int64) -> Int32 raise IndexError
 pub fn Builder::file_count(Self) -> Int32
 pub fn Builder::finish(Self, built_at? : Int64) -> @core.Store
 pub fn Builder::folder_count(Self) -> Int32
@@ -109,7 +109,7 @@ pub struct ExcludeRule {
 }
 pub fn ExcludeRule::is_active(Self) -> Bool
 pub fn ExcludeRule::kind(Self) -> ExcludeKind
-pub fn ExcludeRule::matches(Self, StringView, StringView, Bool) -> Bool
+pub fn ExcludeRule::matches(Self, BytesView, BytesView, Bool) -> Bool
 pub fn ExcludeRule::new(kind~ : ExcludeKind, pattern~ : StringView, scope? : ExcludeScope, target? : ExcludeTarget, active? : Bool) -> Self
 pub fn ExcludeRule::parse(StringView, scope? : ExcludeScope, target? : ExcludeTarget) -> Self raise IndexError
 pub fn ExcludeRule::pattern(Self) -> String
@@ -214,10 +214,10 @@ pub fn Ranges::restore(@core.Store, size_index? : RangeIndex?, mtime_index? : Ra
 pub fn Ranges::size(Self) -> RangeIndex
 
 pub(all) struct RootSpec {
-  path : String
+  path : Bytes
   one_file_system : Bool
 }
-pub fn RootSpec::new(path~ : String, one_file_system? : Bool) -> Self
+pub fn RootSpec::new(path~ : BytesView, one_file_system? : Bool) -> Self
 
 pub(all) struct ScanConfig {
   roots : Array[RootSpec]
@@ -229,7 +229,7 @@ pub(all) struct ScanConfig {
 pub fn ScanConfig::new(roots~ : Array[RootSpec], excludes? : Array[ExcludeRule], exclude_hidden? : Bool, allow_nested_roots? : Bool, default_excludes? : Bool) -> Self
 
 pub(all) struct ScanIssue {
-  path : String
+  path : Bytes
   message : String
 }
 

@@ -48,9 +48,9 @@ pub fn is_ascii_lower(Byte) -> Bool
 
 pub fn is_ascii_upper(Byte) -> Bool
 
-pub fn is_within(StringView, StringView) -> Bool
+pub fn is_within(BytesView, BytesView) -> Bool
 
-pub fn join_path(StringView, StringView) -> String
+pub fn join_path(BytesView, BytesView) -> Bytes
 
 pub fn local_zone() -> @time.Zone
 

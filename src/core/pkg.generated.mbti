@@ -88,14 +88,14 @@ pub fn NameRef::end_offset(Self) -> UInt32
 pub fn NameRef::new(UInt32, UInt16) -> Self
 
 pub(all) struct RootInfo {
-  path : String
+  path : Bytes
   one_file_system : Bool
   folder : Int32
   files : UInt32
   folders : UInt32
   size : Int64
 }
-pub fn RootInfo::new(path~ : String, one_file_system~ : Bool, folder~ : Int32, files? : UInt32, folders? : UInt32, size? : Int64) -> Self
+pub fn RootInfo::new(path~ : BytesView, one_file_system~ : Bool, folder~ : Int32, files? : UInt32, folders? : UInt32, size? : Int64) -> Self
 
 pub struct Store {
   // private fields
