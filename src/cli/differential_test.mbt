@@ -11,7 +11,7 @@
 /// Exit code plus stdout and, for failures, the error text.
 struct CliDiffOutcome {
   code : Int32
-  out : String
+  out : Bytes
   detail : String
 }
 
@@ -22,7 +22,7 @@ fn cli_diff_outcome(result : @cli.CliResult) -> CliDiffOutcome {
     @cli.Success(text) => { code: 0, out: text, detail: "", }
     @cli.SuccessWith(out, _) => { code: 0, out, detail: "", }
     @cli.NoMatch(out, _) => { code: 1, out, detail: "", }
-    @cli.Failure(text) => { code: 2, out: "", detail: text, }
+    @cli.Failure(text) => { code: 2, out: b"", detail: text, }
   }
 }
 
@@ -229,7 +229,7 @@ async test "invalid queries and compat agree across engines" {
           "search", "-D", database, "--engine", engine, "--compat", query,
         ]),
       )
-      if tolerated.code != 1 || tolerated.out != "" {
+      if tolerated.code != 1 || tolerated.out != b"" {
         abort(
           "compat '\{query}' on \{engine}: expected empty output and exit 1, got code=\{tolerated.code} out='\{tolerated.out}'",
         )
@@ -243,7 +243,7 @@ async test "invalid queries and compat agree across engines" {
         "search", "-D", database, "--engine", engine, "--type", "file", "folder:",
       ]),
     )
-    if result.code != 1 || result.out != "" {
+    if result.code != 1 || result.out != b"" {
       abort(
         "--type file folder: on \{engine}: expected empty output and exit 1",
       )

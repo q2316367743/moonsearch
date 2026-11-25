@@ -39,6 +39,9 @@ jobs:
       - name: Run CLI golden tests
         run: moon testcli test tests/cli.md --target native
 
+      - name: Run Linux raw-byte process tests
+        run: python3 tests/raw_bytes_linux.py
+
       - name: Check generated interfaces are committed
         run: |
           moon info

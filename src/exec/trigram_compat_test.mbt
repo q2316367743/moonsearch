@@ -4,7 +4,7 @@
 /// non-ASCII bytes.
 fn trigram_compat_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/t", false, 0L)
+  let root = builder.add_root(b"/t", false, 0L)
   let words = [
     "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
     "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
@@ -12,12 +12,12 @@ fn trigram_compat_store() -> @core.Store raise @index.IndexError {
     "xylophone",
   ]
   for word in words {
-    ignore(builder.add_file(root, "\{word}.txt", 1L, 0L))
+    ignore(builder.add_file(root, @utf8.encode("\{word}.txt"), 1L, 0L))
   }
-  ignore(builder.add_file(root, "Report-Final.md", 1L, 0L))
-  ignore(builder.add_file(root, "发票.txt", 1L, 0L))
-  ignore(builder.add_file(root, "a", 1L, 0L))
-  ignore(builder.add_file(root, "ab", 1L, 0L))
+  ignore(builder.add_file(root, b"Report-Final.md", 1L, 0L))
+  ignore(builder.add_file(root, b"发票.txt", 1L, 0L))
+  ignore(builder.add_file(root, b"a", 1L, 0L))
+  ignore(builder.add_file(root, b"ab", 1L, 0L))
   let files = words.length() + 4
   builder.set_child_counts(root, files.reinterpret_as_uint(), 0U)
   builder.set_root_stats(0, files.reinterpret_as_uint(), 0U, 0L)
@@ -160,12 +160,12 @@ test "a needle shorter than three bytes always scans" {
 /// `/p/docs/report.pdf`, where "docs" occurs only in the folder name.
 fn path_trigram_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/p", false, 0L)
-  let docs = builder.add_folder(root, "docs", 0L)
-  ignore(builder.add_file(docs, "report.pdf", 1L, 0L))
+  let root = builder.add_root(b"/p", false, 0L)
+  let docs = builder.add_folder(root, b"docs", 0L)
+  ignore(builder.add_file(docs, b"report.pdf", 1L, 0L))
   // Enough unrelated names to keep "docs" below the 20% stop-gram threshold.
   for index in 0..<20 {
-    ignore(builder.add_file(root, "filler\{index}", 1L, 0L))
+    ignore(builder.add_file(root, @utf8.encode("filler\{index}"), 1L, 0L))
   }
   builder.set_child_counts(docs, 1U, 0U)
   builder.set_child_counts(root, 20U, 1U)
@@ -201,11 +201,11 @@ test "name trigrams do not cover path terms" {
 /// One root folder and one three-byte folder below it.
 fn folder_trigram_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let parent = builder.add_root("/q", false, 0L)
-  ignore(builder.add_folder(parent, "doc", 0L))
+  let parent = builder.add_root(b"/q", false, 0L)
+  ignore(builder.add_folder(parent, b"doc", 0L))
   // Keep the "doc" posting below the 20% stop-gram threshold.
   for index in 0..<10 {
-    ignore(builder.add_file(parent, "n\{index}", 1L, 0L))
+    ignore(builder.add_file(parent, @utf8.encode("n\{index}"), 1L, 0L))
   }
   builder.set_child_counts(parent, 10U, 1U)
   builder.set_root_stats(0, 10U, 1U, 10L)

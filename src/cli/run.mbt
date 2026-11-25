@@ -1,19 +1,30 @@
 ///|
 /// Outcome of one CLI invocation.
 ///
-/// `Success` carries the text written to stdout, `Failure` the text written to
-/// stderr. `SuccessWith` is used when a command also has diagnostics for
-/// stderr (`--verbose`, `--stats`, warnings) while still succeeding. Keeping
-/// text as a value makes help and error output assertable in tests and leaves
-/// stream handling to `cmd/moonsearch`.
+/// `Success` carries the exact bytes written to stdout, `Failure` the text
+/// written to stderr. `SuccessWith` adds diagnostics (`--verbose`, `--stats`,
+/// warnings) while still succeeding. Byte payloads keep Unix names lossless and
+/// leave stream handling to `cmd/moonsearch`.
 pub(all) enum CliResult {
-  Success(String)
-  SuccessWith(String, String)
+  Success(Bytes)
+  SuccessWith(Bytes, String)
   /// The command matched nothing. The payloads are written to stdout (a count
   /// for `count`, empty for `search`) and stderr (diagnostics), and the exit
   /// code is 1.
-  NoMatch(String, String)
+  NoMatch(Bytes, String)
   Failure(String)
+}
+
+///|
+/// Encode one complete output line, matching the former `println` behavior.
+fn text_line(text : String) -> Bytes {
+  if text.is_empty() {
+    return b""
+  }
+  let out = @buffer.Buffer()
+  out.write_string_utf8(text)
+  out.write_byte(b'\n')
+  out.to_bytes()
 }
 
 ///|
@@ -50,8 +61,8 @@ pub async fn run(
 ) -> CliResult {
   match parse(argv, env~) {
     Ok(Run(invocation)) => execute(invocation)
-    Ok(ShowHelp(text)) => Success(text)
-    Ok(ShowVersion(text)) => Success(text)
+    Ok(ShowHelp(text)) => Success(text_line(text))
+    Ok(ShowVersion(text)) => Success(text_line(text))
     Err(text) => Failure(text)
   }
 }

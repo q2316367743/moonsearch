@@ -7,7 +7,7 @@ priv struct PendingSection {
 }
 
 ///|
-/// Serialize the whole index into the MSDB v2 byte layout.
+/// Serialize the whole index into the MSDB v3 byte layout.
 ///
 /// The writer is deterministic: names are sorted, dictionary keys follow the
 /// fixed basic-key order followed by extensions, categories, and roots, and
@@ -197,7 +197,7 @@ fn roots_section(store : @core.Store) -> Bytes {
   let roots = store.roots()
   buffer.write_uint_le(roots.length().reinterpret_as_uint())
   for root in roots {
-    let path = @utf8.encode(root.path)
+    let path = root.path
     buffer.write_uint_le(path.length().reinterpret_as_uint())
     buffer.write_bytes(path[:])
     let flags = if root.one_file_system { 1U } else { 0U }

@@ -1,23 +1,19 @@
 ///|
 /// Build an ASCII name of exactly `length` bytes.
-fn builder_long_name(length : Int32) -> String {
-  let chars : Array[Char] = []
-  for _ in 0..<length {
-    chars.push('b')
-  }
-  String::from_array(chars)
+fn builder_long_name(length : Int32) -> Bytes {
+  Bytes::make(length, b'b')
 }
 
 ///|
 test "the builder tracks entries and root statistics" {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/r", false, 10L)
+  let root = builder.add_root(b"/r", false, 10L)
   assert_eq(root, 0)
   assert_eq(builder.root_count(), 1)
   assert_eq(builder.folder_count(), 1)
-  let sub = builder.add_folder(root, "sub", 11L, flags=@core.ENTRY_FLAG_HIDDEN)
+  let sub = builder.add_folder(root, b"sub", 11L, flags=@core.ENTRY_FLAG_HIDDEN)
   assert_eq(sub, 1)
-  let file = builder.add_file(sub, "a.txt", 7L, 12L)
+  let file = builder.add_file(sub, b"a.txt", 7L, 12L)
   assert_eq(file, 0)
   assert_eq(builder.folder_count(), 2)
   assert_eq(builder.file_count(), 1)
@@ -40,7 +36,7 @@ test "the builder tracks entries and root statistics" {
 ///|
 test "finish without an explicit timestamp uses the current time" {
   let builder = @index.Builder::new()
-  ignore(builder.add_root("/r", false, 0L))
+  ignore(builder.add_root(b"/r", false, 0L))
   let store = builder.finish()
   assert_true(store.built_at() > 0L)
 }

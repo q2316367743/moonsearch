@@ -206,7 +206,7 @@ fn diff_random_store(
 ) -> @core.Store raise @index.IndexError {
   let rng = @testkit.Rng::new(seed)
   let builder = @index.Builder::new()
-  ignore(builder.add_root("/rand", false, 1700000000L))
+  ignore(builder.add_root(b"/rand", false, 1700000000L))
   let folder_sizes : Array[Int64] = [0L]
   let folder_parents : Array[Int32] = [@core.NO_PARENT]
   let direct_files : Array[Int32] = [0]
@@ -224,7 +224,7 @@ fn diff_random_store(
       } else {
         0
       }
-      ignore(builder.add_folder(parent, name, mtime, flags~))
+      ignore(builder.add_folder(parent, @utf8.encode(name), mtime, flags~))
       folder_sizes.push(0L)
       folder_parents.push(parent)
       direct_files.push(0)
@@ -237,7 +237,7 @@ fn diff_random_store(
       } else {
         0
       }
-      ignore(builder.add_file(parent, name, size, mtime, flags~))
+      ignore(builder.add_file(parent, @utf8.encode(name), size, mtime, flags~))
       file_total = file_total + 1
       direct_files[parent] = direct_files[parent] + 1
       // Folder size is the whole subtree, so add to every ancestor.
@@ -269,8 +269,8 @@ fn diff_random_store(
 /// A store whose names are mostly unicode, mixed case, and spaces.
 fn diff_unicode_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/uni", false, 1700000000L)
-  let docs = builder.add_folder(root, "文档", 1700000100L)
+  let root = builder.add_root(b"/uni", false, 1700000000L)
+  let docs = builder.add_folder(root, b"文档", 1700000100L)
   let names : Array[String] = [
     "发票.pdf", "报告 2024.txt", "résumé.md", "café.txt", "emoji-😀.txt",
     "ÜBER.TXT", "straße.txt", ".秘密", "naïve-file.rs",
@@ -284,14 +284,14 @@ fn diff_unicode_store() -> @core.Store raise @index.IndexError {
     ignore(
       builder.add_file(
         root,
-        names[index],
+        @utf8.encode(names[index]),
         10L + index.to_int64(),
         1700000200L,
         flags~,
       ),
     )
   }
-  ignore(builder.add_file(docs, "readme.txt", 7L, 1700000300L))
+  ignore(builder.add_file(docs, b"readme.txt", 7L, 1700000300L))
   builder.set_child_counts(docs, 1U, 0U)
   builder.set_child_counts(root, 9U, 1U)
   builder.add_folder_size(docs, 7L)
@@ -305,9 +305,16 @@ fn diff_unicode_store() -> @core.Store raise @index.IndexError {
 /// trigrams has no usable posting and must fall back to a scan.
 fn diff_stop_gram_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/sg", false, 1700000000L)
+  let root = builder.add_root(b"/sg", false, 1700000000L)
   for index in 0..<20 {
-    ignore(builder.add_file(root, "testcase-\{index}.txt", 1L, 1700000000L))
+    ignore(
+      builder.add_file(
+        root,
+        @utf8.encode("testcase-\{index}.txt"),
+        1L,
+        1700000000L,
+      ),
+    )
   }
   builder.set_child_counts(root, 20U, 0U)
   builder.add_folder_size(root, 20L)

@@ -1,12 +1,48 @@
 ///|
-/// Extract the text a successful invariant writes to stdout.
-fn stdout_of(result : @cli.CliResult) -> String {
+/// Remove the process-level final LF for legacy record-text assertions.
+fn trim_final_lf(bytes : Bytes) -> Bytes {
+  if !bytes.is_empty() && bytes[bytes.length() - 1] == b'\n' {
+    bytes[:bytes.length() - 1].to_owned()
+  } else {
+    bytes
+  }
+}
+
+///|
+/// Extract exact stdout bytes, including the final record terminator.
+fn stdout_bytes_of(result : @cli.CliResult) -> Bytes {
   match result {
     @cli.Success(text) => text
     @cli.SuccessWith(out, _) => out
-    @cli.NoMatch(_, _) => abort("expected success, got NoMatch")
+    @cli.NoMatch(out, _) => out
     @cli.Failure(text) => abort("expected success, got: \{text}")
   }
+}
+
+///|
+/// Extract record text without the process-level final LF.
+fn stdout_of(result : @cli.CliResult) -> Bytes {
+  trim_final_lf(stdout_bytes_of(result))
+}
+
+///|
+fn bytes_contains(bytes : Bytes, needle : String) -> Bool {
+  @util.contains_bytes(bytes[:], @utf8.encode(needle))
+}
+
+///|
+fn line_count(bytes : Bytes) -> Int32 {
+  let text = trim_final_lf(bytes)
+  if text.is_empty() {
+    return 0
+  }
+  let mut count = 1
+  for byte in text {
+    if byte == b'\n' {
+      count = count + 1
+    }
+  }
+  count
 }
 
 ///|
@@ -32,7 +68,7 @@ fn first_value(invocation : @cli.Invocation, name : String) -> String? {
 ///|
 async test "top-level help is stable" {
   inspect(
-    stdout_of(@cli.run([])),
+    @utf8.decode_lossy(stdout_of(@cli.run([]))),
     content=(
       #|Usage: moonsearch [options] [command]
       #|
@@ -63,7 +99,7 @@ async test "top-level help is stable" {
 ///|
 async test "index help is stable" {
   inspect(
-    stdout_of(@cli.run(["index", "--help"])),
+    @utf8.decode_lossy(stdout_of(@cli.run(["index", "--help"]))),
     content=(
       #|Usage: moonsearch index [options] [roots...]
       #|
@@ -99,7 +135,7 @@ async test "index help is stable" {
 ///|
 async test "update help is stable" {
   inspect(
-    stdout_of(@cli.run(["update", "--help"])),
+    @utf8.decode_lossy(stdout_of(@cli.run(["update", "--help"]))),
     content=(
       #|Usage: moonsearch update [options] [roots...]
       #|
@@ -135,7 +171,7 @@ async test "update help is stable" {
 ///|
 async test "search help is stable" {
   inspect(
-    stdout_of(@cli.run(["search", "--help"])),
+    @utf8.decode_lossy(stdout_of(@cli.run(["search", "--help"]))),
     content=(
       #|Usage: moonsearch search [options] [query...]
       #|
@@ -180,7 +216,7 @@ async test "search help is stable" {
 ///|
 async test "count help is stable" {
   inspect(
-    stdout_of(@cli.run(["count", "--help"])),
+    @utf8.decode_lossy(stdout_of(@cli.run(["count", "--help"]))),
     content=(
       #|Usage: moonsearch count [options] [query...]
       #|
@@ -216,7 +252,7 @@ async test "count help is stable" {
 ///|
 async test "info help is stable" {
   inspect(
-    stdout_of(@cli.run(["info", "--help"])),
+    @utf8.decode_lossy(stdout_of(@cli.run(["info", "--help"]))),
     content=(
       #|Usage: moonsearch info [options]
       #|
@@ -239,7 +275,10 @@ async test "info help is stable" {
 
 ///|
 async test "version" {
-  inspect(stdout_of(@cli.run(["--version"])), content="moonsearch 0.1.0")
+  inspect(
+    @utf8.decode_lossy(stdout_of(@cli.run(["--version"]))),
+    content="moonsearch 0.1.0",
+  )
 }
 
 ///|
@@ -333,8 +372,8 @@ async test "count rejects search-only ordering options" {
 
 ///|
 async test "exit code mapping" {
-  assert_eq(@cli.Success("").exit_code(), 0)
-  assert_eq(@cli.NoMatch("", "").exit_code(), 1)
+  assert_eq(@cli.Success(b"").exit_code(), 0)
+  assert_eq(@cli.NoMatch(b"", "").exit_code(), 1)
   assert_eq(@cli.Failure("error").exit_code(), 2)
 }
 
@@ -385,7 +424,10 @@ async test "index scans a real directory tree" {
     @cli.Success(text) =>
       // Root + sub are folders; a.txt, b.pdf, and the symlink are files.
       // The symlink is not followed, so it contributes no bytes.
-      assert_eq(text, "roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+      assert_eq(
+        trim_final_lf(text),
+        b"roots: 1\nfolders: 2\nfiles: 3\nbytes: 6",
+      )
     @cli.SuccessWith(out, diagnostics) =>
       abort("unexpected diagnostics: \{out}\n\{diagnostics}")
     _ => abort("expected the index command to succeed")
@@ -401,16 +443,16 @@ async test "a written database drives search, count, and info without the roots"
     _ => ()
   }
   let indexed = @cli.run(["index", "-D", database, dir])
-  assert_eq(index_stdout(indexed), "roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+  assert_eq(index_stdout(indexed), b"roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
   let info = @cli.run(["info", "-D", database, "--verify"])
   @fs.remove(dir, recursive=true)
   match info {
     @cli.Success(text) => {
-      assert_true(text.contains("format: MSDB 2.0"))
-      assert_true(text.contains("folders: 2"))
-      assert_true(text.contains("files: 3"))
-      assert_true(text.contains("checksum: verified"))
-      assert_true(text.contains("postings="))
+      assert_true(bytes_contains(text, "format: MSDB 3.0"))
+      assert_true(bytes_contains(text, "folders: 2"))
+      assert_true(bytes_contains(text, "files: 3"))
+      assert_true(bytes_contains(text, "checksum: verified"))
+      assert_true(bytes_contains(text, "postings="))
     }
     _ => abort("expected database info")
   }
@@ -420,15 +462,17 @@ async test "a written database drives search, count, and info without the roots"
   ])
   let count = @cli.run(["count", "-D", database, "ext:pdf"])
   match search {
-    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/a.txt"))
     _ => abort("expected a match from the persisted index")
   }
   match bitmap {
-    @cli.Success(text) => assert_eq(text, "\{real}/sub/b.pdf")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/sub/b.pdf"))
     _ => abort("expected the bitmap engine to read the persisted index")
   }
   match count {
-    @cli.Success(text) => assert_eq(text, "1")
+    @cli.Success(text) => assert_eq(trim_final_lf(text), b"1")
     _ => abort("expected a count from the persisted index")
   }
 }
@@ -444,7 +488,7 @@ async test "a persisted index keeps unbuilt range fields lazy" {
   ])
   @fs.remove(dir, recursive=true)
   match depth {
-    @cli.Success(text) => assert_eq(text, real)
+    @cli.Success(text) => assert_eq(trim_final_lf(text), @utf8.encode(real))
     _ => abort("expected the root to match depth:0 from the persisted store")
   }
 }
@@ -464,10 +508,11 @@ async test "index uses the XDG data directory by default" {
   let search = @cli.run(["search", "-D", database, "a.txt"])
   @fs.remove(dir, recursive=true)
   @fs.remove(home, recursive=true)
-  assert_eq(index_stdout(indexed), "roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+  assert_eq(index_stdout(indexed), b"roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
   assert_true(exists)
   match search {
-    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/a.txt"))
     _ => abort("expected a match from the default database")
   }
 }
@@ -521,11 +566,12 @@ async test "a database without trigram degrades name queries to a scan" {
   ])
   @fs.remove(dir, recursive=true)
   match info {
-    @cli.Success(text) => assert_true(text.contains("trigram: disabled"))
+    @cli.Success(text) => assert_true(bytes_contains(text, "trigram: disabled"))
     _ => abort("expected database info")
   }
   match search {
-    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/a.txt"))
     _ => abort("expected a name match without the trigram index")
   }
 }
@@ -548,7 +594,10 @@ async test "index excludes hidden entries and glob rules end to end" {
   @fs.remove(dir, recursive=true)
   match result {
     @cli.Success(text) =>
-      assert_eq(text, "roots: 1\nfolders: 1\nfiles: 1\nbytes: 3\nskipped: 2")
+      assert_eq(
+        trim_final_lf(text),
+        b"roots: 1\nfolders: 1\nfiles: 1\nbytes: 3\nskipped: 2",
+      )
     _ => abort("expected the index command to succeed")
   }
 }
@@ -582,9 +631,9 @@ async fn make_tree_fixture() -> String {
 
 ///|
 /// Accept a successful index run and return its stdout.
-fn index_stdout(result : @cli.CliResult) -> String {
+fn index_stdout(result : @cli.CliResult) -> Bytes {
   match result {
-    @cli.Success(text) => text
+    @cli.Success(text) => trim_final_lf(text)
     @cli.SuccessWith(_, diagnostics) =>
       abort("unexpected diagnostics: \{diagnostics}")
     @cli.NoMatch(_, _) => abort("index must not return NoMatch")
@@ -598,7 +647,7 @@ async test "index summarises a realistic tree" {
   let result = @cli.run(["index", "-D", test_database("tree"), dir])
   @fs.remove(dir, recursive=true)
   // root, sub, empty, .git; the symlink is a zero-sized file.
-  assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+  assert_eq(index_stdout(result), b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
 }
 
 ///|
@@ -614,7 +663,7 @@ async test "index excludes hidden entries and their subtrees" {
   @fs.remove(dir, recursive=true)
   assert_eq(
     index_stdout(result),
-    "roots: 1\nfolders: 3\nfiles: 3\nbytes: 8\nskipped: 2",
+    b"roots: 1\nfolders: 3\nfiles: 3\nbytes: 8\nskipped: 2",
   )
 }
 
@@ -648,11 +697,11 @@ async test "index applies basename and target restrictions to excludes" {
   @fs.remove(dir, recursive=true)
   assert_eq(
     index_stdout(files),
-    "roots: 1\nfolders: 4\nfiles: 4\nbytes: 8\nskipped: 1",
+    b"roots: 1\nfolders: 4\nfiles: 4\nbytes: 8\nskipped: 1",
   )
   assert_eq(
     index_stdout(folders),
-    "roots: 1\nfolders: 3\nfiles: 4\nbytes: 8\nskipped: 1",
+    b"roots: 1\nfolders: 3\nfiles: 4\nbytes: 8\nskipped: 1",
   )
 }
 
@@ -671,7 +720,7 @@ async test "index applies a fixed full-path exclusion" {
   @fs.remove(dir, recursive=true)
   assert_eq(
     index_stdout(result),
-    "roots: 1\nfolders: 4\nfiles: 4\nbytes: 6\nskipped: 1",
+    b"roots: 1\nfolders: 4\nfiles: 4\nbytes: 6\nskipped: 1",
   )
 }
 
@@ -721,7 +770,10 @@ async test "nested roots require an explicit opt-in" {
     _ => abort("expected nested roots to be rejected")
   }
   // The subtree is indexed twice: once under the parent and once as a root.
-  assert_eq(index_stdout(accepted), "roots: 2\nfolders: 5\nfiles: 6\nbytes: 14")
+  assert_eq(
+    index_stdout(accepted),
+    b"roots: 2\nfolders: 5\nfiles: 6\nbytes: 14",
+  )
 }
 
 ///|
@@ -736,7 +788,7 @@ async test "duplicate roots are normalised before scanning" {
     "\{dir}/.",
   ])
   @fs.remove(dir, recursive=true)
-  assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+  assert_eq(index_stdout(result), b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
 }
 
 ///|
@@ -757,7 +809,7 @@ async test "indexing an empty directory reports zero files" {
   let dir = @fs.tmpdir(prefix="moonsearch-empty")
   let result = @cli.run(["index", "-D", test_database("empty-dir"), dir])
   @fs.remove(dir, recursive=true)
-  assert_eq(index_stdout(result), "roots: 1\nfolders: 1\nfiles: 0\nbytes: 0")
+  assert_eq(index_stdout(result), b"roots: 1\nfolders: 1\nfiles: 0\nbytes: 0")
 }
 
 ///|
@@ -767,7 +819,7 @@ async test "quiet suppresses the summary but keeps success" {
   @fs.remove(dir, recursive=true)
   match result {
     @cli.SuccessWith(out, diagnostics) => {
-      assert_eq(out, "")
+      assert_eq(trim_final_lf(out), b"")
       assert_eq(diagnostics, "")
       assert_eq(result.exit_code(), 0)
     }
@@ -786,7 +838,10 @@ async test "stats and verbose write diagnostics to stderr" {
   @fs.remove(dir, recursive=true)
   match stats {
     @cli.SuccessWith(out, diagnostics) => {
-      assert_eq(out, "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+      assert_eq(
+        trim_final_lf(out),
+        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11",
+      )
       assert_true(diagnostics.contains("scan:"))
       assert_true(diagnostics.contains("names:"))
       assert_true(diagnostics.contains("dict: "))
@@ -888,7 +943,7 @@ async test "an unknown fast field is rejected before scanning" {
 }
 
 ///|
-async test "one-file-system warns when the backend has no device ids" {
+async test "one-file-system uses POSIX device ids without an empty-operation warning" {
   let dir = make_tree_fixture()
   let result = @cli.run([
     "index",
@@ -907,18 +962,19 @@ async test "one-file-system warns when the backend has no device ids" {
   ])
   @fs.remove(dir, recursive=true)
   match result {
-    @cli.SuccessWith(out, diagnostics) => {
-      assert_eq(out, "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
-      assert_true(diagnostics.contains("--one-file-system has no effect"))
-    }
-    _ => abort("expected the one-file-system warning")
+    @cli.Success(out) =>
+      assert_eq(
+        trim_final_lf(out),
+        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11",
+      )
+    _ => abort("expected a warning-free POSIX index result")
   }
   match quiet {
     @cli.SuccessWith(out, diagnostics) => {
-      assert_eq(out, "")
-      assert_true(diagnostics.contains("has no effect"))
+      assert_eq(trim_final_lf(out), b"")
+      assert_eq(diagnostics, "")
     }
-    _ => abort("expected the warning even with --quiet")
+    _ => abort("expected quiet POSIX indexing to stay silent")
   }
 }
 
@@ -934,7 +990,7 @@ async test "unicode and long names are indexed end to end" {
   @fs.write_text("\{dir}/\{long.to_string()}", "c")
   let result = @cli.run(["index", "-D", test_database("unicode"), dir])
   @fs.remove(dir, recursive=true)
-  assert_eq(index_stdout(result), "roots: 1\nfolders: 1\nfiles: 2\nbytes: 3")
+  assert_eq(index_stdout(result), b"roots: 1\nfolders: 1\nfiles: 2\nbytes: 3")
 }
 
 ///|
@@ -953,7 +1009,7 @@ async test "index accepts a mix of option and positional roots" {
   ])
   @fs.remove(first, recursive=true)
   @fs.remove(second, recursive=true)
-  assert_eq(index_stdout(result), "roots: 2\nfolders: 2\nfiles: 2\nbytes: 3")
+  assert_eq(index_stdout(result), b"roots: 2\nfolders: 2\nfiles: 2\nbytes: 3")
 }
 
 ///|
@@ -968,7 +1024,7 @@ async test "global options work before the subcommand" {
   ])
   @fs.remove(dir, recursive=true)
   match result {
-    @cli.SuccessWith(out, _) => assert_eq(out, "")
+    @cli.SuccessWith(out, _) => assert_eq(out, b"")
     _ => abort("expected a quiet success")
   }
 }
@@ -1006,7 +1062,7 @@ async test "commands without a database report errors" {
 
 ///|
 async test "success results map to the success exit code" {
-  assert_eq(@cli.SuccessWith("out", "err").exit_code(), 0)
+  assert_eq(@cli.SuccessWith(b"out", "err").exit_code(), 0)
 }
 
 ///|
@@ -1014,7 +1070,7 @@ async test "update is the same scan as index" {
   let dir = make_tree_fixture()
   let result = @cli.run(["update", "-D", test_database("update"), dir])
   @fs.remove(dir, recursive=true)
-  assert_eq(index_stdout(result), "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+  assert_eq(index_stdout(result), b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
 }
 
 ///|
@@ -1039,7 +1095,7 @@ async test "command-line errors surface as failures" {
 }
 
 ///|
-async test "verbose and the one-file-system warning combine" {
+async test "verbose stats and one-file-system work without a backend warning" {
   let dir = make_tree_fixture()
   let result = @cli.run([
     "index",
@@ -1053,12 +1109,15 @@ async test "verbose and the one-file-system warning combine" {
   @fs.remove(dir, recursive=true)
   match result {
     @cli.SuccessWith(out, diagnostics) => {
-      assert_eq(out, "roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+      assert_eq(
+        trim_final_lf(out),
+        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11",
+      )
       assert_true(diagnostics.contains("root: "))
-      assert_true(diagnostics.contains("--one-file-system has no effect"))
+      assert_false(diagnostics.contains("--one-file-system has no effect"))
       assert_true(diagnostics.contains("skipped: hidden=0 excluded=0 mount=0"))
     }
-    _ => abort("expected verbose diagnostics with a warning")
+    _ => abort("expected verbose POSIX diagnostics")
   }
 }
 
@@ -1083,13 +1142,19 @@ async test "unreadable directories are reported in the summary and warnings" {
   match result {
     @cli.SuccessWith(out, diagnostics) =>
       if denied {
-        assert_eq(out, "roots: 1\nfolders: 2\nfiles: 1\nbytes: 2\nissues: 1")
+        assert_eq(
+          trim_final_lf(out),
+          b"roots: 1\nfolders: 2\nfiles: 1\nbytes: 2\nissues: 1",
+        )
         assert_true(diagnostics.contains("warning:"))
         assert_true(diagnostics.contains("locked"))
         assert_true(diagnostics.contains("permission denied"))
       } else {
         // Running as root: the directory stays readable.
-        assert_eq(out, "roots: 1\nfolders: 2\nfiles: 2\nbytes: 3")
+        assert_eq(
+          trim_final_lf(out),
+          b"roots: 1\nfolders: 2\nfiles: 2\nbytes: 3",
+        )
         assert_false(diagnostics.contains("warning:"))
       }
     _ => abort("expected a scan with diagnostics")
@@ -1112,7 +1177,8 @@ async test "search --live runs the scan engine end to end" {
   let result = @cli.run(["search", "--live", "--root", dir, "a.txt"])
   @fs.remove(dir, recursive=true)
   match result {
-    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/a.txt"))
     _ => abort("expected a match")
   }
 }
@@ -1127,24 +1193,25 @@ async test "search --live reports hits, misses, and counts" {
   let zero = @cli.run(["count", "--live", "--root", dir, "ext:mp4"])
   @fs.remove(dir, recursive=true)
   match pdf {
-    @cli.Success(text) => assert_eq(text, "\{real}/sub/b.pdf")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/sub/b.pdf"))
     _ => abort("expected the pdf to match")
   }
   assert_eq(missing.exit_code(), 1)
   match missing {
     @cli.NoMatch(out, err) => {
-      assert_eq(out, "")
+      assert_eq(out, b"")
       assert_eq(err, "")
     }
     _ => abort("expected a no-match result")
   }
   match count {
-    @cli.Success(text) => assert_eq(text, "1")
+    @cli.Success(text) => assert_eq(trim_final_lf(text), b"1")
     _ => abort("expected a count")
   }
   assert_eq(zero.exit_code(), 1)
   match zero {
-    @cli.NoMatch(out, _) => assert_eq(out, "0")
+    @cli.NoMatch(out, _) => assert_eq(trim_final_lf(out), b"0")
     _ => abort("expected a zero count with no-match exit code")
   }
 }
@@ -1158,18 +1225,19 @@ async test "search --live supports limits, node kinds, and regex mode" {
   let regex = @cli.run(["search", "--live", "--root", dir, "--regex", "^a"])
   @fs.remove(dir, recursive=true)
   match limited {
-    @cli.Success(text) => assert_eq(text.split("\n").count(), 2)
+    @cli.Success(text) => assert_eq(line_count(text), 2)
     _ => abort("expected a limited result")
   }
   match folders {
     @cli.Success(text) => {
-      assert_true(text.contains("\{real}/sub"))
-      assert_true(!text.contains("a.txt"))
+      assert_true(bytes_contains(text, "\{real}/sub"))
+      assert_true(!bytes_contains(text, "a.txt"))
     }
     _ => abort("expected folder results")
   }
   match regex {
-    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/a.txt"))
     _ => abort("expected the regex to match a.txt")
   }
 }
@@ -1181,7 +1249,8 @@ async test "search --regex applies automatic path searching" {
   let result = @cli.run(["search", "--live", "--root", dir, "--regex", "sub/b"])
   @fs.remove(dir, recursive=true)
   match result {
-    @cli.Success(text) => assert_eq(text, "\{real}/sub/b.pdf")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/sub/b.pdf"))
     _ => abort("--regex must search the full path when it contains a slash")
   }
 }
@@ -1199,7 +1268,7 @@ async test "--type is a global constraint that query modifiers cannot override" 
   assert_eq(files.exit_code(), 1)
   assert_eq(folders.exit_code(), 1)
   match files {
-    @cli.NoMatch(out, _) => assert_eq(out, "")
+    @cli.NoMatch(out, _) => assert_eq(trim_final_lf(out), b"")
     _ => abort("expected no matches for --type file folder:")
   }
 }
@@ -1227,7 +1296,7 @@ async test "delayed query errors are exit 2 and compat turns them into empty set
       ])
       assert_eq(tolerated.exit_code(), 1)
       match tolerated {
-        @cli.NoMatch(out, _) => assert_eq(out, "")
+        @cli.NoMatch(out, _) => assert_eq(trim_final_lf(out), b"")
         _ => abort("expected an empty set for '\{query}' on \{engine}")
       }
     }
@@ -1271,11 +1340,11 @@ async test "nested roots resolve every duplicate path in parent:" {
     _ => abort("nested-root index failed")
   }
   match scan {
-    @cli.Success(text) => assert_eq(text, expected)
+    @cli.Success(text) => assert_eq(trim_final_lf(text), @utf8.encode(expected))
     _ => abort("scan engine missed a nested-root parent bucket")
   }
   match bitmap {
-    @cli.Success(text) => assert_eq(text, expected)
+    @cli.Success(text) => assert_eq(trim_final_lf(text), @utf8.encode(expected))
     _ => abort("bitmap engine missed a nested-root parent bucket")
   }
 }
@@ -1290,7 +1359,7 @@ async test "search --live explains the plan and prints statistics" {
   @fs.remove(dir, recursive=true)
   match result {
     @cli.SuccessWith(out, diagnostics) => {
-      assert_eq(out, "\{real}/sub/b.pdf")
+      assert_eq(trim_final_lf(out), @utf8.encode("\{real}/sub/b.pdf"))
       assert_true(diagnostics.contains("query: (ext \"pdf\")"))
       assert_true(diagnostics.contains("plan: (ext \"pdf\")"))
       assert_true(diagnostics.contains("entries: "))
@@ -1409,35 +1478,58 @@ async test "search orders by every key with limit and reversal" {
   @fs.remove(dir, recursive=true)
   match by_size {
     @cli.Success(text) =>
-      assert_eq(text, "\{real}/c/d.zip\n\{real}/b.txt\n\{real}/a.pdf")
+      assert_eq(
+        trim_final_lf(text),
+        @utf8.encode("\{real}/c/d.zip\n\{real}/b.txt\n\{real}/a.pdf"),
+      )
     _ => abort("expected size order")
   }
   match by_ext {
     @cli.Success(text) =>
-      assert_eq(text, "\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip")
+      assert_eq(
+        trim_final_lf(text),
+        @utf8.encode("\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip"),
+      )
     _ => abort("expected extension order")
   }
   match by_type {
     @cli.Success(text) =>
-      assert_eq(text, "\{real}/c/d.zip\n\{real}/a.pdf\n\{real}/b.txt")
+      assert_eq(
+        trim_final_lf(text),
+        @utf8.encode("\{real}/c/d.zip\n\{real}/a.pdf\n\{real}/b.txt"),
+      )
     _ => abort("expected type order")
   }
   match by_path {
     @cli.Success(text) =>
-      assert_eq(text, "\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip")
+      assert_eq(
+        trim_final_lf(text),
+        @utf8.encode("\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip"),
+      )
     _ => abort("expected path order")
   }
   match limited {
-    @cli.Success(text) => assert_eq(text, "\{real}/c/d.zip\n\{real}/b.txt")
+    @cli.Success(text) =>
+      assert_eq(
+        trim_final_lf(text),
+        @utf8.encode("\{real}/c/d.zip\n\{real}/b.txt"),
+      )
     _ => abort("expected a limited result")
   }
   match reversed {
     @cli.Success(text) =>
-      assert_eq(text, "\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip")
+      assert_eq(
+        trim_final_lf(text),
+        @utf8.encode("\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip"),
+      )
     _ => abort("expected reversed size order")
   }
   match reverse_limited {
-    @cli.Success(text) => assert_eq(text, "\{real}/c/d.zip\n\{real}/b.txt")
+    @cli.Success(text) =>
+      assert_eq(
+        trim_final_lf(text),
+        @utf8.encode("\{real}/c/d.zip\n\{real}/b.txt"),
+      )
     _ => abort("expected a limited reverse-name result")
   }
 }
@@ -1451,8 +1543,10 @@ async test "folders-first groups folders ahead of files" {
   match result {
     @cli.Success(text) =>
       assert_eq(
-        text,
-        "\{real}\n\{real}/c\n\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip",
+        trim_final_lf(text),
+        @utf8.encode(
+          "\{real}\n\{real}/c\n\{real}/a.pdf\n\{real}/b.txt\n\{real}/c/d.zip",
+        ),
       )
     _ => abort("expected folder-first output")
   }
@@ -1473,39 +1567,41 @@ async test "basename, null, relative, json, and format output" {
   )
   @fs.remove(dir, recursive=true)
   match basename {
-    @cli.Success(text) => assert_eq(text, "a.pdf\nb.txt\nd.zip")
+    @cli.Success(text) => assert_eq(trim_final_lf(text), b"a.pdf\nb.txt\nd.zip")
     _ => abort("expected basenames")
   }
   match nul {
     @cli.Success(text) => {
       assert_eq(
-        text,
-        "\{real}/a.pdf\u{0}\{real}/b.txt\u{0}\{real}/c/d.zip\u{0}",
+        trim_final_lf(text),
+        @utf8.encode("\{real}/a.pdf\u{0}\{real}/b.txt\u{0}\{real}/c/d.zip\u{0}"),
       )
-      assert_true(text.get_char(text.length() - 1) is Some('\u{0}'))
+      assert_true(text[text.length() - 1] == b'\x00')
     }
     _ => abort("expected NUL-terminated output")
   }
   match relative {
-    @cli.Success(text) => assert_eq(text, "a.pdf\nb.txt\nc/d.zip")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), b"a.pdf\nb.txt\nc/d.zip")
     _ => abort("expected relative paths")
   }
   match json {
     @cli.Success(text) => {
-      assert_true(text.contains("\"path\":\"a.pdf\""))
-      assert_true(text.contains("\"name\":\"a.pdf\""))
-      assert_true(text.contains("\"size\":30"))
-      assert_true(text.contains("\"ext\":\"pdf\""))
-      assert_true(text.contains("\"type\":\"doc\""))
-      assert_true(text.contains("\"kind\":\"file\""))
-      assert_eq(text.split("\n").count(), 3)
+      assert_true(bytes_contains(text, "\"path\":\"a.pdf\""))
+      assert_true(bytes_contains(text, "\"name\":\"a.pdf\""))
+      assert_true(bytes_contains(text, "\"size\":30"))
+      assert_true(bytes_contains(text, "\"ext\":\"pdf\""))
+      assert_true(bytes_contains(text, "\"type\":\"doc\""))
+      assert_true(bytes_contains(text, "\"kind\":\"file\""))
+      assert_eq(line_count(text), 3)
     }
     _ => abort("expected JSON lines")
   }
   match template {
     @cli.Success(text) =>
       assert_eq(
-        text, "a.pdf|30|pdf|doc|file\nb.txt|20|txt|doc|file\nc/d.zip|10|zip|archive|file",
+        trim_final_lf(text),
+        b"a.pdf|30|pdf|doc|file\nb.txt|20|txt|doc|file\nc/d.zip|10|zip|archive|file",
       )
     _ => abort("expected formatted output")
   }
@@ -1574,17 +1670,18 @@ async test "search --live runs the bitmap engine end to end" {
   ])
   @fs.remove(dir, recursive=true)
   match search {
-    @cli.Success(text) => assert_eq(text, "\{real}/a.txt")
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/a.txt"))
     _ => abort("expected the bitmap engine to match a.txt")
   }
   match count {
-    @cli.Success(text) => assert_eq(text, "1")
+    @cli.Success(text) => assert_eq(trim_final_lf(text), b"1")
     _ => abort("expected the bitmap engine to count the pdf")
   }
   assert_eq(miss.exit_code(), 1)
   match explain {
     @cli.SuccessWith(out, diagnostics) => {
-      assert_eq(out, "\{real}/a.txt")
+      assert_eq(trim_final_lf(out), @utf8.encode("\{real}/a.txt"))
       assert_true(diagnostics.contains("plan: (trigram#"))
       assert_true(diagnostics.contains("(substring \"a.txt\" nocase)"))
     }
@@ -1615,11 +1712,11 @@ async test "search --live accepts repeated roots and auto-index" {
   @fs.remove(second, recursive=true)
   let expected = "\{first_real}/one.txt\n\{second_real}/two.txt"
   match result {
-    @cli.Success(text) => assert_eq(text, expected)
+    @cli.Success(text) => assert_eq(trim_final_lf(text), @utf8.encode(expected))
     _ => abort("expected both roots to be searched")
   }
   match auto {
-    @cli.Success(text) => assert_eq(text, expected)
+    @cli.Success(text) => assert_eq(trim_final_lf(text), @utf8.encode(expected))
     _ => abort("expected --auto-index to scan the roots")
   }
   assert_true(@fs.exists(database))

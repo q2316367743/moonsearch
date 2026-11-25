@@ -4,14 +4,14 @@
 /// An empty parent yields the name itself; a parent that already ends with `/`
 /// is not given a second separator, so joining `/` and `tmp` gives `/tmp`
 /// rather than `//tmp`.
-pub fn join_path(parent : StringView, name : StringView) -> String {
-  if parent.is_empty() {
-    "\{name}"
-  } else if parent.get_char(parent.length() - 1) is Some('/') {
-    "\{parent}\{name}"
-  } else {
-    "\{parent}/\{name}"
+pub fn join_path(parent : BytesView, name : BytesView) -> Bytes {
+  let buffer = @buffer.Buffer(capacity=parent.length() + name.length() + 1)
+  buffer.write_bytes(parent)
+  if !parent.is_empty() && parent[parent.length() - 1] != b'/' {
+    buffer.write_byte(b'/')
   }
+  buffer.write_bytes(name)
+  buffer.to_bytes()
 }
 
 ///|
@@ -21,28 +21,28 @@ pub fn join_path(parent : StringView, name : StringView) -> String {
 /// component-wise: `/home/user2` is not inside `/home/user`, while `/home/user`
 /// and `/home/user/docs` are both inside `/home/user`. A root of `/` contains
 /// every other absolute path.
-pub fn is_within(ancestor : StringView, path : StringView) -> Bool {
+pub fn is_within(ancestor : BytesView, path : BytesView) -> Bool {
   if ancestor.is_empty() || path.is_empty() {
     return false
   }
-  if ancestor == path {
+  if eq_bytes(ancestor, path, false) {
     return true
   }
   let ancestor_len = ancestor.length()
-  if ancestor_len == 1 && ancestor.get_char(0) is Some('/') {
-    return path.get_char(0) is Some('/')
+  if ancestor_len == 1 && ancestor[0] == b'/' {
+    return path[0] == b'/'
   }
   if path.length() <= ancestor_len {
     return false
   }
   let mut i = 0
   while i < ancestor_len {
-    if path.get_char(i) != ancestor.get_char(i) {
+    if path[i] != ancestor[i] {
       return false
     }
     i = i + 1
   }
-  path.get_char(ancestor_len) is Some('/')
+  path[ancestor_len] == b'/'
 }
 
 ///|

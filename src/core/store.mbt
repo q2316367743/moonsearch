@@ -7,7 +7,7 @@
 /// scan of that root finishes and are what `index` reports without walking the
 /// entries again.
 pub(all) struct RootInfo {
-  path : String
+  path : Bytes
   one_file_system : Bool
   folder : FolderId
   files : UInt32
@@ -21,14 +21,14 @@ pub(all) struct RootInfo {
 /// The scanner fills these in through `Builder::set_root_stats`; a database
 /// loader reconstructs them from the persisted ROOTS section.
 pub fn RootInfo::new(
-  path~ : String,
+  path~ : BytesView,
   one_file_system~ : Bool,
   folder~ : FolderId,
   files~ : UInt32 = 0U,
   folders~ : UInt32 = 0U,
   size~ : Int64 = 0L,
 ) -> RootInfo {
-  { path, one_file_system, folder, files, folders, size, }
+  { path: path.to_owned(), one_file_system, folder, files, folders, size, }
 }
 
 ///|

@@ -133,7 +133,7 @@ moonsearch update ~/Documents                 # 重新扫描并原子替换
 | `--allow-nested-roots` | 允许根目录相互嵌套 |
 | `--fast-fields <LIST>` | 预建区间字段，默认 `size,mtime`；可选 `size`、`mtime`、`depth`、`childcount`、`parent` |
 | `--no-trigram` | 不构建 trigram 倒排；名称查询将退化为全扫描 |
-| `--one-file-system` | 不跨文件系统；当前纯 MoonBit 后端上为空操作并打印警告 |
+| `--one-file-system` | Unix POSIX 后端按 `st_dev` 过滤跨设备目录；普通文件/bind mount 的完整检查见 S03 |
 
 排除规则写法：`fixed:` 做逐字节比较，`glob:` 支持 `*`、`?` 与 `\` 转义，不带前缀时
 默认按 glob 处理。`regex:` 暂时被拒绝。
@@ -379,7 +379,7 @@ moonsearch info --verify              # 数据库各段校验
 | [`docs/modules/query.md`](docs/modules/query.md) | 词法、语法与查询 AST |
 | [`docs/modules/exec.md`](docs/modules/exec.md) | 扫描引擎、查询编译与位图执行 |
 | [`docs/modules/index.md`](docs/modules/index.md) | 扫描器、字典、区间索引、trigram 倒排、持久化 |
-| [`docs/db-format.md`](docs/db-format.md) | MSDB v2 数据库格式 |
+| [`docs/db-format.md`](docs/db-format.md) | MSDB v3 数据库格式 |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | 基准口径、实测结果与调优待办 |
 | [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) | 迁移计划与设计取舍 |
 

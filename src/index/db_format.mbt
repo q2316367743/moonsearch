@@ -5,7 +5,7 @@ const DB_MAGIC : Bytes = b"MSDB"
 ///|
 /// Major format version. A reader refuses any other major version because the
 /// section payloads are not guaranteed to be interpretable.
-const DB_VERSION_MAJOR : UInt16 = 2
+const DB_VERSION_MAJOR : UInt16 = 3
 
 ///|
 /// Minor format version. A reader accepts any minor version at or above zero

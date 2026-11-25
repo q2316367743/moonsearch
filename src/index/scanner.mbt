@@ -1,17 +1,17 @@
 ///|
 /// One configured root.
 pub(all) struct RootSpec {
-  path : String
+  path : Bytes
   one_file_system : Bool
 }
 
 ///|
 /// Build a root specification.
 pub fn RootSpec::new(
-  path~ : String,
+  path~ : BytesView,
   one_file_system~ : Bool = false,
 ) -> RootSpec {
-  { path, one_file_system, }
+  { path: path.to_owned(), one_file_system, }
 }
 
 ///|
@@ -47,7 +47,7 @@ pub fn ScanConfig::new(
 /// an entry that vanished between `readdir` and `lstat`, or a name that does
 /// not fit in the index.
 pub(all) struct ScanIssue {
-  path : String
+  path : Bytes
   message : String
 }
 
@@ -106,22 +106,25 @@ fn ScanCtx::new(config : ScanConfig, builder : Builder) -> ScanCtx {
 ///|
 fn ScanCtx::record(
   self : ScanCtx,
-  path : StringView,
+  path : BytesView,
   message : StringView,
 ) -> Unit {
-  self.issues.push({ path: "\{path}", message: "\{message}", })
+  self.issues.push({ path: path.to_owned(), message: "\{message}", })
 }
 
 ///|
 /// Whether a directory is one of the default pseudo file systems.
-fn is_default_excluded(path : StringView) -> Bool {
-  path == "/proc" || path == "/sys" || path == "/dev" || path == "/run"
+fn is_default_excluded(path : BytesView) -> Bool {
+  @util.eq_bytes(path, b"/proc", false) ||
+  @util.eq_bytes(path, b"/sys", false) ||
+  @util.eq_bytes(path, b"/dev", false) ||
+  @util.eq_bytes(path, b"/run", false)
 }
 
 ///|
 /// Whether a name starts with a dot.
-fn is_hidden_name(name : String) -> Bool {
-  name.get_char(0) is Some('.')
+fn is_hidden_name(name : BytesView) -> Bool {
+  !name.is_empty() && name[0] == b'.'
 }
 
 ///|
@@ -169,7 +172,7 @@ async fn[Source : @platform.ScanSource] scan_root(
 /// Scan the children of `path`, which is stored as folder `folder`.
 async fn[Source : @platform.ScanSource] scan_children(
   source : Source,
-  path : String,
+  path : Bytes,
   folder : @core.FolderId,
   ctx : ScanCtx,
   one_file_system : Bool,
@@ -189,14 +192,14 @@ async fn[Source : @platform.ScanSource] scan_children(
   let mut total_files = 0U
   let mut total_folders = 0U
   let mut total_size = 0L
-  let keyed = listing.entries.map(fn(info) { (@utf8.encode(info.name), info) })
-  keyed.sort_by(fn(left, right) { @util.cmp_paths(left.0[:], right.0[:]) })
-  for pair in keyed {
-    let entry = pair.1
+  listing.entries.sort_by(fn(left, right) {
+    @util.cmp_paths(left.name[:], right.name[:])
+  })
+  for entry in listing.entries {
     let name = entry.name
     let child_path = @util.join_path(path, name)
     let is_dir = entry.kind is Directory
-    if pair.0.length() > @core.MAX_NAME_LEN {
+    if name.length() > @core.MAX_NAME_LEN {
       ctx.record(child_path, "name does not fit in the index")
       continue
     }

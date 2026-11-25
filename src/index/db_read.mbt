@@ -1,5 +1,5 @@
 ///|
-/// Decode a whole index from the MSDB v2 byte layout.
+/// Decode a whole index from the MSDB v3 byte layout.
 ///
 /// The loader validates the header, the section table, both checksums (the
 /// metadata one always, the full one when `verify` is set), and every reference
@@ -109,9 +109,12 @@ fn parse_roots(
   let roots : Array[@core.RootInfo] = []
   for _ in 0..<count {
     let path_length = checked_count(reader.read_u32(), "root path length")
+    if path_length == 0 || path_length > @core.MAX_NAME_LEN {
+      raise DbError::Corrupt("root path length is out of range")
+    }
     let path_bytes = reader.read_bytes(path_length)
-    let path = @utf8.decode(path_bytes) catch {
-      _ => raise DbError::Corrupt("root path is not valid UTF-8")
+    if @util.find_byte(path_bytes, b'\x00') is Some(_) {
+      raise DbError::Corrupt("root path contains NUL")
     }
     let flags = reader.read_u32()
     let folder = checked_count(reader.read_u32(), "root folder")
@@ -123,7 +126,7 @@ fn parse_roots(
     let size = reader.read_i64()
     roots.push(
       @core.RootInfo::new(
-        path~,
+        path=path_bytes,
         one_file_system=(flags & 1U) != 0U,
         folder~,
         files~,

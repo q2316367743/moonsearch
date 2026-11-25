@@ -18,31 +18,31 @@
 /// ```
 fn dict_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let r1 = builder.add_root("/r1", false, 1000L)
-  let docs = builder.add_folder(r1, "docs", 1001L)
-  ignore(builder.add_file(docs, "report.pdf", 10L, 1002L))
-  ignore(builder.add_file(docs, "notes.txt", 20L, 1003L))
+  let r1 = builder.add_root(b"/r1", false, 1000L)
+  let docs = builder.add_folder(r1, b"docs", 1001L)
+  ignore(builder.add_file(docs, b"report.pdf", 10L, 1002L))
+  ignore(builder.add_file(docs, b"notes.txt", 20L, 1003L))
   ignore(
-    builder.add_file(r1, ".hidden", 5L, 1004L, flags=@core.ENTRY_FLAG_HIDDEN),
+    builder.add_file(r1, b".hidden", 5L, 1004L, flags=@core.ENTRY_FLAG_HIDDEN),
   )
-  ignore(builder.add_file(r1, "archive.tar.gz", 30L, 1005L))
-  ignore(builder.add_file(r1, "noext", 1L, 1006L))
-  ignore(builder.add_file(r1, "UPPER.JPG", 40L, 1007L))
-  let dotted = builder.add_folder(r1, "dir.with.dot", 1008L)
+  ignore(builder.add_file(r1, b"archive.tar.gz", 30L, 1005L))
+  ignore(builder.add_file(r1, b"noext", 1L, 1006L))
+  ignore(builder.add_file(r1, b"UPPER.JPG", 40L, 1007L))
+  let dotted = builder.add_folder(r1, b"dir.with.dot", 1008L)
   builder.set_child_counts(docs, 2U, 0U)
   builder.set_child_counts(dotted, 0U, 0U)
   builder.set_child_counts(r1, 4U, 2U)
-  let r2 = builder.add_root("/r2", false, 2000L)
-  let sub = builder.add_folder(r2, "sub", 2001L)
-  ignore(builder.add_file(sub, "photo.jpeg", 50L, 2002L))
+  let r2 = builder.add_root(b"/r2", false, 2000L)
+  let sub = builder.add_folder(r2, b"sub", 2001L)
+  ignore(builder.add_file(sub, b"photo.jpeg", 50L, 2002L))
   let secret = builder.add_folder(
     r2,
-    ".secret",
+    b".secret",
     2003L,
     flags=@core.ENTRY_FLAG_HIDDEN,
   )
-  ignore(builder.add_file(r2, "file.", 2L, 2004L))
-  ignore(builder.add_file(r2, "notes.TXT", 21L, 2005L))
+  ignore(builder.add_file(r2, b"file.", 2L, 2004L))
+  ignore(builder.add_file(r2, b"notes.TXT", 21L, 2005L))
   builder.set_child_counts(sub, 1U, 0U)
   builder.set_child_counts(secret, 0U, 0U)
   builder.set_child_counts(r2, 2U, 2U)
@@ -215,7 +215,7 @@ test "root assignment tolerates a parent stored after its child" {
     files=[@core.Entry::file(parent=0, name=file_name, size=1L, mtime=0L)],
     roots=[
       {
-        path: "/late",
+        path: b"/late",
         one_file_system: false,
         folder: 1,
         files: 1U,

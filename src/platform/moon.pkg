@@ -1,10 +1,15 @@
 import {
   "moonbitlang/core/async/fs",
   "moonbitlang/core/async/os_error",
+  "moonbitlang/core/encoding/utf8",
   "q2316367743/moonsearch/src/util",
 }
 
+// Windows-only async/fs imports are unused on Unix, as in moonbitlang/core.
+
+warnings = "-unused_package"
+
 options(
   "allow-experimental-packages": true,
-  "native-stub": ["posix.c"],
+  "native-stub": [ "posix.c" ],
 )

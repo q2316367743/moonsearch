@@ -67,23 +67,23 @@ test "cmp_paths orders non-ASCII and invalid UTF-8 by raw bytes" {
 
 ///|
 test "join_path adds exactly one separator" {
-  assert_eq(@util.join_path("/home/user", "docs"), "/home/user/docs")
-  assert_eq(@util.join_path("/home/user/", "docs"), "/home/user/docs")
-  assert_eq(@util.join_path("/", "tmp"), "/tmp")
-  assert_eq(@util.join_path("", "name"), "name")
-  assert_eq(@util.join_path("relative", "name"), "relative/name")
+  assert_eq(@util.join_path(b"/home/user", b"docs"), b"/home/user/docs")
+  assert_eq(@util.join_path(b"/home/user/", b"docs"), b"/home/user/docs")
+  assert_eq(@util.join_path(b"/", b"tmp"), b"/tmp")
+  assert_eq(@util.join_path(b"", b"name"), b"name")
+  assert_eq(@util.join_path(b"relative", b"name"), b"relative/name")
 }
 
 ///|
 test "is_within compares whole components" {
-  assert_true(@util.is_within("/home/user", "/home/user"))
-  assert_true(@util.is_within("/home/user", "/home/user/docs"))
-  assert_false(@util.is_within("/home/user", "/home/user2"))
-  assert_false(@util.is_within("/home/user/docs", "/home/user"))
-  assert_true(@util.is_within("/", "/home"))
-  assert_false(@util.is_within("/home", "/"))
-  assert_false(@util.is_within("", "/home"))
-  assert_false(@util.is_within("/home", ""))
+  assert_true(@util.is_within(b"/home/user", b"/home/user"))
+  assert_true(@util.is_within(b"/home/user", b"/home/user/docs"))
+  assert_false(@util.is_within(b"/home/user", b"/home/user2"))
+  assert_false(@util.is_within(b"/home/user/docs", b"/home/user"))
+  assert_true(@util.is_within(b"/", b"/home"))
+  assert_false(@util.is_within(b"/home", b"/"))
+  assert_false(@util.is_within(b"", b"/home"))
+  assert_false(@util.is_within(b"/home", b""))
 }
 
 ///|
@@ -238,10 +238,10 @@ test "cmp_paths is a total order on a generated corpus" {
 
 ///|
 test "is_within accepts the root and rejects lookalike prefixes" {
-  assert_true(@util.is_within("/", "/"))
-  assert_true(@util.is_within("/", "/anything/at/all"))
-  assert_true(@util.is_within("/a/b", "/a/b/c/d"))
-  assert_false(@util.is_within("/a/b", "/a/bc"))
-  assert_false(@util.is_within("/a/bc", "/a/b"))
-  assert_false(@util.is_within("/", "relative"))
+  assert_true(@util.is_within(b"/", b"/"))
+  assert_true(@util.is_within(b"/", b"/anything/at/all"))
+  assert_true(@util.is_within(b"/a/b", b"/a/b/c/d"))
+  assert_false(@util.is_within(b"/a/b", b"/a/bc"))
+  assert_false(@util.is_within(b"/a/bc", b"/a/b"))
+  assert_false(@util.is_within(b"/", b"relative"))
 }

@@ -3,14 +3,14 @@
 /// two roots worth of statistics, and every range field.
 fn sample_index() -> @index.Index raise @index.IndexError {
   let builder = @index.Builder::new()
-  let data = builder.add_root("/data", false, 100L)
-  let sub = builder.add_folder(data, "sub", 200L)
-  ignore(builder.add_file(data, "a.txt", 5L, 300L))
-  ignore(builder.add_file(data, "same.txt", 7L, 301L))
-  ignore(builder.add_file(sub, "same.txt", 9L, 302L))
-  ignore(builder.add_file(sub, "报告.pdf", 11L, 303L))
+  let data = builder.add_root(b"/data", false, 100L)
+  let sub = builder.add_folder(data, b"sub", 200L)
+  ignore(builder.add_file(data, b"a.txt", 5L, 300L))
+  ignore(builder.add_file(data, b"same.txt", 7L, 301L))
+  ignore(builder.add_file(sub, b"same.txt", 9L, 302L))
+  ignore(builder.add_file(sub, b"报告.pdf", 11L, 303L))
   ignore(
-    builder.add_file(sub, ".env", 13L, 304L, flags=@core.ENTRY_FLAG_HIDDEN),
+    builder.add_file(sub, b".env", 13L, 304L, flags=@core.ENTRY_FLAG_HIDDEN),
   )
   builder.set_child_counts(data, 2U, 1U)
   builder.set_child_counts(sub, 3U, 0U)
@@ -187,6 +187,50 @@ test "database round-trips every part of the index" {
 }
 
 ///|
+test "database round-trips invalid UTF-8 roots and distinct names byte-exactly" {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/raw-\xff", false, 10L)
+  ignore(builder.add_file(root, b"bad-\xff", 1L, 11L))
+  ignore(builder.add_file(root, b"bad-\xfe", 2L, 12L))
+  builder.set_child_counts(root, 2U, 0U)
+  builder.set_root_stats(0, 2U, 0U, 3L)
+  let original = @index.Index::build(builder.finish(built_at=42L))
+  let bytes = encoded(original)
+  assert_eq(bytes, encoded(original))
+  let loaded = decoded(bytes)
+  assert_stores_equal(original.store(), loaded.store())
+  assert_eq(loaded.store().roots()[0].path, b"/raw-\xff")
+  assert_eq(
+    loaded.store().entry_name(@core.EntryRef::new(@core.File, 0)),
+    b"bad-\xff"[:],
+  )
+  assert_eq(
+    loaded.store().entry_name(@core.EntryRef::new(@core.File, 1)),
+    b"bad-\xfe"[:],
+  )
+  assert_eq(loaded.store().file_path(0), b"/raw-\xff/bad-\xff")
+  assert_eq(loaded.to_bytes() catch { err => abort(err.message()) }, bytes)
+}
+
+///|
+test "database rejects a NUL in a root path" {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/raw\x00root", false, 0L)
+  ignore(builder.add_file(root, b"x", 1L, 0L))
+  let bytes = encoded(@index.Index::build(builder.finish(built_at=0L)))
+  let outcome = try @index.Index::from_bytes(bytes[:]) catch {
+    err => Err(err)
+  } noraise {
+    _ => Ok(())
+  }
+  match outcome {
+    Err(@index.DbError::Corrupt(message)) =>
+      assert_true(message.contains("root path contains NUL"))
+    _ => abort("expected a corrupt root path")
+  }
+}
+
+///|
 test "database round-trips an empty index" {
   let original = @index.Index::build(@index.Builder::new().finish(built_at=0L))
   let loaded = decoded(encoded(original))
@@ -227,7 +271,7 @@ test "lazy range fields stay lazy across a round trip" {
 test "header follows the documented layout" {
   let bytes = encoded(sample_index())
   assert_eq(bytes.exact_view(start=0, end=4), b"MSDB"[:])
-  assert_eq(bytes[4], b'\x02')
+  assert_eq(bytes[4], b'\x03')
   assert_eq(bytes[5], b'\x00')
   assert_eq(bytes[8], b'\x01')
   assert_eq(bytes[60].to_int() | (bytes[61].to_int() << 8), 9)
@@ -238,6 +282,34 @@ test "header follows the documented layout" {
     (bytes[55].to_int() << 24),
     64,
   )
+}
+
+///|
+test "the UTF-8-only v2 database format is rejected" {
+  let bytes = encoded(sample_index())
+  let old = Bytes::makei(bytes.length(), fn(index) {
+    if index == 4 {
+      b'\x02'
+    } else {
+      bytes[index]
+    }
+  })
+  let outcome = try @index.Index::from_bytes(old[:]) catch {
+    err => Err(err)
+  } noraise {
+    _ => Ok(())
+  }
+  match outcome {
+    Err(err) =>
+      match err {
+        @index.DbError::UnsupportedVersion(major~, minor~) => {
+          assert_eq(major, 2)
+          assert_eq(minor, 0)
+        }
+        _ => abort("expected UnsupportedVersion(2, 0)")
+      }
+    _ => abort("expected the v2 database to be rejected")
+  }
 }
 
 ///|
@@ -307,7 +379,7 @@ test "database info reads the header without loading the store" {
   let info = @index.DbInfo::from_bytes(bytes[:], verify=true) catch {
     err => abort(err.message())
   }
-  assert_eq(info.format_major, 2)
+  assert_eq(info.format_major, 3)
   assert_eq(info.format_minor, 0)
   assert_eq(info.folder_count, 2)
   assert_eq(info.file_count, 5)

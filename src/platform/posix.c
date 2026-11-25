@@ -1,5 +1,14 @@
 #ifndef _WIN32
 
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#endif
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -97,6 +106,11 @@ int32_t ms_test_create_file(
       errno = saved_errno;
       return -1;
     }
+    if (written == 0) {
+      close(fd);
+      errno = EIO;
+      return -1;
+    }
     offset += (int32_t)written;
   }
   return close(fd);
@@ -158,7 +172,7 @@ int32_t ms_posix_readdir(void *handle, moonbit_bytes_t dst, int32_t capacity) {
   while (length < (size_t)capacity && entry->d_name[length] != '\0') {
     length++;
   }
-  if (length == (size_t)capacity) {
+  if (length == (size_t)capacity && entry->d_name[length] != '\0') {
     const char *tail = entry->d_name + length;
     while (*tail != '\0') {
       length++;

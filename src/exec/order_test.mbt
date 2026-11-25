@@ -15,20 +15,20 @@
 /// ```
 fn order_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 100L)
-  let docs = builder.add_folder(root, "docs", 300L)
-  ignore(builder.add_file(docs, "report.pdf", 1000L, 600L))
-  ignore(builder.add_file(docs, "notes.txt", 500L, 400L))
+  let root = builder.add_root(b"/root", false, 100L)
+  let docs = builder.add_folder(root, b"docs", 300L)
+  ignore(builder.add_file(docs, b"report.pdf", 1000L, 600L))
+  ignore(builder.add_file(docs, b"notes.txt", 500L, 400L))
   builder.add_folder_size(docs, 1500L)
-  let media = builder.add_folder(root, "media", 200L)
-  ignore(builder.add_file(media, "photo.JPG", 2000L, 500L))
+  let media = builder.add_folder(root, b"media", 200L)
+  ignore(builder.add_file(media, b"photo.JPG", 2000L, 500L))
   builder.add_folder_size(media, 2000L)
-  ignore(builder.add_folder(root, "archive", 700L))
-  ignore(builder.add_file(root, "readme.md", 100L, 800L))
+  ignore(builder.add_folder(root, b"archive", 700L))
+  ignore(builder.add_file(root, b"readme.md", 100L, 800L))
   ignore(
-    builder.add_file(root, ".hidden", 50L, 900L, flags=@core.ENTRY_FLAG_HIDDEN),
+    builder.add_file(root, b".hidden", 50L, 900L, flags=@core.ENTRY_FLAG_HIDDEN),
   )
-  ignore(builder.add_file(root, "zzz", 300L, 1000L))
+  ignore(builder.add_file(root, b"zzz", 300L, 1000L))
   builder.add_folder_size(root, 3650L)
   builder.finish(built_at=0L)
 }
@@ -38,10 +38,10 @@ fn order_store() -> @core.Store raise @index.IndexError {
 /// `alpha` is the folder, `alpha.txt` the sibling file.
 fn path_order_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 0L)
-  let alpha = builder.add_folder(root, "alpha", 0L)
-  ignore(builder.add_file(alpha, "zeta.txt", 10L, 0L))
-  ignore(builder.add_file(root, "alpha.txt", 20L, 0L))
+  let root = builder.add_root(b"/root", false, 0L)
+  let alpha = builder.add_folder(root, b"alpha", 0L)
+  ignore(builder.add_file(alpha, b"zeta.txt", 10L, 0L))
+  ignore(builder.add_file(root, b"alpha.txt", 20L, 0L))
   builder.finish(built_at=0L)
 }
 
@@ -49,11 +49,13 @@ fn path_order_store() -> @core.Store raise @index.IndexError {
 /// 200 files with sizes and timestamps that do not follow name order.
 fn large_order_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 0L)
+  let root = builder.add_root(b"/root", false, 0L)
   for index in 0..<200 {
     let size = (index * 73 % 200).to_int64()
     let mtime = (index * 31 % 200).to_int64()
-    ignore(builder.add_file(root, "file\{index}.txt", size, mtime))
+    ignore(
+      builder.add_file(root, @utf8.encode("file\{index}.txt"), size, mtime),
+    )
   }
   builder.finish(built_at=0L)
 }
@@ -283,11 +285,11 @@ test "sorting is independent of the input order" {
 ///|
 test "equal names fall back to path order" {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 0L)
-  let a = builder.add_folder(root, "a", 0L)
-  let b = builder.add_folder(root, "b", 0L)
-  ignore(builder.add_file(b, "x.txt", 1L, 0L))
-  ignore(builder.add_file(a, "x.txt", 1L, 0L))
+  let root = builder.add_root(b"/root", false, 0L)
+  let a = builder.add_folder(root, b"a", 0L)
+  let b = builder.add_folder(root, b"b", 0L)
+  ignore(builder.add_file(b, b"x.txt", 1L, 0L))
+  ignore(builder.add_file(a, b"x.txt", 1L, 0L))
   let store = builder.finish(built_at=0L)
   assert_eq(sorted_paths(store, @exec.OrderOptions::new()), [
     "/root", "/root/a", "/root/b", "/root/a/x.txt", "/root/b/x.txt",
@@ -300,10 +302,10 @@ test "equal names fall back to path order" {
 ///|
 test "extension order is lexicographic and case-folded" {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 0L)
-  ignore(builder.add_file(root, "one.a", 1L, 0L))
-  ignore(builder.add_file(root, "two.ab", 1L, 0L))
-  ignore(builder.add_file(root, "three.B", 1L, 0L))
+  let root = builder.add_root(b"/root", false, 0L)
+  ignore(builder.add_file(root, b"one.a", 1L, 0L))
+  ignore(builder.add_file(root, b"two.ab", 1L, 0L))
+  ignore(builder.add_file(root, b"three.B", 1L, 0L))
   let store = builder.finish(built_at=0L)
   assert_eq(sorted_paths(store, @exec.OrderOptions::new(key=@exec.Ext)), [
     "/root", "/root/one.a", "/root/two.ab", "/root/three.B",

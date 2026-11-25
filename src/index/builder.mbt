@@ -27,7 +27,7 @@ pub fn Builder::new() -> Builder {
 /// `set_root_stats`.
 pub fn Builder::add_root(
   self : Builder,
-  path : StringView,
+  path : BytesView,
   one_file_system : Bool,
   mtime : Int64,
 ) -> @core.FolderId raise IndexError {
@@ -37,7 +37,7 @@ pub fn Builder::add_root(
     @core.Entry::folder(parent=@core.NO_PARENT, name=name_ref, mtime~),
   )
   self.roots.push({
-    path: "\{path}",
+    path: path.to_owned(),
     one_file_system,
     folder: id,
     files: 0U,
@@ -52,7 +52,7 @@ pub fn Builder::add_root(
 pub fn Builder::add_folder(
   self : Builder,
   parent : @core.FolderId,
-  name : StringView,
+  name : BytesView,
   mtime : Int64,
   flags~ : UInt16 = 0,
 ) -> @core.FolderId raise IndexError {
@@ -67,7 +67,7 @@ pub fn Builder::add_folder(
 pub fn Builder::add_file(
   self : Builder,
   parent : @core.FolderId,
-  name : StringView,
+  name : BytesView,
   size : Int64,
   mtime : Int64,
   flags~ : UInt16 = 0,
@@ -162,10 +162,9 @@ pub fn Builder::finish(self : Builder, built_at~ : Int64 = -1L) -> @core.Store {
 /// Append a name to the pool, translating pool errors to index errors.
 fn Builder::add_name(
   self : Builder,
-  name : StringView,
+  name : BytesView,
 ) -> @core.NameRef raise IndexError {
-  let bytes = @utf8.encode(name)
-  self.names.add(bytes[:]) catch {
+  self.names.add(name) catch {
     NameTooLong(length) => raise NameTooLong(length)
     PoolFull => raise NamePoolFull
   }

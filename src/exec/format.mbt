@@ -135,12 +135,11 @@ fn placeholder_of(name : StringView) -> FormatSegment? {
 /// How to render and terminate each result.
 pub(all) struct FormatOptions {
   format : OutputFormat
-  /// Terminate every record with NUL instead of separating records with a
-  /// newline. The last record is terminated too, which is what `xargs -0`
-  /// expects.
+  /// Terminate every record with NUL instead of newline. The last record is
+  /// terminated too, which is what `xargs -0` expects.
   null_terminated : Bool
   /// Absolute directory to print paths relative to, or `None` for full paths.
-  relative_to : String?
+  relative_to : Bytes?
 }
 
 ///|
@@ -148,16 +147,46 @@ pub(all) struct FormatOptions {
 pub fn FormatOptions::new(
   format~ : OutputFormat = Paths,
   null_terminated~ : Bool = false,
-  relative_to~ : String? = None,
+  relative_to~ : Bytes? = None,
 ) -> FormatOptions {
   { format, null_terminated, relative_to, }
 }
 
 ///|
+/// Complete stdout bytes plus the number of JSON records that needed lossy
+/// UTF-8 decoding. Raw path/name/template formats never set the warning count.
+pub struct FormatOutput {
+  bytes : Bytes
+  invalid_utf8_records : Int32
+  null_terminated : Bool
+}
+
+///|
+/// Complete stdout bytes: add the final newline only in newline mode.
+pub fn FormatOutput::stdout_bytes(self : FormatOutput) -> Bytes {
+  if self.null_terminated || self.bytes.is_empty() {
+    return self.bytes
+  }
+  let out = @buffer.Buffer()
+  out.write_bytes(self.bytes)
+  out.write_byte(b'\n')
+  out.to_bytes()
+}
+
+///|
+/// Stable stderr warning for JSON output containing invalid UTF-8.
+pub fn FormatOutput::warning(self : FormatOutput) -> String? {
+  if self.invalid_utf8_records > 0 {
+    Some(
+      "warning: replaced invalid UTF-8 in \{self.invalid_utf8_records} JSON record(s) with U+FFFD",
+    )
+  } else {
+    None
+  }
+}
+
+///|
 /// Values shared by every record of one `format_hits` call.
-///
-/// The relative base bytes, the extension → category table, and the store are
-/// prepared once instead of per record.
 priv struct FormatContext {
   store : @core.Store
   relative_base : Bytes?
@@ -165,57 +194,65 @@ priv struct FormatContext {
 }
 
 ///|
-/// Render every match.
+/// Render every match into record bytes.
 ///
 /// Newline mode separates records and leaves the final record unterminated;
-/// the CLI entry point adds the final newline. NUL mode terminates every
-/// record, including the last, so the bytes can be split losslessly.
+/// `stdout_bytes` adds the final newline. NUL mode terminates every record,
+/// including the last, with exactly one `\0`.
 pub fn format_hits(
   store : @core.Store,
   hits : Array[@core.EntryRef],
   options : FormatOptions,
-) -> String {
+) -> FormatOutput {
   let context : FormatContext = {
     store,
-    relative_base: match options.relative_to {
-      Some(base) => Some(@utf8.encode(base[:]))
-      None => None
-    },
+    relative_base: options.relative_to,
     categories: type_category_map(),
   }
-  let out = StringBuilder()
+  let out = @buffer.Buffer()
+  let mut invalid_records = 0
   let mut index = 0
   while index < hits.length() {
     if index > 0 {
-      if options.null_terminated {
-        out.write_char('\u{0}')
-      } else {
-        out.write_char('\n')
-      }
+      out.write_byte(if options.null_terminated { b'\x00' } else { b'\n' })
     }
-    write_record(context, hits[index], options, out)
+    if write_record(context, hits[index], options, out) {
+      invalid_records = invalid_records + 1
+    }
     index = index + 1
   }
   if options.null_terminated && hits.length() > 0 {
-    out.write_char('\u{0}')
+    out.write_byte(b'\x00')
   }
-  out.to_string()
+  {
+    bytes: out.to_bytes(),
+    invalid_utf8_records: invalid_records,
+    null_terminated: options.null_terminated,
+  }
 }
 
 ///|
-/// Render one match.
+/// Render one match, returning whether JSON required lossy decoding.
 fn write_record(
   context : FormatContext,
   entry : @core.EntryRef,
   options : FormatOptions,
-  out : StringBuilder,
-) -> Unit {
+  out : @buffer.Buffer,
+) -> Bool {
   match options.format {
-    Paths => out.write_string(output_path(context, entry))
-    Names =>
-      out.write_string(@utf8.decode_lossy(context.store.entry_name(entry)))
+    Paths => {
+      out.write_bytes(output_path(context, entry))
+      false
+    }
+    Names => {
+      out.write_bytes(context.store.entry_name(entry))
+      false
+    }
     Json => write_json_record(context, entry, out)
-    Template(template) => write_template(context, entry, template, out)
+    Template(template) => {
+      write_template(context, entry, template, out)
+      false
+    }
   }
 }
 
@@ -225,108 +262,118 @@ fn write_template(
   context : FormatContext,
   entry : @core.EntryRef,
   template : FormatTemplate,
-  out : StringBuilder,
+  out : @buffer.Buffer,
 ) -> Unit {
   for segment in template.segments {
     match segment {
-      Literal(text) => out.write_string(text)
-      Path => out.write_string(output_path(context, entry))
-      Name =>
-        out.write_string(@utf8.decode_lossy(context.store.entry_name(entry)))
-      Dir => out.write_string(directory_of(output_path(context, entry)))
-      Size => out.write_string(size_string(context.store, entry))
-      MTime => out.write_string(mtime_string(context.store, entry))
-      Ext => out.write_string(extension_string(context.store, entry))
-      Type => out.write_string(type_string(context, entry))
-      Kind => out.write_string(kind_string(entry))
+      Literal(text) => out.write_string_utf8(text)
+      Path => out.write_bytes(output_path(context, entry))
+      Name => out.write_bytes(context.store.entry_name(entry))
+      Dir => out.write_bytes(directory_of(output_path(context, entry)))
+      Size => out.write_string_utf8(size_string(context.store, entry))
+      MTime => out.write_string_utf8(mtime_string(context.store, entry))
+      Ext => out.write_bytes(extension_string(context.store, entry))
+      Type => out.write_string_utf8(type_string(context, entry))
+      Kind => out.write_string_utf8(kind_string(entry))
     }
   }
 }
 
 ///|
-/// Write one JSON Lines record.
-///
-/// The field order is stable so golden tests can assert whole lines. `type` is
-/// the built-in category name, `other` for an unlisted file extension, and
-/// `folder` for folders.
+/// Write one JSON Lines record and report whether any byte field was invalid.
 fn write_json_record(
   context : FormatContext,
   entry : @core.EntryRef,
-  out : StringBuilder,
-) -> Unit {
-  out.write_char('{')
-  out.write_string("\"path\":")
-  write_json_string(out, output_path(context, entry))
-  out.write_string(",\"name\":")
-  write_json_string(out, @utf8.decode_lossy(context.store.entry_name(entry)))
-  out.write_string(",\"size\":")
-  out.write_string(size_string(context.store, entry))
-  out.write_string(",\"mtime\":")
-  out.write_string(mtime_string(context.store, entry))
-  out.write_string(",\"ext\":")
-  write_json_string(out, extension_string(context.store, entry))
-  out.write_string(",\"type\":")
-  write_json_string(out, type_string(context, entry))
-  out.write_string(",\"kind\":")
-  write_json_string(out, kind_string(entry))
-  out.write_char('}')
+  out : @buffer.Buffer,
+) -> Bool {
+  out.write_byte(b'{')
+  out.write_string_utf8("\"path\":")
+  let path_valid = write_json_bytes(out, output_path(context, entry))
+  out.write_string_utf8(",\"name\":")
+  let name_valid = write_json_bytes(out, context.store.entry_name(entry))
+  out.write_string_utf8(",\"size\":")
+  out.write_string_utf8(size_string(context.store, entry))
+  out.write_string_utf8(",\"mtime\":")
+  out.write_string_utf8(mtime_string(context.store, entry))
+  out.write_string_utf8(",\"ext\":")
+  let ext_valid = write_json_bytes(out, extension_string(context.store, entry))
+  out.write_string_utf8(",\"type\":")
+  write_json_text(out, type_string(context, entry))
+  out.write_string_utf8(",\"kind\":")
+  write_json_text(out, kind_string(entry))
+  out.write_byte(b'}')
+  !(path_valid && name_valid && ext_valid)
 }
 
 ///|
-/// Write a JSON string literal.
-fn write_json_string(out : StringBuilder, text : StringView) -> Unit {
-  out.write_char('"')
+/// Write raw bytes as a legal JSON string, replacing invalid UTF-8 with U+FFFD.
+fn write_json_bytes(out : @buffer.Buffer, bytes : BytesView) -> Bool {
+  let (text, valid) = json_text(bytes)
+  write_json_text(out, text)
+  valid
+}
+
+///|
+fn json_text(bytes : BytesView) -> (String, Bool) {
+  let text = @utf8.decode(bytes) catch {
+    _ => return (@utf8.decode_lossy(bytes), false)
+  }
+  (text, true)
+}
+
+///|
+/// Write a JSON string literal from already-valid text.
+fn write_json_text(out : @buffer.Buffer, text : StringView) -> Unit {
+  out.write_byte(b'"')
   let mut index = 0
   while index < text.length() {
     match text.get_char(index) {
-      Some('"') => out.write_string("\\\"")
-      Some('\\') => out.write_string("\\\\")
-      Some('\u{8}') => out.write_string("\\b")
-      Some('\u{c}') => out.write_string("\\f")
-      Some('\n') => out.write_string("\\n")
-      Some('\r') => out.write_string("\\r")
-      Some('\t') => out.write_string("\\t")
+      Some('"') => out.write_string_utf8("\\\"")
+      Some('\\') => out.write_string_utf8("\\\\")
+      Some('\u{8}') => out.write_string_utf8("\\b")
+      Some('\u{c}') => out.write_string_utf8("\\f")
+      Some('\n') => out.write_string_utf8("\\n")
+      Some('\r') => out.write_string_utf8("\\r")
+      Some('\t') => out.write_string_utf8("\\t")
       Some(char) =>
         if char.to_int() < 0x20 {
-          out.write_string("\\u00")
-          out.write_char(hex_digit((char.to_int() >> 4) & 0xF))
-          out.write_char(hex_digit(char.to_int() & 0xF))
+          out.write_string_utf8("\\u00")
+          out.write_byte(hex_digit((char.to_int() >> 4) & 0xF))
+          out.write_byte(hex_digit(char.to_int() & 0xF))
         } else {
-          out.write_char(char)
+          out.write_string_utf8(char.to_string())
         }
       None => ()
     }
     index = index + 1
   }
-  out.write_char('"')
+  out.write_byte(b'"')
 }
 
 ///|
-/// One lowercase hexadecimal digit.
-fn hex_digit(value : Int32) -> Char {
-  match "0123456789abcdef".get_char(value) {
-    Some(char) => char
-    None => '0'
+/// One lowercase hexadecimal digit as a byte.
+fn hex_digit(value : Int32) -> Byte {
+  if value >= 0 && value <= 9 {
+    (value + 0x30).to_byte()
+  } else if value >= 10 && value <= 15 {
+    (value + 0x57).to_byte()
+  } else {
+    b'0'
   }
 }
 
 ///|
-/// Path to print for one entry, relative to the prepared base if it is under
-/// it.
-fn output_path(context : FormatContext, entry : @core.EntryRef) -> String {
+/// Path bytes to print for one entry, relative to the prepared base if needed.
+fn output_path(context : FormatContext, entry : @core.EntryRef) -> Bytes {
   let path = context.store.entry_path(entry)
   match context.relative_base {
-    Some(base) => @utf8.decode_lossy(relativize(path, base[:])[:])
-    None => @utf8.decode_lossy(path[:])
+    Some(base) => relativize(path, base[:])
+    None => path
   }
 }
 
 ///|
 /// Strip `base` and one separator from `path`.
-///
-/// Paths outside the base, and the degenerate empty base, are returned
-/// unchanged. A path equal to the base becomes `.`, which is the conventional
-/// relative name for the directory itself.
 fn relativize(path : Bytes, base : BytesView) -> Bytes {
   if base.length() == 0 {
     return path
@@ -356,25 +403,22 @@ fn relativize(path : Bytes, base : BytesView) -> Bytes {
 }
 
 ///|
-/// Parent directory of an output path.
-///
-/// An absolute path with one component maps to `/`; a relative path without a
-/// separator maps to `.`.
-fn directory_of(path : String) -> String {
+/// Parent directory of an output path, preserving raw bytes.
+fn directory_of(path : Bytes) -> Bytes {
   if path.is_empty() {
-    return ""
+    return b""
   }
   let mut index = path.length() - 1
   while index >= 0 {
-    if path.get_char(index) is Some('/') {
+    if path[index] == b'/' {
       if index == 0 {
-        return "/"
+        return b"/"
       }
       return path[:index].to_owned()
     }
     index = index - 1
   }
-  "."
+  b"."
 }
 
 ///|
@@ -396,14 +440,13 @@ fn mtime_string(store : @core.Store, entry : @core.EntryRef) -> String {
 }
 
 ///|
-/// ASCII-lowercase extension; folders always report an empty extension.
-fn extension_string(store : @core.Store, entry : @core.EntryRef) -> String {
-  @utf8.decode_lossy(@util.ascii_fold(store.entry_extension(entry))[:])
+/// ASCII-lowercase extension bytes; folders always report an empty extension.
+fn extension_string(store : @core.Store, entry : @core.EntryRef) -> Bytes {
+  @util.ascii_fold(store.entry_extension(entry))
 }
 
 ///|
-/// Category name for files, `folder` for folders, `other` for unlisted
-/// extensions.
+/// Category name for files, `folder` for folders, `other` for unlisted extensions.
 fn type_string(context : FormatContext, entry : @core.EntryRef) -> String {
   if entry.is_folder() {
     "folder"

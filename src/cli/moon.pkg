@@ -1,6 +1,8 @@
 import {
   "moonbitlang/core/argparse",
   "moonbitlang/core/async/fs",
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/exec",
@@ -13,6 +15,7 @@ import {
 import {
   "moonbitlang/core/async",
   "q2316367743/moonsearch/src/testkit",
+  "q2316367743/moonsearch/src/util",
 } for "test"
 
 options(

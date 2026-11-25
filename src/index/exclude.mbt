@@ -147,8 +147,8 @@ pub fn ExcludeRule::is_active(self : ExcludeRule) -> Bool {
 /// versa. An inactive rule never matches.
 pub fn ExcludeRule::matches(
   self : ExcludeRule,
-  path : StringView,
-  name : StringView,
+  path : BytesView,
+  name : BytesView,
   is_dir : Bool,
 ) -> Bool {
   if !self.active {
@@ -166,10 +166,9 @@ pub fn ExcludeRule::matches(
     FullPath => path
     Basename => name
   }
-  let subject_bytes = @utf8.encode(subject)
   match self.kind {
-    Fixed => subject_bytes == self.pattern_bytes
-    Glob => @util.glob_match(subject_bytes[:], self.pattern_bytes[:])
+    Fixed => @util.eq_bytes(subject, self.pattern_bytes, false)
+    Glob => @util.glob_match(subject, self.pattern_bytes[:])
     Regex => false
   }
 }
@@ -178,8 +177,8 @@ pub fn ExcludeRule::matches(
 /// Whether any rule in the list excludes the entry.
 fn any_rule_matches(
   rules : ArrayView[ExcludeRule],
-  path : StringView,
-  name : StringView,
+  path : BytesView,
+  name : BytesView,
   is_dir : Bool,
 ) -> Bool {
   for rule in rules {

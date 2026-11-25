@@ -85,7 +85,7 @@ fn scan_config_of(invocation : Invocation) -> Result[@index.ScanConfig, String] 
   }
   let one_file_system = flag_set(matches, "one-file-system")
   let root_specs = roots.map(fn(path) {
-    @index.RootSpec::new(path~, one_file_system~)
+    @index.RootSpec::new(path=@utf8.encode(path), one_file_system~)
   })
   Ok(
     @index.ScanConfig::new(
@@ -183,11 +183,13 @@ fn diagnostics_of(
   if verbose {
     for root in report.store.roots() {
       out.write_string(
-        "root: \{root.path} (files: \{root.files}, folders: \{root.folders}, bytes: \{root.size})\n",
+        "root: \{@utf8.decode_lossy(root.path)} (files: \{root.files}, folders: \{root.folders}, bytes: \{root.size})\n",
       )
     }
     for issue in report.issues {
-      out.write_string("warning: \{issue.path}: \{issue.message}\n")
+      out.write_string(
+        "warning: \{@utf8.decode_lossy(issue.path)}: \{issue.message}\n",
+      )
     }
   }
   if stats {
@@ -283,9 +285,9 @@ async fn run_index(invocation : Invocation) -> CliResult {
         }
       }
       if quiet {
-        return SuccessWith("", diagnostics)
+        return SuccessWith(b"", diagnostics)
       }
-      let summary = summary_of(report)
+      let summary = text_line(summary_of(report))
       if diagnostics.is_empty() {
         Success(summary)
       } else {

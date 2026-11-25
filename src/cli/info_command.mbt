@@ -41,5 +41,5 @@ async fn run_info(invocation : Invocation) -> CliResult {
     parts.push("\{section.name}=\{section.length}")
   }
   out.write_string("sections: \{parts.join(" ")}")
-  Success(out.to_string())
+  Success(text_line(out.to_string()))
 }

@@ -6,6 +6,15 @@ struct RefTree {
 }
 
 ///|
+fn reference_join(path : String, name : String) -> String {
+  if path.has_suffix("/") {
+    path + name
+  } else {
+    path + "/" + name
+  }
+}
+
+///|
 /// Walk `path` with plain `readdir`/`lstat` calls and record every entry.
 ///
 /// This deliberately does not share code with the scanner: it spells paths
@@ -20,7 +29,7 @@ async fn reference_walk(path : String, tree : RefTree) -> Int64 {
   )
   let mut total = 0L
   for name in names {
-    let child = @util.join_path(path, name)
+    let child = reference_join(path, name)
     let kind = @fs.kind(child, follow_symlink=false)
     if kind is @fs.Directory {
       total = total + reference_walk(child, tree)
@@ -47,7 +56,7 @@ async test "the system backend matches an independent directory walk" {
   @fs.symlink(target="\{dir}/sub", "\{dir}/link")
   let root = @fs.realpath(dir)
   let config = @index.ScanConfig::new(
-    roots=[@index.RootSpec::new(path=root)],
+    roots=[@index.RootSpec::new(path=@utf8.encode(root))],
     default_excludes=false,
   )
   let report = @index.scan(config, @platform.system_source()) catch {

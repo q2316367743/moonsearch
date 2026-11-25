@@ -274,7 +274,7 @@ pub fn Index::build(store, eager? = all, trigram? = true) -> Index
   `Index`，不再分别传 store、dict、ranges、trigram 四个部件。S12 也以它为序列化与
   恢复的单位。
 
-## 持久化 `MSDB v2`（S12）
+## 持久化 `MSDB v3`（S12）
 
 `src/index` 的 `db*.mbt` 把完成的 `Index` 写成一个自校验文件，再从文件恢复同一个
 对象；恢复路径不重新扫描、不重建字典、不重排 trigram。字段级布局见

@@ -81,7 +81,8 @@ header 与 section table；`--verify` 额外校验全文件 CRC。默认数据�
 
 ## 输出字节与退出码
 
-- 格式化层返回 `Bytes`；换行模式在记录之间写 `\n`，最后由入口补一个换行。
+- 格式化层返回 `FormatOutput { bytes, invalid_utf8_records }`；换行模式在记录之间写
+  `\n`，`stdout_bytes()` 补最后一个换行。
 - `--null` 生成每条以 NUL 结尾（包括最后一条）的字节；入口直接写 `Bytes`，不检测文本、
   不补换行，也不会改变文件名中的原始字节。
 - 退出码：`0` 成功/help/version，`1` 无命中，`2` 参数/查询/IO/DB 错误，

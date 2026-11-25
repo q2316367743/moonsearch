@@ -91,6 +91,13 @@ fn fuzz_probe(index : @index.Index) -> Unit {
     ignore(index.store().entry_name(entry))
     ignore(index.store().entry_path(entry))
   }
+  for root in index.store().roots() {
+    if root.folder < 0 || root.folder >= index.store().folder_count() {
+      abort("mutated index returned an out-of-range root folder")
+    }
+    ignore(root.path)
+    ignore(index.store().folder_path(root.folder))
+  }
   let dict = index.dict()
   fuzz_check_ids(dict.all(), count, "dict.all")
   fuzz_check_ids(dict.files_all(), count, "dict.files_all")

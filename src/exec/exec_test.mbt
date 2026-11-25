@@ -12,23 +12,23 @@
 /// ```
 fn test_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 1672531200L)
-  let docs = builder.add_folder(root, "docs", 1709251200L)
-  ignore(builder.add_file(docs, "report.pdf", 1000L, 1710460800L))
-  ignore(builder.add_file(docs, "notes.txt", 500L, 1706745600L))
+  let root = builder.add_root(b"/root", false, 1672531200L)
+  let docs = builder.add_folder(root, b"docs", 1709251200L)
+  ignore(builder.add_file(docs, b"report.pdf", 1000L, 1710460800L))
+  ignore(builder.add_file(docs, b"notes.txt", 500L, 1706745600L))
   builder.set_child_counts(docs, 2U, 0U)
   builder.add_folder_size(docs, 1500L)
-  let media = builder.add_folder(root, "media", 1704844800L)
-  ignore(builder.add_file(media, "photo.JPG", 2000L, 1704844800L))
+  let media = builder.add_folder(root, b"media", 1704844800L)
+  ignore(builder.add_file(media, b"photo.JPG", 2000L, 1704844800L))
   builder.set_child_counts(media, 1U, 0U)
   builder.add_folder_size(media, 2000L)
-  let archive = builder.add_folder(root, "archive", 1709510400L)
+  let archive = builder.add_folder(root, b"archive", 1709510400L)
   builder.set_child_counts(archive, 0U, 0U)
-  ignore(builder.add_file(root, "readme.md", 100L, 1709251200L))
+  ignore(builder.add_file(root, b"readme.md", 100L, 1709251200L))
   ignore(
     builder.add_file(
       root,
-      ".hidden",
+      b".hidden",
       50L,
       1710892800L,
       flags=@core.ENTRY_FLAG_HIDDEN,
@@ -105,12 +105,12 @@ test "glob patterns replace substring matching" {
 ///|
 test "escaped glob wildcards are literal and ? matches one scalar" {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/r", false, 0L)
-  ignore(builder.add_file(root, "index*", 1L, 0L))
-  ignore(builder.add_file(root, "indexed", 1L, 0L))
-  ignore(builder.add_file(root, "é.txt", 1L, 0L))
-  ignore(builder.add_file(root, "€.txt", 1L, 0L))
-  ignore(builder.add_file(root, "ab.txt", 1L, 0L))
+  let root = builder.add_root(b"/r", false, 0L)
+  ignore(builder.add_file(root, b"index*", 1L, 0L))
+  ignore(builder.add_file(root, b"indexed", 1L, 0L))
+  ignore(builder.add_file(root, b"é.txt", 1L, 0L))
+  ignore(builder.add_file(root, b"€.txt", 1L, 0L))
+  ignore(builder.add_file(root, b"ab.txt", 1L, 0L))
   builder.set_child_counts(root, 5U, 0U)
   let store = builder.finish(built_at=0L)
   let run = fn(text : String) {

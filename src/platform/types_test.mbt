@@ -13,23 +13,23 @@ test "platform errors expose their messages" {
 ///|
 test "node and listing constructors keep their fields" {
   let file = @platform.NodeInfo::new(
-    name="a.txt",
+    name=b"a.txt",
     kind=@platform.File,
     size=7L,
     mtime=42L,
     device=Some(3UL),
   )
-  assert_eq(file.name, "a.txt")
+  assert_eq(file.name, b"a.txt")
   assert_true(file.kind is @platform.File)
   assert_eq(file.size, 7L)
   assert_eq(file.mtime, 42L)
   assert_eq(file.device, Some(3UL))
-  let dir = @platform.NodeInfo::new(name="sub", kind=@platform.Directory)
+  let dir = @platform.NodeInfo::new(name=b"sub", kind=@platform.Directory)
   assert_eq(dir.size, 0L)
   assert_eq(dir.mtime, 0L)
   assert_eq(dir.device, None)
-  let failure = @platform.DirFailure::new(name="gone", message="vanished")
-  assert_eq(failure.name, "gone")
+  let failure = @platform.DirFailure::new(name=b"gone", message="vanished")
+  assert_eq(failure.name, b"gone")
   assert_eq(failure.message, "vanished")
   let listing = @platform.DirListing::new(entries=[file], failures=[failure])
   assert_eq(listing.entries.length(), 1)

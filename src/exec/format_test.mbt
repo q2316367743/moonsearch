@@ -24,9 +24,9 @@ fn formatted(
   store : @core.Store,
   paths : Array[String],
   options : @exec.FormatOptions,
-) -> String {
+) -> Bytes {
   let hits = paths.map(fn(path) { entry_at_path(store, path) })
-  @exec.format_hits(store, hits, options)
+  @exec.format_hits(store, hits, options).bytes
 }
 
 ///|
@@ -38,7 +38,7 @@ test "default format prints full paths separated by newlines" {
       ["/root/docs/report.pdf", "/root/docs"],
       @exec.FormatOptions::new(),
     ),
-    "/root/docs/report.pdf\n/root/docs",
+    b"/root/docs/report.pdf\n/root/docs",
   )
 }
 
@@ -51,7 +51,7 @@ test "basename format prints only names" {
       ["/root/docs/report.pdf", "/root/docs"],
       @exec.FormatOptions::new(format=@exec.Names),
     ),
-    "report.pdf\ndocs",
+    b"report.pdf\ndocs",
   )
 }
 
@@ -64,7 +64,7 @@ test "null terminates every record including the last" {
       ["/root/docs/report.pdf", "/root/docs"],
       @exec.FormatOptions::new(null_terminated=true),
     ),
-    "/root/docs/report.pdf\u{0}/root/docs\u{0}",
+    b"/root/docs/report.pdf\x00/root/docs\x00",
   )
 }
 
@@ -77,7 +77,7 @@ test "json lines carry the stable field order" {
       ["/root/docs/report.pdf"],
       @exec.FormatOptions::new(format=@exec.Json),
     ),
-    "{\"path\":\"/root/docs/report.pdf\",\"name\":\"report.pdf\",\"size\":1000,\"mtime\":600,\"ext\":\"pdf\",\"type\":\"doc\",\"kind\":\"file\"}",
+    b"{\"path\":\"/root/docs/report.pdf\",\"name\":\"report.pdf\",\"size\":1000,\"mtime\":600,\"ext\":\"pdf\",\"type\":\"doc\",\"kind\":\"file\"}",
   )
   assert_eq(
     formatted(
@@ -85,11 +85,11 @@ test "json lines carry the stable field order" {
       ["/root/docs"],
       @exec.FormatOptions::new(format=@exec.Json),
     ),
-    "{\"path\":\"/root/docs\",\"name\":\"docs\",\"size\":1500,\"mtime\":300,\"ext\":\"\",\"type\":\"folder\",\"kind\":\"folder\"}",
+    b"{\"path\":\"/root/docs\",\"name\":\"docs\",\"size\":1500,\"mtime\":300,\"ext\":\"\",\"type\":\"folder\",\"kind\":\"folder\"}",
   )
   assert_eq(
     formatted(store, ["/root/zzz"], @exec.FormatOptions::new(format=@exec.Json)),
-    "{\"path\":\"/root/zzz\",\"name\":\"zzz\",\"size\":300,\"mtime\":1000,\"ext\":\"\",\"type\":\"other\",\"kind\":\"file\"}",
+    b"{\"path\":\"/root/zzz\",\"name\":\"zzz\",\"size\":300,\"mtime\":1000,\"ext\":\"\",\"type\":\"other\",\"kind\":\"file\"}",
   )
 }
 
@@ -102,15 +102,15 @@ test "format templates render every placeholder" {
   let options = @exec.FormatOptions::new(format=@exec.Template(template))
   assert_eq(
     formatted(store, ["/root/docs/report.pdf"], options),
-    "/root/docs/report.pdf|report.pdf|/root/docs|1000|600|pdf|doc|file",
+    b"/root/docs/report.pdf|report.pdf|/root/docs|1000|600|pdf|doc|file",
   )
   assert_eq(
     formatted(store, ["/root/docs"], options),
-    "/root/docs|docs|/root|1500|300||folder|folder",
+    b"/root/docs|docs|/root|1500|300||folder|folder",
   )
   assert_eq(
     formatted(store, ["/root/zzz"], options),
-    "/root/zzz|zzz|/root|300|1000||other|file",
+    b"/root/zzz|zzz|/root|300|1000||other|file",
   )
 }
 
@@ -124,7 +124,7 @@ test "format templates translate escapes" {
       ["/root/docs/report.pdf"],
       @exec.FormatOptions::new(format=@exec.Template(template)),
     ),
-    "report.pdf\tpdf\n",
+    b"report.pdf\tpdf\n",
   )
   let nul = template_of("a\\0b")
   assert_eq(
@@ -133,7 +133,7 @@ test "format templates translate escapes" {
       ["/root/zzz"],
       @exec.FormatOptions::new(format=@exec.Template(nul)),
     ),
-    "a\u{0}b",
+    b"a\x00b",
   )
   let literal_backslash = template_of("a\\qb\\\\c")
   assert_eq(
@@ -142,49 +142,49 @@ test "format templates translate escapes" {
       ["/root/zzz"],
       @exec.FormatOptions::new(format=@exec.Template(literal_backslash)),
     ),
-    "a\\qb\\c",
+    b"a\\qb\\c",
   )
 }
 
 ///|
 test "relative paths strip the base and one separator" {
   let store = order_store() catch { err => abort(err.message()) }
-  let options = @exec.FormatOptions::new(relative_to=Some("/root"))
+  let options = @exec.FormatOptions::new(relative_to=Some(b"/root"))
   assert_eq(
     formatted(store, ["/root/docs/report.pdf", "/root/docs", "/root"], options),
-    "docs/report.pdf\ndocs\n.",
+    b"docs/report.pdf\ndocs\n.",
   )
-  let slash = @exec.FormatOptions::new(relative_to=Some("/"))
+  let slash = @exec.FormatOptions::new(relative_to=Some(b"/"))
   assert_eq(
     formatted(store, ["/root/docs/report.pdf", "/root"], slash),
-    "root/docs/report.pdf\nroot",
+    b"root/docs/report.pdf\nroot",
   )
-  let trailing = @exec.FormatOptions::new(relative_to=Some("/root/"))
+  let trailing = @exec.FormatOptions::new(relative_to=Some(b"/root/"))
   assert_eq(
     formatted(store, ["/root/docs/report.pdf"], trailing),
-    "docs/report.pdf",
+    b"docs/report.pdf",
   )
-  let outside = @exec.FormatOptions::new(relative_to=Some("/elsewhere"))
+  let outside = @exec.FormatOptions::new(relative_to=Some(b"/elsewhere"))
   assert_eq(
     formatted(store, ["/root/docs/report.pdf"], outside),
-    "/root/docs/report.pdf",
+    b"/root/docs/report.pdf",
   )
   let json = @exec.FormatOptions::new(
     format=@exec.Json,
-    relative_to=Some("/root"),
+    relative_to=Some(b"/root"),
   )
   assert_eq(
     formatted(store, ["/root/docs/report.pdf"], json),
-    "{\"path\":\"docs/report.pdf\",\"name\":\"report.pdf\",\"size\":1000,\"mtime\":600,\"ext\":\"pdf\",\"type\":\"doc\",\"kind\":\"file\"}",
+    b"{\"path\":\"docs/report.pdf\",\"name\":\"report.pdf\",\"size\":1000,\"mtime\":600,\"ext\":\"pdf\",\"type\":\"doc\",\"kind\":\"file\"}",
   )
 }
 
 ///|
 test "json escapes quotes, backslashes, and control characters" {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 0L)
-  ignore(builder.add_file(root, "a\"b\\c", 1L, 0L))
-  ignore(builder.add_file(root, "tab\u{1}name", 2L, 0L))
+  let root = builder.add_root(b"/root", false, 0L)
+  ignore(builder.add_file(root, b"a\"b\\c", 1L, 0L))
+  ignore(builder.add_file(root, b"tab\x01name", 2L, 0L))
   let store = builder.finish(built_at=0L)
   assert_eq(
     formatted(
@@ -192,7 +192,7 @@ test "json escapes quotes, backslashes, and control characters" {
       ["/root/a\"b\\c"],
       @exec.FormatOptions::new(format=@exec.Json),
     ),
-    "{\"path\":\"/root/a\\\"b\\\\c\",\"name\":\"a\\\"b\\\\c\",\"size\":1,\"mtime\":0,\"ext\":\"\",\"type\":\"other\",\"kind\":\"file\"}",
+    b"{\"path\":\"/root/a\\\"b\\\\c\",\"name\":\"a\\\"b\\\\c\",\"size\":1,\"mtime\":0,\"ext\":\"\",\"type\":\"other\",\"kind\":\"file\"}",
   )
   assert_eq(
     formatted(
@@ -200,15 +200,15 @@ test "json escapes quotes, backslashes, and control characters" {
       ["/root/tab\u{1}name"],
       @exec.FormatOptions::new(format=@exec.Json),
     ),
-    "{\"path\":\"/root/tab\\u0001name\",\"name\":\"tab\\u0001name\",\"size\":2,\"mtime\":0,\"ext\":\"\",\"type\":\"other\",\"kind\":\"file\"}",
+    b"{\"path\":\"/root/tab\\u0001name\",\"name\":\"tab\\u0001name\",\"size\":2,\"mtime\":0,\"ext\":\"\",\"type\":\"other\",\"kind\":\"file\"}",
   )
 }
 
 ///|
 test "json keeps non-BMP characters intact" {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/root", false, 0L)
-  ignore(builder.add_file(root, "x🤣.txt", 1L, 0L))
+  let root = builder.add_root(b"/root", false, 0L)
+  ignore(builder.add_file(root, b"x🤣.txt", 1L, 0L))
   let store = builder.finish(built_at=0L)
   assert_eq(
     formatted(
@@ -216,7 +216,7 @@ test "json keeps non-BMP characters intact" {
       ["/root/x🤣.txt"],
       @exec.FormatOptions::new(format=@exec.Json),
     ),
-    "{\"path\":\"/root/x🤣.txt\",\"name\":\"x🤣.txt\",\"size\":1,\"mtime\":0,\"ext\":\"txt\",\"type\":\"doc\",\"kind\":\"file\"}",
+    b"{\"path\":\"/root/x🤣.txt\",\"name\":\"x🤣.txt\",\"size\":1,\"mtime\":0,\"ext\":\"txt\",\"type\":\"doc\",\"kind\":\"file\"}",
   )
 }
 
@@ -225,9 +225,9 @@ test "ext and type fold case and folders stay extensionless" {
   let store = order_store() catch { err => abort(err.message()) }
   let template = template_of("{ext}|{type}")
   let options = @exec.FormatOptions::new(format=@exec.Template(template))
-  assert_eq(formatted(store, ["/root/media/photo.JPG"], options), "jpg|pic")
-  assert_eq(formatted(store, ["/root/docs"], options), "|folder")
-  assert_eq(formatted(store, ["/root/zzz"], options), "|other")
+  assert_eq(formatted(store, ["/root/media/photo.JPG"], options), b"jpg|pic")
+  assert_eq(formatted(store, ["/root/docs"], options), b"|folder")
+  assert_eq(formatted(store, ["/root/zzz"], options), b"|other")
 }
 
 ///|
@@ -247,16 +247,92 @@ test "format template errors are reported before rendering" {
 }
 
 ///|
+test "raw formats preserve distinct invalid UTF-8 names and NUL records" {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/raw", false, 0L)
+  ignore(builder.add_file(root, b"bad-\xff", 1L, 0L))
+  ignore(builder.add_file(root, b"bad-\xfe", 2L, 0L))
+  let store = builder.finish(built_at=0L)
+  let hits = [
+    @core.EntryRef::new(@core.File, 0),
+    @core.EntryRef::new(@core.File, 1),
+  ]
+  assert_eq(
+    @exec.format_hits(store, hits, @exec.FormatOptions::new()).bytes,
+    b"/raw/bad-\xff\n/raw/bad-\xfe",
+  )
+  assert_eq(
+    @exec.format_hits(store, hits, @exec.FormatOptions::new(format=@exec.Names)).bytes,
+    b"bad-\xff\nbad-\xfe",
+  )
+  let template = template_of("{path}|{name}")
+  assert_eq(
+    @exec.format_hits(
+      store,
+      hits,
+      @exec.FormatOptions::new(format=@exec.Template(template)),
+    ).bytes,
+    b"/raw/bad-\xff|bad-\xff\n/raw/bad-\xfe|bad-\xfe",
+  )
+  let nul = @exec.format_hits(
+    store,
+    hits,
+    @exec.FormatOptions::new(null_terminated=true),
+  )
+  assert_eq(nul.bytes, b"/raw/bad-\xff\x00/raw/bad-\xfe\x00")
+  assert_eq(nul.stdout_bytes(), nul.bytes)
+  assert_eq(
+    @exec.format_hits(
+      store,
+      hits,
+      @exec.FormatOptions::new(relative_to=Some(b"/raw")),
+    ).stdout_bytes(),
+    b"bad-\xff\nbad-\xfe\n",
+  )
+}
+
+///|
+test "JSON replaces invalid UTF-8 and reports one warning per record" {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/raw", false, 0L)
+  ignore(builder.add_file(root, b"bad-\xff", 1L, 0L))
+  ignore(builder.add_file(root, b"bad-\xfe", 2L, 0L))
+  let store = builder.finish(built_at=0L)
+  let hits = [
+    @core.EntryRef::new(@core.File, 0),
+    @core.EntryRef::new(@core.File, 1),
+  ]
+  let rendered = @exec.format_hits(
+    store,
+    hits,
+    @exec.FormatOptions::new(format=@exec.Json),
+  )
+  assert_eq(rendered.invalid_utf8_records, 2)
+  assert_eq(
+    rendered.warning(),
+    Some("warning: replaced invalid UTF-8 in 2 JSON record(s) with U+FFFD"),
+  )
+  let text = @utf8.decode(rendered.stdout_bytes()) catch {
+    _ => abort("JSON output must be valid UTF-8")
+  }
+  assert_true(text.contains("bad-\u{FFFD}"))
+  assert_false(text.contains("bad-\u{FFFD}\u{FFFD}"))
+}
+
+///|
 test "formatting an empty match set is empty" {
   let store = order_store() catch { err => abort(err.message()) }
   let empty : Array[@core.EntryRef] = []
-  assert_eq(@exec.format_hits(store, empty, @exec.FormatOptions::new()), "")
+  assert_eq(
+    @exec.format_hits(store, empty, @exec.FormatOptions::new()).bytes,
+    b"",
+  )
   assert_eq(
     @exec.format_hits(
       store,
       empty,
       @exec.FormatOptions::new(null_terminated=true),
-    ),
-    "",
+    ).bytes,
+    b"",
   )
 }

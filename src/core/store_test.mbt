@@ -23,7 +23,7 @@ fn fixture_store() -> @core.Store raise @core.NamePoolError {
     files~,
     roots=[
       {
-        path: "/r",
+        path: b"/r",
         one_file_system: false,
         folder: 0,
         files: 2U,
@@ -64,7 +64,7 @@ test "a store reports its counts and build time" {
   assert_eq(store.name_count(), 5)
   assert_eq(store.name_bytes(), 2 + 3 + 4 + 5 + 5)
   assert_eq(store.roots().length(), 1)
-  assert_eq(store.roots()[0].path, "/r")
+  assert_eq(store.roots()[0].path, b"/r")
   assert_eq(store.roots()[0].folder, 0)
 }
 
@@ -155,7 +155,7 @@ test "multiple roots keep their order and paths" {
     ],
     roots=[
       {
-        path: "/a",
+        path: b"/a",
         one_file_system: false,
         folder: 0,
         files: 1U,
@@ -163,7 +163,7 @@ test "multiple roots keep their order and paths" {
         size: 2L,
       },
       {
-        path: "/b",
+        path: b"/b",
         one_file_system: true,
         folder: 1,
         files: 1U,
@@ -174,8 +174,8 @@ test "multiple roots keep their order and paths" {
     built_at=1L,
   )
   assert_eq(store.roots().length(), 2)
-  assert_eq(store.roots()[0].path, "/a")
-  assert_eq(store.roots()[1].path, "/b")
+  assert_eq(store.roots()[0].path, b"/a")
+  assert_eq(store.roots()[1].path, b"/b")
   assert_true(store.roots()[1].one_file_system)
   assert_eq(store.file_path(0), b"/a/one")
   assert_eq(store.file_path(1), b"/b/sub/two")

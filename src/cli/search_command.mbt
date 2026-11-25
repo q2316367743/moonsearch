@@ -184,8 +184,8 @@ async fn format_options_of(
   } else {
     match first_option_value(matches, "relative-to") {
       Some(path) => {
-        let resolved = @fs.realpath(path) catch {
-          err => return Err("error: --relative-to \{path}: \{err.to_string()}")
+        let resolved = @platform.system_source().realpath(@utf8.encode(path)) catch {
+          err => return Err("error: --relative-to \{path}: \{err.message()}")
         }
         Some(resolved)
       }
@@ -401,6 +401,16 @@ fn search_diagnostics(
 }
 
 ///|
+/// Append a warning without dropping existing diagnostics.
+fn append_warning(diagnostics : String, warning : String) -> String {
+  if diagnostics.is_empty() {
+    warning
+  } else {
+    "\{diagnostics}\n\{warning}"
+  }
+}
+
+///|
 /// Run `search` with the selected engine.
 async fn run_search(invocation : Invocation) -> CliResult {
   let matches = invocation.matches
@@ -518,13 +528,18 @@ async fn run_search(invocation : Invocation) -> CliResult {
     exec_ms,
     live,
   )
-  let text = @exec.format_hits(store, hits, output)
+  let rendered = @exec.format_hits(store, hits, output)
+  let mut diagnostics = diagnostics
+  match rendered.warning() {
+    Some(warning) => diagnostics = append_warning(diagnostics, warning)
+    None => ()
+  }
   if hits.is_empty() {
-    NoMatch("", diagnostics)
+    NoMatch(b"", diagnostics)
   } else if diagnostics.is_empty() {
-    Success(text)
+    Success(rendered.stdout_bytes())
   } else {
-    SuccessWith(text, diagnostics)
+    SuccessWith(rendered.stdout_bytes(), diagnostics)
   }
 }
 
@@ -651,7 +666,7 @@ async fn run_count(invocation : Invocation) -> CliResult {
     out.write_string("search: \{exec_ms} ms\n")
   }
   let diagnostics = trim_trailing_newline(out.to_string())
-  let text = count.to_string()
+  let text = text_line(count.to_string())
   if count == 0 {
     NoMatch(text, diagnostics)
   } else if diagnostics.is_empty() {

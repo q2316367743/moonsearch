@@ -1,4 +1,4 @@
-# MSDB v2 数据库格式
+# MSDB v3 数据库格式
 
 `moonsearch` 的持久化文件把一次扫描的全部派生结构写进单个文件：条目、名字池、规范
 顺序、字段字典、范围索引与 trigram posting。加载后查询直接使用这些结构，不重新扫描、
@@ -8,7 +8,7 @@
 - 默认路径：`$XDG_DATA_HOME/moonsearch/index.msdb`，否则
   `$HOME/.local/share/moonsearch/index.msdb`
 - 字节序：全部小端；读取器逐字段组合，不依赖宿主对齐
-- 版本：主版本 `2`，次版本 `0`
+- 版本：主版本 `3`，次版本 `0`；拒绝只允许合法 UTF-8 根路径的 v2
 - 实现：`src/index/db_format.mbt`（容器）、`db_write.mbt`（编码）、`db_read.mbt`
   （解码与校验）
 
@@ -17,7 +17,7 @@
 | 偏移 | 大小 | 字段 | 说明 |
 | --- | --- | --- | --- |
 | 0 | 4 | magic | ASCII `MSDB` |
-| 4 | 2 | version_major | `2`；不匹配直接拒绝 |
+| 4 | 2 | version_major | `3`；不匹配直接拒绝 |
 | 6 | 2 | version_minor | `0`；更高的次版本允许加载 |
 | 8 | 1 | endian | `1` = little-endian |
 | 9 | 3 | reserved | 必须写 0，读取时忽略 |
@@ -273,6 +273,7 @@ full_crc     u32   覆盖 [0, checksum_section.offset)
 
 ## 14. 版本演进
 
-- **主版本**：section 语义不兼容时递增；读取器拒绝其他主版本。
+- **主版本**：section 语义不兼容时递增；读取器拒绝其他主版本。v3 将 ROOTS
+  从“必须合法 UTF-8”改为“Unix 原始字节”，因此拒绝 v2，避免旧读取器误拒新库或折叠路径。
 - **次版本**：只增加 section 或字段时递增；读取器跳过未知 section，按已知字段加载。
 - 每次格式变更必须同步更新本文件与 `src/index/db_test.mbt` 的布局断言。

@@ -78,6 +78,38 @@ test "POSIX readdir and fstatat preserve names as bytes" {
   assert_true(names.contains(second_name))
   assert_true(sizes.contains(3L))
   assert_true(sizes.contains(5L))
+  let short = FixedArray::make(1, b'\x00')
+  let reopened = @platform.Directory::open(root).unwrap()
+  defer reopened.close()
+  let mut found_too_long = false
+  while !found_too_long {
+    match reopened.read_name(short) {
+      End => break
+      NameTooLong => found_too_long = true
+      Failed(_) => abort("readdir failed")
+      Name(name) =>
+        if name != b"." && name != b".." {
+          abort("a non-dot name unexpectedly fit in one byte")
+        }
+    }
+  }
+  assert_true(found_too_long)
+  assert_true(reopened.stat_into(b"bad\x00name", metadata) is Err(_))
+  let short_metadata = FixedArray::make(5, 0L)
+  assert_true(reopened.stat_into(b"first.bin", short_metadata) is Err(_))
+  let exact = FixedArray::make(10, b'\x00')
+  let exact_dir = @platform.Directory::open(root).unwrap()
+  defer exact_dir.close()
+  let mut found_exact = false
+  while true {
+    match exact_dir.read_name(exact) {
+      End => break
+      NameTooLong => abort("an exact-fit name was rejected")
+      Failed(_) => abort("readdir failed")
+      Name(name) => if name == b"second.bin" { found_exact = true }
+    }
+  }
+  assert_true(found_exact)
 }
 
 ///|
@@ -108,11 +140,7 @@ test "POSIX readdir keeps distinct invalid UTF-8 names" {
       End => break
       NameTooLong => abort("unexpected long name")
       Failed(_) => abort("readdir failed")
-      Name(name) => {
-        if name != b"." && name != b".." {
-          names.push(name)
-        }
-      }
+      Name(name) => if name != b"." && name != b".." { names.push(name) }
     }
   }
   assert_eq(names.length(), 2)
@@ -129,4 +157,5 @@ test "POSIX canonical path handles root and trailing separators as bytes" {
   assert_eq(trailing, root)
   let double = @platform.canonical_path(b"//").unwrap()
   assert_true(double == b"/" || double == b"//")
+  assert_true(@platform.canonical_path(b"/bad\x00path") is Err(_))
 }

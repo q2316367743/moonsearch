@@ -16,16 +16,16 @@
 /// Global ids are folders `0..3` followed by files `4..7`.
 fn range_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/r", false, 1000L)
-  ignore(builder.add_file(root, "a.txt", 10L, 100L))
-  ignore(builder.add_file(root, "b.txt", 10L, 200L))
-  let sub = builder.add_folder(root, "sub", 300L)
-  ignore(builder.add_file(sub, "c.bin", 20L, 300L))
+  let root = builder.add_root(b"/r", false, 1000L)
+  ignore(builder.add_file(root, b"a.txt", 10L, 100L))
+  ignore(builder.add_file(root, b"b.txt", 10L, 200L))
+  let sub = builder.add_folder(root, b"sub", 300L)
+  ignore(builder.add_file(sub, b"c.bin", 20L, 300L))
   builder.set_child_counts(sub, 1U, 0U)
   builder.add_folder_size(sub, 20L)
-  let deep = builder.add_folder(root, "deep", 400L)
-  let deeper = builder.add_folder(deep, "deeper", 500L)
-  ignore(builder.add_file(deeper, "d.txt", 25L, 500L))
+  let deep = builder.add_folder(root, b"deep", 400L)
+  let deeper = builder.add_folder(deep, b"deeper", 500L)
+  ignore(builder.add_file(deeper, b"d.txt", 25L, 500L))
   builder.set_child_counts(deeper, 1U, 0U)
   builder.add_folder_size(deeper, 25L)
   builder.add_folder_size(deep, 25L)
@@ -323,11 +323,11 @@ test "a duplicated nested-root path selects every parent bucket" {
   // and once as its own root. Both copies own children, so `parent:` must
   // union both buckets instead of returning only the lowest folder id.
   let builder = @index.Builder::new()
-  let root = builder.add_root("/r", false, 0L)
-  let sub = builder.add_folder(root, "sub", 0L)
-  ignore(builder.add_file(sub, "one.txt", 1L, 0L))
-  let nested_root = builder.add_root("/r/sub", false, 0L)
-  ignore(builder.add_file(nested_root, "two.txt", 2L, 0L))
+  let root = builder.add_root(b"/r", false, 0L)
+  let sub = builder.add_folder(root, b"sub", 0L)
+  ignore(builder.add_file(sub, b"one.txt", 1L, 0L))
+  let nested_root = builder.add_root(b"/r/sub", false, 0L)
+  ignore(builder.add_file(nested_root, b"two.txt", 2L, 0L))
   let store = builder.finish(built_at=0L)
   let ranges = @index.Ranges::build(store)
   assert_eq(ranges.parent_of(b"/r/sub"[:]), Some(sub))
@@ -375,7 +375,7 @@ test "depth resolves a parent stored after its child" {
     files=[@core.Entry::file(parent=0, name=file_name, size=1L, mtime=0L)],
     roots=[
       {
-        path: "/late",
+        path: b"/late",
         one_file_system: false,
         folder: 1,
         files: 1U,

@@ -18,23 +18,23 @@
 /// ```
 fn trigram_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/r", false, 0L)
-  let docs = builder.add_folder(root, "docs", 0L)
-  ignore(builder.add_file(docs, "report.pdf", 1L, 0L))
-  ignore(builder.add_file(docs, "notes.txt", 1L, 0L))
+  let root = builder.add_root(b"/r", false, 0L)
+  let docs = builder.add_folder(root, b"docs", 0L)
+  ignore(builder.add_file(docs, b"report.pdf", 1L, 0L))
+  ignore(builder.add_file(docs, b"notes.txt", 1L, 0L))
   builder.set_child_counts(docs, 2U, 0U)
-  let media = builder.add_folder(root, "media", 0L)
-  ignore(builder.add_file(media, "photo.JPG", 1L, 0L))
+  let media = builder.add_folder(root, b"media", 0L)
+  ignore(builder.add_file(media, b"photo.JPG", 1L, 0L))
   builder.set_child_counts(media, 1U, 0U)
-  ignore(builder.add_file(root, "Report-2024.md", 1L, 0L))
-  ignore(builder.add_file(root, "aaaaa", 1L, 0L))
-  ignore(builder.add_file(root, "a", 1L, 0L))
-  ignore(builder.add_file(root, "ab", 1L, 0L))
-  ignore(builder.add_file(root, "发票.txt", 1L, 0L))
+  ignore(builder.add_file(root, b"Report-2024.md", 1L, 0L))
+  ignore(builder.add_file(root, b"aaaaa", 1L, 0L))
+  ignore(builder.add_file(root, b"a", 1L, 0L))
+  ignore(builder.add_file(root, b"ab", 1L, 0L))
+  ignore(builder.add_file(root, b"发票.txt", 1L, 0L))
   ignore(
-    builder.add_file(root, ".hidden", 1L, 0L, flags=@core.ENTRY_FLAG_HIDDEN),
+    builder.add_file(root, b".hidden", 1L, 0L, flags=@core.ENTRY_FLAG_HIDDEN),
   )
-  ignore(builder.add_file(root, "abbaab", 1L, 0L))
+  ignore(builder.add_file(root, b"abbaab", 1L, 0L))
   builder.set_child_counts(root, 6U, 2U)
   builder.set_root_stats(0, 10U, 2U, 0L)
   builder.finish(built_at=0L)
@@ -239,13 +239,13 @@ test "an empty index has no keys and scans everything" {
 /// unrelated.
 fn stop_gram_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
-  let root = builder.add_root("/s", false, 0L)
+  let root = builder.add_root(b"/s", false, 0L)
   for index in 0..<40 {
     let name = if index < 10 { "common0\{index}" } else { "common\{index}" }
-    ignore(builder.add_file(root, name, 1L, 0L))
+    ignore(builder.add_file(root, @utf8.encode(name), 1L, 0L))
   }
-  ignore(builder.add_file(root, "commonapple.txt", 1L, 0L))
-  ignore(builder.add_file(root, "xylophone.txt", 1L, 0L))
+  ignore(builder.add_file(root, b"commonapple.txt", 1L, 0L))
+  ignore(builder.add_file(root, b"xylophone.txt", 1L, 0L))
   builder.set_child_counts(root, 42U, 0U)
   builder.set_root_stats(0, 42U, 0U, 0L)
   builder.finish(built_at=0L)
