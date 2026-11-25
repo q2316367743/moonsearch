@@ -103,3 +103,100 @@ test "negative ids and missing removals are no-ops" {
   bitmap.remove(42)
   assert_true(bitmap.is_empty())
 }
+
+///|
+test "block operations cover all four container shape combinations" {
+  let array_left = Bitmap::from_ids(Array::makei(100, fn(index) { index * 2 }))
+  let array_right = Bitmap::from_ids(
+    Array::makei(100, fn(index) { index * 2 + 1 }),
+  )
+  let bits_left = Bitmap::from_ids(Array::makei(5000, fn(index) { index }))
+  let bits_overlap = Bitmap::from_ids(
+    Array::makei(5000, fn(index) { index + 100 }),
+  )
+  let bits_right = Bitmap::from_ids(
+    Array::makei(5000, fn(index) { index + 2500 }),
+  )
+  assert_true(array_left.containers[0] is Some(Container::Array(_)))
+  assert_true(array_right.containers[0] is Some(Container::Array(_)))
+  assert_true(bits_left.containers[0] is Some(Container::Bits(_)))
+  assert_true(bits_overlap.containers[0] is Some(Container::Bits(_)))
+  assert_true(bits_right.containers[0] is Some(Container::Bits(_)))
+
+  let cases : Array[(Bitmap, Bitmap, Int32, Int32, Int32)] = [
+    (array_left, array_right, 0, 200, 100),
+    (array_left, bits_overlap, 50, 5050, 50),
+    (bits_left, array_right, 100, 5000, 4900),
+    (bits_left, bits_right, 2500, 7500, 2500),
+  ]
+  for case in cases {
+    let left = case.0
+    let right = case.1
+    let intersection = left.intersect(right)
+    let union = left.union(right)
+    let difference = left.difference(right)
+    assert_eq(intersection.cardinality(), case.2)
+    assert_eq(union.cardinality(), case.3)
+    assert_eq(difference.cardinality(), case.4)
+    assert_eq(
+      intersection.cardinality() + difference.cardinality(),
+      left.cardinality(),
+    )
+    assert_eq(
+      intersection.cardinality() + right.difference(left).cardinality(),
+      right.cardinality(),
+    )
+  }
+  // The first array/array intersection empties and trims its only block.
+  assert_true(array_left.intersect(array_right).containers.is_empty())
+  // Operands retain their original container forms and cardinalities.
+  assert_eq(array_left.cardinality(), 100)
+  assert_eq(bits_left.cardinality(), 5000)
+  assert_true(bits_left.containers[0] is Some(Container::Bits(_)))
+}
+
+///|
+test "set operations preserve internal empty blocks at block boundaries" {
+  let left = Bitmap::from_ids([1, 65535, 131073])
+  let right = Bitmap::from_ids([65536, 131073, 196609])
+  let intersection = left.intersect(right)
+  assert_eq(intersection.to_sorted_ids(), [131073])
+  assert_eq(intersection.containers.length(), 3)
+  assert_true(intersection.containers[0] is None)
+  assert_true(intersection.containers[1] is None)
+  assert_true(intersection.containers[2] is Some(Container::Array(_)))
+
+  assert_eq(left.union(right).to_sorted_ids(), [1, 65535, 65536, 131073, 196609])
+  assert_eq(left.difference(right).to_sorted_ids(), [1, 65535])
+  assert_eq(right.difference(left).to_sorted_ids(), [65536, 196609])
+}
+
+///|
+test "bulk sorted removal handles bits arrays holes and out-of-range blocks" {
+  let bitmap = Bitmap::from_ids(Array::makei(5000, fn(index) { index }))
+  bitmap.add(131073)
+  bitmap.add(131075)
+  let removed : Array[Int32] = [-1]
+  for index in 0..<1000 {
+    removed.push(index)
+  }
+  removed.push(131073)
+  removed.push(196609)
+  bitmap.remove_ids(removed)
+  assert_eq(bitmap.cardinality(), 4001)
+  assert_true(bitmap.containers[0] is Some(Container::Array(_)))
+  assert_true(bitmap.containers[1] is None)
+  assert_true(bitmap.containers[2] is Some(Container::Array(_)))
+  assert_eq(bitmap.containers.length(), 3)
+  assert_false(bitmap.contains(0))
+  assert_false(bitmap.contains(999))
+  assert_true(bitmap.contains(1000))
+  assert_true(bitmap.contains(4999))
+  assert_false(bitmap.contains(131073))
+  assert_true(bitmap.contains(131075))
+
+  let tail = Bitmap::from_ids([131073])
+  tail.remove_ids([131073, 196609])
+  assert_true(tail.is_empty())
+  assert_true(tail.containers.is_empty())
+}

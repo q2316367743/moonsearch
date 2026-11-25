@@ -140,38 +140,38 @@ test "set algebra identities hold for random sets and shapes" {
       let right = property_ids(right_values, universe)
       // commutativity
       property_assert_eq(
-        left.union(middle),
+        left.union_with_total(middle),
         property_ref_union(left_values, middle_values, universe),
         "union",
       )
       property_assert_eq(
-        middle.union(left),
+        middle.union_with_total(left),
         property_ref_union(middle_values, left_values, universe),
         "union commutative",
       )
       property_assert_eq(
-        left.intersect(middle),
+        left.intersect_with_total(middle),
         property_ref_intersect(left_values, middle_values, universe),
         "intersect",
       )
       property_assert_eq(
-        middle.intersect(left),
+        middle.intersect_with_total(left),
         property_ref_intersect(middle_values, left_values, universe),
         "intersect commutative",
       )
       property_assert_eq(
-        left.difference(middle),
+        left.difference_with_total(middle),
         property_ref_difference(left_values, middle_values, universe),
         "difference",
       )
       // distributivity: A ∩ (B ∪ C) = (A ∩ B) ∪ (A ∩ C)
       let union_bc = property_ref_union(middle_values, right_values, universe)
-      let distributed_left = @ids.Ids::from_sorted(union_bc, total=universe).intersect(
+      let distributed_left = @ids.Ids::from_sorted(union_bc, total=universe).intersect_with_total(
         left,
       )
       let distributed_right = left
-        .intersect(middle)
-        .union(left.intersect(right))
+        .intersect_with_total(middle)
+        .union_with_total(left.intersect_with_total(right))
       property_assert_eq(
         distributed_left,
         property_ref_intersect(union_bc, left_values, universe),
@@ -187,12 +187,12 @@ test "set algebra identities hold for random sets and shapes" {
         "right distributivity",
       )
       // A \ B = A ∩ (U \ B)
-      let complement = @ids.Ids::from_sorted(full, total=universe).difference(
+      let complement = @ids.Ids::from_sorted(full, total=universe).difference_with_total(
         middle,
       )
       property_assert_eq(
-        left.difference(middle),
-        left.intersect(complement).to_sorted_ids(),
+        left.difference_with_total(middle),
+        left.intersect_with_total(complement).to_sorted_ids(),
         "difference as complement",
       )
       // normalize keeps the set and picks a legal shape.
@@ -202,6 +202,55 @@ test "set algebra identities hold for random sets and shapes" {
     }
   }
   assert_true(operations > 0)
+}
+
+///|
+test "skewed sorted sets match masks and exercise the galloping path" {
+  let universe = 240000
+  let short_values : Array[Int32] = [
+    0, 13, 64, 65535, 65536, 131071, 131072, 200000, 239999,
+  ]
+  let long_values : Array[Int32] = []
+  for index in 0..<3000 {
+    let value = index * 73
+    long_values.push(if index % 5 == 0 { value + 1 } else { value })
+  }
+  // Both operands stay below 4096 and below the density threshold, so the public
+  // operations take the Sorted x Sorted path and select galloping from length.
+  let short = @ids.Ids::from_sorted(short_values, total=universe)
+  let long = @ids.Ids::from_sorted(long_values, total=universe)
+  assert_true(short is @ids.Ids::Sorted(_))
+  assert_true(long is @ids.Ids::Sorted(_))
+  assert_true(
+    short_values.length() + @ids.IDS_GALLOP_MIN_LENGTH_DIFF <
+    long_values.length(),
+  )
+
+  let pairs : Array[(@ids.Ids, @ids.Ids, Array[Int32], Array[Int32])] = [
+    (short, long, short_values, long_values),
+    (long, short, long_values, short_values),
+  ]
+  for pair in pairs {
+    let left = pair.0
+    let right = pair.1
+    let left_values = pair.2
+    let right_values = pair.3
+    property_assert_eq(
+      left.intersect_with_total(right, total=universe),
+      property_ref_intersect(left_values, right_values, universe),
+      "skewed intersect",
+    )
+    property_assert_eq(
+      left.union_with_total(right, total=universe),
+      property_ref_union(left_values, right_values, universe),
+      "skewed union",
+    )
+    property_assert_eq(
+      left.difference_with_total(right, total=universe),
+      property_ref_difference(left_values, right_values, universe),
+      "skewed difference",
+    )
+  }
 }
 
 ///|

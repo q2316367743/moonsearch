@@ -18,6 +18,8 @@ pub const CONTAINER_ARRAY_MAX : Int32 = 4096
 
 pub const IDS_DENSITY_DIVISOR : Int32 = 32
 
+pub const IDS_GALLOP_MIN_LENGTH_DIFF : Int32 = 8
+
 pub const IDS_SORTED_MAX : Int32 = 4096
 
 // Errors
@@ -56,18 +58,24 @@ pub enum Ids {
 pub fn Ids::cardinality(Self) -> Int32
 pub fn Ids::contains(Self, Int32) -> Bool
 pub fn Ids::difference(Self, Self) -> Self
+pub fn Ids::difference_with_total(Self, Self, total? : Int32) -> Self
 pub fn Ids::empty() -> Self
 pub fn Ids::filter(Self, (Int32) -> Bool) -> Self
+pub fn Ids::filter_into(Self, (Int32) -> Bool, Array[Int32]) -> Unit
+pub fn Ids::filter_with_total(Self, (Int32) -> Bool, total? : Int32) -> Self
 pub fn Ids::from_bitmap(Bitmap) -> Self
 pub fn Ids::from_bytes(BytesView) -> Self raise IdsError
 pub fn Ids::from_sorted(Array[Int32], total? : Int32) -> Self
+pub fn Ids::from_sorted_canonical(Array[Int32], total? : Int32) -> Self
 pub fn Ids::intersect(Self, Self) -> Self
+pub fn Ids::intersect_with_total(Self, Self, total? : Int32) -> Self
 pub fn Ids::is_empty(Self) -> Bool
 pub fn Ids::normalize(Self, Int32) -> Self
 pub fn Ids::to_bitmap(Self) -> Bitmap
 pub fn Ids::to_bytes(Self) -> Bytes
 pub fn Ids::to_sorted_ids(Self) -> Array[Int32]
 pub fn Ids::union(Self, Self) -> Self
+pub fn Ids::union_with_total(Self, Self, total? : Int32) -> Self
 
 // Type aliases
 

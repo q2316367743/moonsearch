@@ -22,6 +22,7 @@ id 空间是 `Int32`，非负。S06 本身只处理裸 id，不关心条目类�
 | `codec.mbt` | `Ids::to_bytes` / `Ids::from_bytes`、varint、边界校验 |
 | `*_test.mbt` | 与朴素集合对拍、阈值边界、序列化与损坏输入 |
 | `property_test.mbt` | S13：随机集合的代数恒等式、序列化往返与变异安全性 |
+| `ids_bench_wbtest.mbt` | 稀疏悬殊集合的归并/galloping 对照基准 |
 
 ## `Ids`：两种物理形态
 
@@ -57,8 +58,9 @@ pub enum Ids {
   `Ids::normalize(total)` 重新定形。
 
 `Ids::from_sorted(ids, total~)` 会丢弃负 id、排序、去重后规范化，调用方不必预排序。
-公开的 enum 构造器仍可产生非规范值（例如大 `Sorted`），运算会按输入形态选择策略，
-结果再经 `canonical_sorted` 规范化。
+执行器已经持有一个升序、无重复且不再共享的数组时，可以用 `Ids::from_sorted_canonical`
+转移所有权，避免再次排序和复制。公开的 enum 构造器仍可产生非规范值（例如大 `Sorted`），
+运算会按输入形态选择策略，结果再经 `canonical_sorted` 规范化。
 
 ## `Bitmap`：分块容器
 
@@ -98,18 +100,27 @@ pub enum Container {
 
 ## 集合运算策略
 
-`Ids::intersect` / `union` / `difference` 按两个输入的形态分派：
+`Ids::intersect` / `union` / `difference` 保持原有两参数签名。对应的
+`intersect_with_total` / `union_with_total` / `difference_with_total` 与 `filter_with_total`
+接受 `total`，让执行器直接按索引总条目数定形；省略 `total` 时仍只应用 4096 基数阈值。
 
 | 左 | 右 | 策略 |
 | --- | --- | --- |
 | Bitmap | Bitmap | 块级位运算 |
-| Sorted | Sorted | 归并 |
-| Bitmap | Sorted（≤4096） | 逐元素 `contains` 探测，结果保持升序 |
+| Sorted | Sorted（长度差 ≤ 8） | 线性归并 |
+| Sorted | Sorted（长度差 > 8） | 短边在长边上做指数探测（galloping） |
+| Bitmap | Sorted（≤4096） | 交：逐元素 `contains`；并/差：克隆位图后增删，避免为稀疏大 id 分配空洞块 |
 | Bitmap | Sorted（>4096） | 先把 Sorted 转成 Bitmap，再块级运算 |
-| 空集 | 任意 | 结果为空集 |
+| 空集 | 任意 | 交集/差集返回空集，并集返回非空操作数，均不遍历另一个集合 |
 
-`Ids::filter(pred)` 按升序枚举（位图先展开为 id 列表），过滤后按基数重新定形：
-把稠密位图过滤到几十条时会返回 `Sorted`。
+galloping 的阈值常量是 `IDS_GALLOP_MIN_LENGTH_DIFF = 8`，边界语义为“差大于 8”才切换。
+交集与差集用推进中的指数搜索光标跳过长数组的大段空洞；并集虽然必须输出长边全部元素，
+仍由短边 gallop 定位插入区间。所有结果保持升序、无重复。
+
+`Ids::filter(pred)` 按升序枚举后重新定形；`filter_with_total(pred, total~)` 额外应用索引密度。
+执行器走 `filter_into` 把候选直接写入可复用工作数组：自己产生的 `Sorted` 中间集原地压缩，
+共享集合或位图则使用每次求值上下文的缓冲池，避免 `Bitmap::to_sorted_ids()` 的中间数组。
+`from_sorted_canonical` 接管写满的缓冲，消费完的中间缓冲再归还缓冲池。
 
 `Ids::to_bitmap()` 对已经是位图的集合做深拷贝；`Ids::to_sorted_ids()` 总是返回副本。
 
@@ -148,8 +159,12 @@ sorted: len 个无符号 LEB128 增量；首个值为绝对 id，后续为与前
 - 四种形态组合（Sorted/Sorted、Sorted/Bitmap、Bitmap/Sorted、Bitmap/Bitmap）的
   交、并、差与独立 `Array[Bool]` 参考实现逐项对拍；
 - 大集合（2 万 + 1.3 万 id）对拍，以及大 `Sorted × Bitmap` 策略分支；
-- 形态阈值边界：4096/4097、密度 1/32、`normalize(total)`；
-- 容器阈值：4096/4097 翻转、删除回翻、块边界 65535/65536、负 id、重复插入；
+- galloping 阈值 8/9、两种方向、归并与 galloping 的逐元素对照，以及稀疏悬殊集合的
+  mask 对拍和 `moon bench` 基准；
+- 空集在 Sorted/Bitmap 两种物理形态下的交、并、差短路；
+- 形态阈值边界：4096/4097、密度 1/32、运算与 `filter` 的 `total` 定形；
+- 容器阈值：4096/4097 翻转、删除回翻、Array/Bits 四种组合、块边界 65535/65536、
+  内部空块、负 id、重复插入；
 - 序列化往返（空集、小 Sorted、稠密 Bits、跨块 mixed），编码稳定性；
 - 损坏输入：截断、未知 tag、未知容器、基数不符、非升序、尾随字节、Int32 溢出。
 
@@ -162,6 +177,8 @@ sorted: len 个无符号 LEB128 增量；首个值为绝对 id，后续为与前
   `A ∩ (B ∪ C) = (A ∩ B) ∪ (A ∩ C)`，差集恒等式 `A \ B = A ∩ (U \ B)`，
   `normalize` 保持集合，基数与成员判断一致；每一步都与 `Array[Bool]` 掩码参考实现
   逐 id 对拍。
+- **稀疏悬殊集合**：短边 9 个 id、长边 3000 个 id 均保持 `Sorted`，公开交、并、差
+  与 `Array[Bool]` 掩码参考实现对拍，覆盖 galloping 选择；
 - **序列化**：随机集合 `to_bytes` → `from_bytes` 必须相等；随后随机翻转 1–4 个
   字节，成功解码的结果仍须是严格升序、基数与元素数一致；任意截断必须返回
   `IdsError`。

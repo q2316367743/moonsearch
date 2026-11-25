@@ -5,3 +5,7 @@ import {
 import {
   "q2316367743/moonsearch/src/testkit",
 } for "test"
+
+import {
+  "moonbitlang/core/bench",
+} for "wbtest"

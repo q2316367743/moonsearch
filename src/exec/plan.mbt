@@ -255,7 +255,13 @@ pub fn exec_indexed(
   compat~ : Bool = false,
 ) -> @ids.Ids raise @query.QueryError {
   let expr = compile_indexed(index, query, options~, compat~)
-  evaluate_plan(expr, { store: index.store(), universe: index.dict().all(), })
+  let context : EvalContext = {
+    store: index.store(),
+    universe: index.dict().all(),
+    total: index.entry_count(),
+    scratch: [],
+  }
+  evaluate_plan(expr, context).ids
 }
 
 ///|
@@ -637,7 +643,7 @@ fn optimize_and(left : Expr, right : Expr, context : OptimizeContext) -> Expr {
   }
   match (left, right) {
     (Const(a), Const(b)) => {
-      let ids = a.ids.intersect(b.ids).normalize(context.total)
+      let ids = a.ids.intersect_with_total(b.ids, total=context.total)
       if ids.is_empty() {
         none_expr()
       } else {
@@ -670,7 +676,7 @@ fn optimize_or(left : Expr, right : Expr, context : OptimizeContext) -> Expr {
   }
   match (left, right) {
     (Const(a), Const(b)) => {
-      let ids = a.ids.union(b.ids).normalize(context.total)
+      let ids = a.ids.union_with_total(b.ids, total=context.total)
       Expr::Const({ ids, label: "(or \{a.label} \{b.label})", })
     }
     _ =>
@@ -692,7 +698,10 @@ fn optimize_or(left : Expr, right : Expr, context : OptimizeContext) -> Expr {
 fn optimize_not(inner : Expr, context : OptimizeContext) -> Expr {
   match inner {
     Const(leaf) => {
-      let ids = context.universe.difference(leaf.ids).normalize(context.total)
+      let ids = context.universe.difference_with_total(
+        leaf.ids,
+        total=context.total,
+      )
       if ids.is_empty() {
         none_expr()
       } else if ids.cardinality() == context.total {
@@ -797,35 +806,180 @@ pub fn Expr::describe(self : Expr, total : Int32) -> String {
 priv struct EvalContext {
   store : @core.Store
   universe : @ids.Ids
+  total : Int32
+  scratch : Array[Array[Int32]]
+}
+
+///|
+/// An evaluated set plus a sorted buffer the evaluator is allowed to recycle.
+///
+/// Dictionary, range, and universe sets are shared with the index, so they never
+/// carry a recyclable buffer. Sets produced by this evaluation do.
+priv struct EvalResult {
+  ids : @ids.Ids
+  recyclable : Array[Int32]?
 }
 
 ///|
 /// Evaluate a plan node into an id set.
-///
-/// `And` short-circuits when the first side is empty. `Filter` verifies only the
-/// candidates its source produced, which is the payoff of predicate pushdown.
-fn evaluate_plan(expr : Expr, context : EvalContext) -> @ids.Ids {
+fn evaluate_plan(expr : Expr, context : EvalContext) -> EvalResult {
   match expr {
-    Const(leaf) => leaf.ids
+    Const(leaf) => shared_result(leaf.ids)
     Trigram(leaf) =>
-      leaf.candidates.filter(fn(id) { verify_term(leaf.term, context, id) })
+      filter_result(shared_result(leaf.candidates), leaf.term, context)
     Scan(leaf) =>
-      context.universe.filter(fn(id) { verify_term(leaf.term, context, id) })
-    Filter(predicate, source) =>
-      evaluate_plan(source, context).filter(fn(id) {
-        verify_term(predicate.term, context, id)
-      })
+      filter_result(shared_result(context.universe), leaf.term, context)
+    Filter(predicate, source) => {
+      let source = evaluate_plan(source, context)
+      filter_result(source, predicate.term, context)
+    }
     And(left, right) => {
-      let left_ids = evaluate_plan(left, context)
-      if left_ids.is_empty() {
-        left_ids
+      let left = evaluate_plan(left, context)
+      if left.ids.is_empty() {
+        left
       } else {
-        left_ids.intersect(evaluate_plan(right, context))
+        let right = evaluate_plan(right, context)
+        let ids = left.ids.intersect_with_total(right.ids, total=context.total)
+        release_result(left, context)
+        release_result(right, context)
+        owned_result(ids)
       }
     }
-    Or(left, right) =>
-      evaluate_plan(left, context).union(evaluate_plan(right, context))
-    Not(inner) => context.universe.difference(evaluate_plan(inner, context))
+    Or(left, right) => {
+      let left = evaluate_plan(left, context)
+      let right = evaluate_plan(right, context)
+      if left.ids.is_empty() {
+        release_result(left, context)
+        right
+      } else if right.ids.is_empty() {
+        release_result(right, context)
+        left
+      } else {
+        let ids = left.ids.union_with_total(right.ids, total=context.total)
+        release_result(left, context)
+        release_result(right, context)
+        owned_result(ids)
+      }
+    }
+    Not(inner) => {
+      let inner = evaluate_plan(inner, context)
+      if inner.ids.is_empty() {
+        release_result(inner, context)
+        shared_result(context.universe)
+      } else {
+        let ids = context.universe.difference_with_total(
+          inner.ids,
+          total=context.total,
+        )
+        release_result(inner, context)
+        owned_result(ids)
+      }
+    }
+  }
+}
+
+///|
+/// A set whose storage belongs to the index and must not be compacted.
+fn shared_result(ids : @ids.Ids) -> EvalResult {
+  { ids, recyclable: None, }
+}
+
+///|
+/// A freshly computed set whose sorted array can be compacted or recycled.
+fn owned_result(ids : @ids.Ids) -> EvalResult {
+  let recyclable = match ids {
+    @ids.Ids::Sorted(values) => Some(values)
+    @ids.Ids::Bitmap(_) => None
+  }
+  { ids, recyclable, }
+}
+
+///|
+/// Take an empty buffer from the per-evaluation pool, allocating only when the
+/// pool has no spare. Nested plan nodes can therefore keep several buffers live
+/// without every filter allocating a fresh array.
+fn take_scratch(context : EvalContext) -> Array[Int32] {
+  match context.scratch.pop() {
+    Some(values) => values
+    None => []
+  }
+}
+
+///|
+/// Return a no-longer-used buffer to the pool, retaining its capacity.
+fn recycle_scratch(context : EvalContext, values : Array[Int32]) -> Unit {
+  while !values.is_empty() {
+    ignore(values.pop())
+  }
+  context.scratch.push(values)
+}
+
+///|
+/// Release storage owned by an intermediate result.
+fn release_result(result : EvalResult, context : EvalContext) -> Unit {
+  match result.recyclable {
+    Some(values) => recycle_scratch(context, values)
+    None => ()
+  }
+}
+
+///|
+/// Compact an owned sorted set in place. The write cursor never overtakes the
+/// read cursor, so filtering does not overwrite an unvisited id.
+fn compact_filter(values : Array[Int32], pred : (Int32) -> Bool) -> Unit {
+  let mut write = 0
+  for read in 0..<values.length() {
+    let id = values[read]
+    if pred(id) {
+      values[write] = id
+      write = write + 1
+    }
+  }
+  while values.length() > write {
+    ignore(values.pop())
+  }
+}
+
+///|
+/// Apply a pushed-down predicate, reusing owned storage whenever possible.
+///
+/// This is the hot predicate-pushdown path: a sorted intermediate is compacted
+/// in place, while a bitmap or shared sorted set streams directly into a pooled
+/// buffer without first materializing `Bitmap::to_sorted_ids()`.
+fn filter_result(
+  source : EvalResult,
+  term : ScanTerm,
+  context : EvalContext,
+) -> EvalResult {
+  if source.ids.is_empty() {
+    return source
+  }
+  let pred = fn(id) { verify_term(term, context, id) }
+  match (source.ids, source.recyclable) {
+    (@ids.Ids::Sorted(_), Some(owned)) => {
+      compact_filter(owned, pred)
+      let ids = @ids.Ids::from_sorted_canonical(owned, total=context.total)
+      match ids {
+        @ids.Ids::Sorted(_) => { ids, recyclable: Some(owned), }
+        @ids.Ids::Bitmap(_) => {
+          recycle_scratch(context, owned)
+          { ids, recyclable: None, }
+        }
+      }
+    }
+    _ => {
+      let buffer = take_scratch(context)
+      source.ids.filter_into(pred, buffer)
+      let ids = @ids.Ids::from_sorted_canonical(buffer, total=context.total)
+      release_result(source, context)
+      match ids {
+        @ids.Ids::Sorted(_) => { ids, recyclable: Some(buffer), }
+        @ids.Ids::Bitmap(_) => {
+          recycle_scratch(context, buffer)
+          { ids, recyclable: None, }
+        }
+      }
+    }
   }
 }
 

@@ -68,10 +68,16 @@ pub fn Bitmap::new() -> Bitmap {
 /// bitmap stores each id once.
 pub fn Bitmap::from_ids(ids : Array[Int32]) -> Bitmap {
   let bitmap = Bitmap::new()
-  for id in ids {
-    bitmap.add(id)
-  }
+  bitmap.add_ids(ids)
   bitmap
+}
+
+///|
+/// Add every id from an ascending or arbitrary array.
+fn Bitmap::add_ids(self : Bitmap, ids : Array[Int32]) -> Unit {
+  for id in ids {
+    self.add(id)
+  }
 }
 
 ///|
@@ -190,6 +196,70 @@ pub fn Bitmap::remove(self : Bitmap, id : Int32) -> Unit {
 }
 
 ///|
+/// Remove every id from an ascending sorted array in one pass.
+///
+/// Cardinality for a bits block is computed once per touched block rather than
+/// once per id, keeping the small-sorted mixed strategy cheap even when the
+/// removed ids are dense inside that block.
+fn Bitmap::remove_ids(self : Bitmap, ids : Array[Int32]) -> Unit {
+  let mut index = 0
+  while index < ids.length() {
+    let id = ids[index]
+    if id < 0 {
+      index = index + 1
+      continue
+    }
+    let block = id >> BITMAP_BLOCK_SHIFT
+    if block >= self.containers.length() {
+      break
+    }
+    match self.containers[block] {
+      None => {
+        index = index + 1
+        while index < ids.length() && ids[index] >> BITMAP_BLOCK_SHIFT == block {
+          index = index + 1
+        }
+      }
+      Some(Container::Array(values)) => {
+        while index < ids.length() && ids[index] >> BITMAP_BLOCK_SHIFT == block {
+          let offset = (ids[index] & BITMAP_BLOCK_MASK).to_uint16()
+          let position = lower_bound(values, offset)
+          if position < values.length() && values[position] == offset {
+            ignore(values.remove(position))
+            self.len = self.len - 1
+          }
+          index = index + 1
+        }
+        if values.is_empty() {
+          self.containers[block] = None
+        }
+      }
+      Some(Container::Bits(words)) => {
+        let mut remaining = words_cardinality(words)
+        while index < ids.length() && ids[index] >> BITMAP_BLOCK_SHIFT == block {
+          let offset = (ids[index] & BITMAP_BLOCK_MASK).to_uint16()
+          let word = offset.to_int() / BITMAP_WORD_BITS
+          let bit = offset.to_int() % BITMAP_WORD_BITS
+          let mask = 1UL << bit
+          if (words[word] & mask) != 0UL {
+            words[word] = words[word] & mask.lnot()
+            self.len = self.len - 1
+            remaining = remaining - 1
+          }
+          index = index + 1
+        }
+        if remaining == 0 {
+          self.containers[block] = None
+        } else if remaining <= CONTAINER_ARRAY_MAX {
+          self.containers[block] = Some(Container::Array(bits_to_array(words)))
+        }
+      }
+    }
+  }
+  trim_trailing_empty(self.containers)
+}
+
+///|
 /// Whether the id is present.
 pub fn Bitmap::contains(self : Bitmap, id : Int32) -> Bool {
   if id < 0 {
@@ -210,21 +280,33 @@ pub fn Bitmap::contains(self : Bitmap, id : Int32) -> Bool {
 /// All ids in the bitmap, ascending.
 pub fn Bitmap::to_sorted_ids(self : Bitmap) -> Array[Int32] {
   let ids : Array[Int32] = []
+  self.for_each_ids(fn(id) { ids.push(id) })
+  ids
+}
+
+///|
+/// Visit ids in ascending order without allocating an intermediate array for a
+/// bits container. Filters use this to write straight into a reusable buffer.
+fn Bitmap::for_each_ids(self : Bitmap, visit : (Int32) -> Unit) -> Unit {
   for block in 0..<self.containers.length() {
     let base = block << BITMAP_BLOCK_SHIFT
     match self.containers[block] {
       None => ()
       Some(Container::Array(values)) =>
         for value in values {
-          ids.push(base + value.to_int())
+          visit(base + value.to_int())
         }
       Some(Container::Bits(words)) =>
-        for value in bits_to_array(words) {
-          ids.push(base + value.to_int())
+        for word_index in 0..<BITMAP_WORDS {
+          let mut word = words[word_index]
+          while word != 0UL {
+            let bit = word.ctz()
+            visit(base + word_index * BITMAP_WORD_BITS + bit)
+            word = word & (word - 1UL)
+          }
         }
     }
   }
-  ids
 }
 
 ///|
