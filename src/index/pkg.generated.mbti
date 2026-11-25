@@ -5,6 +5,7 @@ import {
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/ids",
   "q2316367743/moonsearch/src/platform",
+  "q2316367743/moonsearch/src/query",
   "q2316367743/moonsearch/src/util",
 }
 
@@ -33,7 +34,7 @@ pub suberror IndexError {
   RootMissing(Bytes)
   RootNotDirectory(Bytes)
   NestedRoots(outer~ : Bytes, nested~ : Bytes)
-  UnsupportedExclude(String)
+  UnreadableDirectory(Bytes)
   NameTooLong(Int32)
   NamePoolFull
   Io(String)
@@ -110,8 +111,8 @@ pub struct ExcludeRule {
 pub fn ExcludeRule::is_active(Self) -> Bool
 pub fn ExcludeRule::kind(Self) -> ExcludeKind
 pub fn ExcludeRule::matches(Self, BytesView, BytesView, Bool) -> Bool
-pub fn ExcludeRule::new(kind~ : ExcludeKind, pattern~ : StringView, scope? : ExcludeScope, target? : ExcludeTarget, active? : Bool) -> Self
-pub fn ExcludeRule::parse(StringView, scope? : ExcludeScope, target? : ExcludeTarget) -> Self raise IndexError
+pub fn ExcludeRule::new(kind~ : ExcludeKind, pattern~ : StringView, scope? : ExcludeScope, target? : ExcludeTarget, active? : Bool) -> Self raise @query.QueryError
+pub fn ExcludeRule::parse(StringView, scope? : ExcludeScope, target? : ExcludeTarget) -> Self raise @query.QueryError
 pub fn ExcludeRule::pattern(Self) -> String
 pub fn ExcludeRule::scope(Self) -> ExcludeScope
 pub fn ExcludeRule::target(Self) -> ExcludeTarget
@@ -225,8 +226,9 @@ pub(all) struct ScanConfig {
   exclude_hidden : Bool
   allow_nested_roots : Bool
   default_excludes : Bool
+  unreadable_directories : UnreadableDirectoryPolicy
 }
-pub fn ScanConfig::new(roots~ : Array[RootSpec], excludes? : Array[ExcludeRule], exclude_hidden? : Bool, allow_nested_roots? : Bool, default_excludes? : Bool) -> Self
+pub fn ScanConfig::new(roots~ : Array[RootSpec], excludes? : Array[ExcludeRule], exclude_hidden? : Bool, allow_nested_roots? : Bool, default_excludes? : Bool, unreadable_directories? : UnreadableDirectoryPolicy) -> Self
 
 pub(all) struct ScanIssue {
   path : Bytes
@@ -276,6 +278,11 @@ pub fn TrigramPosting::from_sorted(Array[Int32]) -> Self
 pub fn TrigramPosting::ids(Self) -> ArrayView[Int32]
 pub fn TrigramPosting::is_empty(Self) -> Bool
 pub fn TrigramPosting::len(Self) -> Int32
+
+pub(all) enum UnreadableDirectoryPolicy {
+  Continue
+  Fatal
+}
 
 // Type aliases
 

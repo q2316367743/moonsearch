@@ -405,13 +405,37 @@ fn test_database(name : String) -> String {
 }
 
 ///|
+/// POSIX records a symlink's own target length; the Windows fallback reports
+/// zero. Keep shared fixture expectations valid on both backends.
+#cfg(not(platform="windows"))
+fn fixture_link_bytes() -> Int64 {
+  3L
+}
+
+///|
+#cfg(platform="windows")
+fn fixture_link_bytes() -> Int64 {
+  0L
+}
+
+///|
+fn small_fixture_bytes() -> Int64 {
+  6L + fixture_link_bytes()
+}
+
+///|
+fn tree_fixture_bytes() -> Int64 {
+  11L + fixture_link_bytes()
+}
+
+///|
 /// Create a small fixture tree for end-to-end index tests.
 async fn make_fixture(prefix : String) -> String {
   let dir = @fs.tmpdir(prefix~)
   @fs.mkdir("\{dir}/sub")
   @fs.write_text("\{dir}/a.txt", "hello")
   @fs.write_text("\{dir}/sub/b.pdf", "x")
-  @fs.symlink(target="\{dir}/sub", "\{dir}/link")
+  @fs.symlink(target="sub", "\{dir}/link")
   dir
 }
 
@@ -423,10 +447,10 @@ async test "index scans a real directory tree" {
   match result {
     @cli.Success(text) =>
       // Root + sub are folders; a.txt, b.pdf, and the symlink are files.
-      // The symlink is not followed, so it contributes no bytes.
+      // The link is not followed; its own target text "sub" contributes 3 bytes.
       assert_eq(
         trim_final_lf(text),
-        b"roots: 1\nfolders: 2\nfiles: 3\nbytes: 6",
+        b"roots: 1\nfolders: 2\nfiles: 3\nbytes: \{small_fixture_bytes()}",
       )
     @cli.SuccessWith(out, diagnostics) =>
       abort("unexpected diagnostics: \{out}\n\{diagnostics}")
@@ -443,7 +467,10 @@ async test "a written database drives search, count, and info without the roots"
     _ => ()
   }
   let indexed = @cli.run(["index", "-D", database, dir])
-  assert_eq(index_stdout(indexed), b"roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+  assert_eq(
+    index_stdout(indexed),
+    b"roots: 1\nfolders: 2\nfiles: 3\nbytes: \{small_fixture_bytes()}",
+  )
   let info = @cli.run(["info", "-D", database, "--verify"])
   @fs.remove(dir, recursive=true)
   match info {
@@ -508,7 +535,10 @@ async test "index uses the XDG data directory by default" {
   let search = @cli.run(["search", "-D", database, "a.txt"])
   @fs.remove(dir, recursive=true)
   @fs.remove(home, recursive=true)
-  assert_eq(index_stdout(indexed), b"roots: 1\nfolders: 2\nfiles: 3\nbytes: 6")
+  assert_eq(
+    index_stdout(indexed),
+    b"roots: 1\nfolders: 2\nfiles: 3\nbytes: \{small_fixture_bytes()}",
+  )
   assert_true(exists)
   match search {
     @cli.Success(text) =>
@@ -625,7 +655,7 @@ async fn make_tree_fixture() -> String {
   @fs.write_text("\{dir}/.hidden", "hh")
   @fs.write_text("\{dir}/sub/b.pdf", "abc")
   @fs.write_text("\{dir}/.git/config", "x")
-  @fs.symlink(target="\{dir}/sub", "\{dir}/link")
+  @fs.symlink(target="sub", "\{dir}/link")
   dir
 }
 
@@ -646,8 +676,11 @@ async test "index summarises a realistic tree" {
   let dir = make_tree_fixture()
   let result = @cli.run(["index", "-D", test_database("tree"), dir])
   @fs.remove(dir, recursive=true)
-  // root, sub, empty, .git; the symlink is a zero-sized file.
-  assert_eq(index_stdout(result), b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+  // root, sub, empty, .git; the symlink is a 3-byte file (target "sub").
+  assert_eq(
+    index_stdout(result),
+    b"roots: 1\nfolders: 4\nfiles: 5\nbytes: \{tree_fixture_bytes()}",
+  )
 }
 
 ///|
@@ -663,7 +696,7 @@ async test "index excludes hidden entries and their subtrees" {
   @fs.remove(dir, recursive=true)
   assert_eq(
     index_stdout(result),
-    b"roots: 1\nfolders: 3\nfiles: 3\nbytes: 8\nskipped: 2",
+    b"roots: 1\nfolders: 3\nfiles: 3\nbytes: \{8L + fixture_link_bytes()}\nskipped: 2",
   )
 }
 
@@ -697,11 +730,11 @@ async test "index applies basename and target restrictions to excludes" {
   @fs.remove(dir, recursive=true)
   assert_eq(
     index_stdout(files),
-    b"roots: 1\nfolders: 4\nfiles: 4\nbytes: 8\nskipped: 1",
+    b"roots: 1\nfolders: 4\nfiles: 4\nbytes: \{8L + fixture_link_bytes()}\nskipped: 1",
   )
   assert_eq(
     index_stdout(folders),
-    b"roots: 1\nfolders: 3\nfiles: 4\nbytes: 8\nskipped: 1",
+    b"roots: 1\nfolders: 3\nfiles: 4\nbytes: \{8L + fixture_link_bytes()}\nskipped: 1",
   )
 }
 
@@ -720,7 +753,46 @@ async test "index applies a fixed full-path exclusion" {
   @fs.remove(dir, recursive=true)
   assert_eq(
     index_stdout(result),
-    b"roots: 1\nfolders: 4\nfiles: 4\nbytes: 6\nskipped: 1",
+    b"roots: 1\nfolders: 4\nfiles: 4\nbytes: \{6L + fixture_link_bytes()}\nskipped: 1",
+  )
+}
+
+///|
+async test "index applies regex excludes by scope and target end to end" {
+  let dir = make_tree_fixture()
+  let root = @fs.realpath(dir)
+  let files = @cli.run([
+    "index",
+    "-D",
+    test_database("regex-files"),
+    "-x",
+    "regex:^a\\.txt$",
+    "--exclude-scope",
+    "basename",
+    "--exclude-target",
+    "files",
+    root,
+  ])
+  let folders = @cli.run([
+    "index",
+    "-D",
+    test_database("regex-folders"),
+    "-x",
+    "regex:^sub$",
+    "--exclude-scope",
+    "basename",
+    "--exclude-target",
+    "folders",
+    root,
+  ])
+  @fs.remove(dir, recursive=true)
+  assert_eq(
+    index_stdout(files),
+    b"roots: 1\nfolders: 4\nfiles: 4\nbytes: \{6L + fixture_link_bytes()}\nskipped: 1",
+  )
+  assert_eq(
+    index_stdout(folders),
+    b"roots: 1\nfolders: 3\nfiles: 4\nbytes: \{8L + fixture_link_bytes()}\nskipped: 1",
   )
 }
 
@@ -742,10 +814,13 @@ async test "invalid exclude settings are usage errors" {
     }
     _ => abort("expected a target failure")
   }
-  let regex = @cli.run(["index", "-x", "regex:^tmp$", "/tmp"])
+  let regex = @cli.run(["index", "-x", "regex:[", "/tmp"])
   match regex {
-    @cli.Failure(text) => assert_true(text.contains("not implemented"))
-    _ => abort("expected a regex failure")
+    @cli.Failure(text) => {
+      assert_true(text.contains("invalid regular expression '['"))
+      assert_eq(regex.exit_code(), 2)
+    }
+    _ => abort("expected an invalid regex failure")
   }
 }
 
@@ -772,7 +847,7 @@ async test "nested roots require an explicit opt-in" {
   // The subtree is indexed twice: once under the parent and once as a root.
   assert_eq(
     index_stdout(accepted),
-    b"roots: 2\nfolders: 5\nfiles: 6\nbytes: 14",
+    b"roots: 2\nfolders: 5\nfiles: 6\nbytes: \{14L + fixture_link_bytes()}",
   )
 }
 
@@ -788,7 +863,10 @@ async test "duplicate roots are normalised before scanning" {
     "\{dir}/.",
   ])
   @fs.remove(dir, recursive=true)
-  assert_eq(index_stdout(result), b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+  assert_eq(
+    index_stdout(result),
+    b"roots: 1\nfolders: 4\nfiles: 5\nbytes: \{tree_fixture_bytes()}",
+  )
 }
 
 ///|
@@ -840,7 +918,7 @@ async test "stats and verbose write diagnostics to stderr" {
     @cli.SuccessWith(out, diagnostics) => {
       assert_eq(
         trim_final_lf(out),
-        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11",
+        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: \{tree_fixture_bytes()}",
       )
       assert_true(diagnostics.contains("scan:"))
       assert_true(diagnostics.contains("names:"))
@@ -865,7 +943,9 @@ async test "stats and verbose write diagnostics to stderr" {
   match verbose {
     @cli.SuccessWith(_, diagnostics) => {
       assert_true(
-        diagnostics.contains("root: \{root} (files: 5, folders: 3, bytes: 11)"),
+        diagnostics.contains(
+          "root: \{root} (files: 5, folders: 3, bytes: \{tree_fixture_bytes()})",
+        ),
       )
       assert_false(diagnostics.contains("scan:"))
     }
@@ -943,6 +1023,7 @@ async test "an unknown fast field is rejected before scanning" {
 }
 
 ///|
+#cfg(not(platform="windows"))
 async test "one-file-system uses POSIX device ids without an empty-operation warning" {
   let dir = make_tree_fixture()
   let result = @cli.run([
@@ -965,7 +1046,7 @@ async test "one-file-system uses POSIX device ids without an empty-operation war
     @cli.Success(out) =>
       assert_eq(
         trim_final_lf(out),
-        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11",
+        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: \{tree_fixture_bytes()}",
       )
     _ => abort("expected a warning-free POSIX index result")
   }
@@ -1070,7 +1151,10 @@ async test "update is the same scan as index" {
   let dir = make_tree_fixture()
   let result = @cli.run(["update", "-D", test_database("update"), dir])
   @fs.remove(dir, recursive=true)
-  assert_eq(index_stdout(result), b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11")
+  assert_eq(
+    index_stdout(result),
+    b"roots: 1\nfolders: 4\nfiles: 5\nbytes: \{tree_fixture_bytes()}",
+  )
 }
 
 ///|
@@ -1095,6 +1179,7 @@ async test "command-line errors surface as failures" {
 }
 
 ///|
+#cfg(not(platform="windows"))
 async test "verbose stats and one-file-system work without a backend warning" {
   let dir = make_tree_fixture()
   let result = @cli.run([
@@ -1111,7 +1196,7 @@ async test "verbose stats and one-file-system work without a backend warning" {
     @cli.SuccessWith(out, diagnostics) => {
       assert_eq(
         trim_final_lf(out),
-        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: 11",
+        b"roots: 1\nfolders: 4\nfiles: 5\nbytes: \{tree_fixture_bytes()}",
       )
       assert_true(diagnostics.contains("root: "))
       assert_false(diagnostics.contains("--one-file-system has no effect"))
@@ -1153,7 +1238,7 @@ async test "unreadable directories are reported in the summary and warnings" {
         // Running as root: the directory stays readable.
         assert_eq(
           trim_final_lf(out),
-          b"roots: 1\nfolders: 2\nfiles: 2\nbytes: 3",
+          b"roots: 1\nfolders: 2\nfiles: 2\nbytes: 6",
         )
         assert_false(diagnostics.contains("warning:"))
       }

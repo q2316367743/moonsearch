@@ -56,6 +56,7 @@ test "POSIX readdir and fstatat preserve names as bytes" {
   let metadata = FixedArray::make(6, 0L)
   let names : Array[Bytes] = []
   let sizes : Array[Int64] = []
+  let devices : Array[UInt64] = []
   while true {
     match dir.read_name(buffer) {
       End => break
@@ -68,6 +69,7 @@ test "POSIX readdir and fstatat preserve names as bytes" {
         dir.stat_into(name, metadata).unwrap()
         names.push(name)
         sizes.push(@platform.PosixStat::from_buffer(metadata).size)
+        devices.push(@platform.PosixStat::from_buffer(metadata).device)
       }
     }
   }
@@ -78,6 +80,8 @@ test "POSIX readdir and fstatat preserve names as bytes" {
   assert_true(names.contains(second_name))
   assert_true(sizes.contains(3L))
   assert_true(sizes.contains(5L))
+  assert_eq(devices.length(), 2)
+  assert_eq(devices[0], devices[1])
   let short = FixedArray::make(1, b'\x00')
   let reopened = @platform.Directory::open(root).unwrap()
   defer reopened.close()

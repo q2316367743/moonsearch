@@ -42,6 +42,17 @@ test "finish without an explicit timestamp uses the current time" {
 }
 
 ///|
+test "builder folder size accumulation saturates" {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/r", false, 0L)
+  builder.add_folder_size(root, 9223372036854775800L)
+  builder.add_folder_size(root, 100L)
+  builder.add_folder_size(root, 1L)
+  let store = builder.finish(built_at=0L)
+  assert_eq(store.folder(0).unwrap().size(), 9223372036854775807L)
+}
+
+///|
 test "the builder translates an over-long name into an index error" {
   let builder = @index.Builder::new()
   let name = builder_long_name(@core.MAX_NAME_LEN + 1)

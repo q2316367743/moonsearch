@@ -24,6 +24,8 @@ pub const VERSION : String = "0.1.0"
 
 pub const VERSION_TEXT : String = "moonsearch 0.1.0"
 
+pub fn saturating_add(Int64, Int64) -> (Int64, Bool)
+
 // Errors
 pub suberror NamePoolError {
   NameTooLong(Int32)

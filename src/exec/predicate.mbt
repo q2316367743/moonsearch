@@ -141,22 +141,9 @@ fn match_name(
     Glob => @util.glob_match_with(text, matcher.needle[:], matcher.fold)
     Regex =>
       match matcher.regex {
-        Some(regex) => match_regex(regex, text)
+        Some(regex) => regex.matches_bytes(text)
         None => false
       }
-  }
-}
-
-///|
-/// Run a compiled regex against name bytes.
-///
-/// Invalid UTF-8 cannot be represented as a `String` and is treated as a
-/// non-match, as `MIGRATION_PLAN.md` section 5.11 specifies.
-fn match_regex(regex : @string.Regex, text : BytesView) -> Bool {
-  let decoded = Ok(@utf8.decode(text)) catch { _ => Err(()) }
-  match decoded {
-    Ok(value) => regex.execute(value) is Some(_)
-    Err(_) => false
   }
 }
 

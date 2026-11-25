@@ -17,16 +17,51 @@ test "exclude prefixes select the matcher" {
 }
 
 ///|
-test "regex exclude rules are reported as unsupported" {
-  let err = try @index.ExcludeRule::parse("regex:^tmp") catch {
+test "regex exclude rules compile and match their explicit scope" {
+  let basename = @index.ExcludeRule::parse(
+    "regex:^drop\\.tmp$",
+    scope=@index.Basename,
+  )
+  assert_eq(basename.pattern(), "^drop\\.tmp$")
+  assert_true(basename.kind() is @index.Regex)
+  assert_true(basename.matches(b"/r/drop.tmp", b"drop.tmp", false))
+  assert_false(basename.matches(b"/r/keep.tmp", b"keep.tmp", false))
+  let full_path = @index.ExcludeRule::parse("regex:^/r/cache")
+  assert_true(full_path.matches(b"/r/cache/item", b"item", false))
+  assert_false(full_path.matches(b"/other/cache/item", b"item", false))
+}
+
+///|
+test "invalid regex excludes use the query error model" {
+  let err = try @index.ExcludeRule::parse("regex:[") catch {
     err => err
   } noraise {
-    _ => abort("expected an UnsupportedExclude error")
+    _ => abort("expected an invalid regex error")
   }
   match err {
-    @index.UnsupportedExclude(message) => assert_true(message.contains("regex"))
-    _ => abort("expected an UnsupportedExclude error")
+    @query.BadRegex(pattern) => assert_eq(pattern, "[")
+    _ => abort("expected BadRegex")
   }
+  assert_true(err.message().contains("invalid regular expression '['"))
+}
+
+///|
+test "regex excludes are case-sensitive and unanchored" {
+  let sensitive = @index.ExcludeRule::parse("regex:drop", scope=@index.Basename)
+  assert_true(sensitive.matches(b"/r/drop.tmp", b"drop.tmp", false))
+  assert_false(sensitive.matches(b"/r/DROP.tmp", b"DROP.tmp", false))
+  let folded = @index.ExcludeRule::parse(
+    "regex:(?i:drop)",
+    scope=@index.Basename,
+  )
+  assert_true(folded.matches(b"/r/DROP.tmp", b"DROP.tmp", false))
+}
+
+///|
+test "regex excludes do not match invalid UTF-8 subjects" {
+  let rule = @index.ExcludeRule::parse("regex:.*", scope=@index.Basename)
+  assert_true(rule.matches(b"/r/valid", b"valid", false))
+  assert_false(rule.matches(b"/r/bad-\xff", b"bad-\xff", false))
 }
 
 ///|
@@ -97,15 +132,51 @@ test "a fixed rule compares the whole subject exactly" {
 }
 
 ///|
-test "a regex rule is inert until the regex engine arrives" {
+test "inactive regex rules never match but are still validated" {
   let rule = @index.ExcludeRule::new(
     kind=@index.Regex,
     pattern=".*",
     scope=@index.FullPath,
+    active=false,
   )
-  // The rule model accepts Regex, but matching deliberately ignores it; the
-  // CLI rejects `regex:` specifications instead.
   assert_false(rule.matches(b"/r/anything", b"anything", false))
+  let err = try
+    @index.ExcludeRule::new(kind=@index.Regex, pattern="[", active=false)
+  catch {
+    err => err
+  } noraise {
+    _ => abort("expected an invalid regex error")
+  }
+  assert_true(err.message().contains("invalid regular expression"))
+}
+
+///|
+test "every exclude kind scope and target combination is enforced" {
+  for kind in [@index.Fixed, @index.Glob, @index.Regex] {
+    for scope in [@index.FullPath, @index.Basename] {
+      for target in [@index.Both, @index.Files, @index.Folders] {
+        let pattern = match (kind, scope) {
+          (@index.Fixed, @index.FullPath) => "/r/drop.tmp"
+          (@index.Fixed, @index.Basename) => "drop.tmp"
+          (@index.Glob, @index.FullPath) => "/r/*.tmp"
+          (@index.Glob, @index.Basename) => "*.tmp"
+          (@index.Regex, @index.FullPath) => "^/r/.*\\.tmp$"
+          (@index.Regex, @index.Basename) => "^drop\\.tmp$"
+        }
+        let rule = @index.ExcludeRule::new(kind~, pattern~, scope~, target~)
+        assert_eq(
+          rule.matches(b"/r/drop.tmp", b"drop.tmp", false),
+          target is @index.Both || target is @index.Files,
+        )
+        assert_eq(
+          rule.matches(b"/r/drop.tmp", b"drop.tmp", true),
+          target is @index.Both || target is @index.Folders,
+        )
+        assert_false(rule.matches(b"/r/keep.txt", b"keep.txt", false))
+        assert_false(rule.matches(b"/r/keep.txt", b"keep.txt", true))
+      }
+    }
+  }
 }
 
 ///|

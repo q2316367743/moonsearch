@@ -272,6 +272,34 @@ test "total_size sums files only" {
 }
 
 ///|
+test "total_size saturates instead of overflowing" {
+  let names = @core.NamePool::new()
+  let first = names.add(b"first"[:])
+  let second = names.add(b"second"[:])
+  let store = @core.Store::new(
+    names~,
+    folders=[],
+    files=[
+      @core.Entry::file(
+        parent=@core.NO_PARENT,
+        name=first,
+        size=9223372036854775800L,
+        mtime=0L,
+      ),
+      @core.Entry::file(
+        parent=@core.NO_PARENT,
+        name=second,
+        size=100L,
+        mtime=0L,
+      ),
+    ],
+    roots=[],
+    built_at=0L,
+  )
+  assert_eq(store.total_size(), 9223372036854775807L)
+}
+
+///|
 test "names are readable through the references entries store" {
   let store = fixture_store()
   let first = store.file(0).unwrap()

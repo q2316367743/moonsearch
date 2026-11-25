@@ -183,24 +183,29 @@ pub fn Entry::add_child(self : Entry, kind : EntryKind) -> Unit {
 }
 
 ///|
+/// Add two integers, saturating at the `Int64` bounds.
+///
+/// The second result is `true` when the exact sum was outside the representable
+/// range. Scanner statistics use it to emit one stable warning while keeping
+/// folder, root, and store totals consistent.
+pub fn saturating_add(left : Int64, right : Int64) -> (Int64, Bool) {
+  if right > 0L && left > 9223372036854775807L - right {
+    (9223372036854775807L, true)
+  } else if right < 0L && left < -9223372036854775807L - 1L - right {
+    (-9223372036854775807L - 1L, true)
+  } else {
+    (left + right, false)
+  }
+}
+
+///|
 /// Add `delta` bytes to the entry size, saturating at `Int64` bounds.
 ///
 /// The scanner only adds non-negative file sizes, but handling both directions
 /// keeps the invariant local to this method.
 pub fn Entry::add_size(self : Entry, delta : Int64) -> Unit {
-  if delta > 0L {
-    if self.size > 9223372036854775807L - delta {
-      self.size = 9223372036854775807L
-    } else {
-      self.size = self.size + delta
-    }
-  } else if delta < 0L {
-    if self.size < -9223372036854775807L - 1L - delta {
-      self.size = -9223372036854775807L - 1L
-    } else {
-      self.size = self.size + delta
-    }
-  }
+  let (size, _) = saturating_add(self.size, delta)
+  self.size = size
 }
 
 ///|

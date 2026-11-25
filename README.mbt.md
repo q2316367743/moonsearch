@@ -133,10 +133,11 @@ moonsearch update ~/Documents                 # 重新扫描并原子替换
 | `--allow-nested-roots` | 允许根目录相互嵌套 |
 | `--fast-fields <LIST>` | 预建区间字段，默认 `size,mtime`；可选 `size`、`mtime`、`depth`、`childcount`、`parent` |
 | `--no-trigram` | 不构建 trigram 倒排；名称查询将退化为全扫描 |
-| `--one-file-system` | Unix POSIX 后端按 `st_dev` 过滤跨设备目录；普通文件/bind mount 的完整检查见 S03 |
+| `--one-file-system` | Unix POSIX 后端按 `st_dev` 过滤跨设备目录、普通文件与符号链接 |
 
 排除规则写法：`fixed:` 做逐字节比较，`glob:` 支持 `*`、`?` 与 `\` 转义，不带前缀时
-默认按 glob 处理。`regex:` 暂时被拒绝。
+默认按 glob 处理。`regex:` 复用查询正则编译器，默认大小写敏感、非锚定匹配；非法 UTF-8
+名称不匹配正则规则。非法正则会在扫描前以查询错误退出。
 
 ```bash
 moonsearch index -r ~/Projects -x 'glob:*/node_modules' -x 'glob:*.tmp' --exclude-hidden
@@ -152,8 +153,9 @@ bytes: 6
 ```
 
 `skipped:` 与 `issues:` 行仅在非零时出现；`-v/--verbose` 会逐条报告不可读目录、扫描中
-消失的条目等可恢复问题。`--stats` 追加计时、名称池、字典与 trigram 形态，以及数据库
-路径和大小。
+消失的条目等可恢复问题。POSIX 符号链接按 `lstat` 记录链接自身尺寸并计入文件字节数，
+不跟随目标。累计尺寸溢出时饱和到 `Int64` 上限，并只记录一次稳定告警。`--stats` 追加
+计时、名称池、字典与 trigram 形态，以及数据库路径和大小。
 
 ## 查询
 

@@ -69,6 +69,8 @@ pub fn bad_value(Int32, StringView, StringView, StringView) -> @query.QueryError
 
 pub fn cmp_paths(BytesView, BytesView) -> Int32
 
+pub fn compile_regex(StringView, case_sensitive? : Bool) -> @query.RegexPattern raise @query.QueryError
+
 pub fn constrain_kind(@query.Query, @query.KindFilter) -> @query.Query
 
 pub fn contains_bytes(BytesView, BytesView) -> Bool
@@ -146,6 +148,8 @@ pub fn parse_size(StringView) -> Int64?
 pub fn parse_size_comparison(StringView) -> @query.Comparison?
 
 pub fn resolve_date_span(StringView, Int64, @time.Zone) -> @util.DateSpan?
+
+pub fn saturating_add(Int64, Int64) -> (Int64, Bool)
 
 pub async fn[Source : @platform.ScanSource] scan(@index.ScanConfig, Source) -> @index.ScanReport raise @index.IndexError
 
@@ -254,6 +258,8 @@ pub using @index {type RangeIndex}
 
 pub using @index {type Ranges}
 
+pub using @query {type RegexPattern}
+
 pub using @core {type RootInfo}
 
 pub using @index {type RootSpec}
@@ -287,6 +293,8 @@ pub using @index {type TrigramLookup}
 pub using @index {type TrigramPosting}
 
 pub using @util {type TypeCategory}
+
+pub using @index {type UnreadableDirectoryPolicy}
 
 pub using @query {type VisibilityFilter}
 

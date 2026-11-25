@@ -129,6 +129,25 @@ files: 1
 bytes: 5
 skipped: 2
 
+$ moonx q2316367743/moonsearch/cmd/moonsearch index -D _build/cram/index.msdb -x 'regex:^a\.txt$' --exclude-scope basename --exclude-target files fixture
+roots: 1
+folders: 2
+files: 2
+bytes: 7
+skipped: 1
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch index -D _build/cram/index.msdb --one-file-system fixture
+roots: 1
+folders: 2
+files: 3
+bytes: 12
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch index -x 'regex:[' fixture
+@STDOUT (empty)
+@STDERR
+error: query error: invalid regular expression '['
+[2]
+
 $ moonx q2316367743/moonsearch/cmd/moonsearch index -D _build/cram/index.msdb --quiet fixture
 @STDOUT (empty)
 @STDERR (empty)

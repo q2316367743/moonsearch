@@ -95,7 +95,10 @@ fn system_list_posix(path : BytesView) -> DirListing raise PlatformError {
           Ok(_) => {
             let info = PosixStat::from_buffer(metadata)
             let kind = posix_kind(info.mode)
-            let size = if kind is File { info.size } else { 0L }
+            let size = match kind {
+              File | Symlink => info.size
+              _ => 0L
+            }
             entries.push(
               NodeInfo::new(
                 name~,

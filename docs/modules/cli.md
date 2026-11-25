@@ -97,7 +97,8 @@ header 与 section table；`--verify` 额外校验全文件 CRC。默认数据�
 - 顶层与各子命令 help 文本、版本、默认子命令、位置参数拼接、`--` 与全局选项；
 - 参数错误：未知选项、缺值、`count` 拒绝输出选项、非法 `--sort`/`--limit`/
   `--format`/`--relative-to`、互斥格式组合；
-- 真实目录：扫描汇总、排除规则、权限告警、`--one-file-system` 警告、`--quiet`；
+- 真实目录：扫描汇总、fixed/glob/regex 排除、权限告警、POSIX `--one-file-system`
+  无空操作警告、`--quiet`；
 - 持久化：`index` 写库、`info --verify` 读头、删除根目录后 `search`/`count` 仍从库中
   命中、bitmap 引擎直接读库、`--no-trigram` 库退化为扫描、损坏数据库以退出码 2 失败；
 - `search`/`count` 的 `--live`、`--auto-index`、多 root、`--type`、`--regex`、

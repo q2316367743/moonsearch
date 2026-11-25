@@ -15,6 +15,15 @@ pub fn RootSpec::new(
 }
 
 ///|
+/// How the scanner handles a directory it cannot read.
+pub(all) enum UnreadableDirectoryPolicy {
+  /// Record a `ScanIssue` and continue with empty statistics for that directory.
+  Continue
+  /// Abort the scan with `IndexError::UnreadableDirectory`.
+  Fatal
+}
+
+///|
 /// Inputs to a scan.
 pub(all) struct ScanConfig {
   roots : Array[RootSpec]
@@ -25,6 +34,9 @@ pub(all) struct ScanConfig {
   /// Skip the pseudo file systems `/proc`, `/sys`, `/dev`, and `/run` when a
   /// root covers them.
   default_excludes : Bool
+  /// Whether a permission-denied directory aborts the scan. Entry races and
+  /// other recoverable I/O failures remain `ScanIssue`s under either policy.
+  unreadable_directories : UnreadableDirectoryPolicy
 }
 
 ///|
@@ -35,8 +47,16 @@ pub fn ScanConfig::new(
   exclude_hidden~ : Bool = false,
   allow_nested_roots~ : Bool = false,
   default_excludes~ : Bool = true,
+  unreadable_directories~ : UnreadableDirectoryPolicy = Continue,
 ) -> ScanConfig {
-  { roots, excludes, exclude_hidden, allow_nested_roots, default_excludes, }
+  {
+    roots,
+    excludes,
+    exclude_hidden,
+    allow_nested_roots,
+    default_excludes,
+    unreadable_directories,
+  }
 }
 
 ///|
@@ -44,8 +64,8 @@ pub fn ScanConfig::new(
 ///
 /// The scan keeps going and the command still succeeds; the CLI prints these
 /// only with `--verbose`. Typical causes are a permission-denied subdirectory,
-/// an entry that vanished between `readdir` and `lstat`, or a name that does
-/// not fit in the index.
+/// an entry that vanished between `readdir` and `lstat`, a name that does not
+/// fit in the index, or cumulative size overflow.
 pub(all) struct ScanIssue {
   path : Bytes
   message : String
@@ -83,10 +103,13 @@ priv struct ScanCtx {
   excludes : Array[ExcludeRule]
   exclude_hidden : Bool
   default_excludes : Bool
+  unreadable_directories : UnreadableDirectoryPolicy
   issues : Array[ScanIssue]
   mut skipped_hidden : Int32
   mut skipped_excluded : Int32
   mut skipped_mount : Int32
+  mut total_file_size : Int64
+  mut size_overflow_reported : Bool
 }
 
 ///|
@@ -96,10 +119,13 @@ fn ScanCtx::new(config : ScanConfig, builder : Builder) -> ScanCtx {
     excludes: config.excludes,
     exclude_hidden: config.exclude_hidden,
     default_excludes: config.default_excludes,
+    unreadable_directories: config.unreadable_directories,
     issues: [],
     skipped_hidden: 0,
     skipped_excluded: 0,
     skipped_mount: 0,
+    total_file_size: 0L,
+    size_overflow_reported: false,
   }
 }
 
@@ -110,6 +136,24 @@ fn ScanCtx::record(
   message : StringView,
 ) -> Unit {
   self.issues.push({ path: path.to_owned(), message: "\{message}", })
+}
+
+///|
+/// Saturate one cumulative size and report overflow at most once per scan.
+fn ScanCtx::add_size(
+  self : ScanCtx,
+  path : BytesView,
+  current : Int64,
+  delta : Int64,
+) -> Int64 {
+  let (next, overflowed) = @core.saturating_add(current, delta)
+  if overflowed && !self.size_overflow_reported {
+    self.size_overflow_reported = true
+    self.record(
+      path, "size overflow: cumulative size saturated at the Int64 limit",
+    )
+  }
+  next
 }
 
 ///|
@@ -157,7 +201,7 @@ async fn[Source : @platform.ScanSource] scan_root(
     spec.path,
     root_id,
     ctx,
-    spec.one_file_system,
+    spec.one_file_system && source.has_devices(),
     info.device,
   )
   ctx.builder.set_root_stats(
@@ -180,6 +224,11 @@ async fn[Source : @platform.ScanSource] scan_children(
 ) -> Totals raise IndexError {
   let listing = source.list(path) catch {
     err => {
+      match err {
+        @platform.AccessDenied(_) if ctx.unreadable_directories is Fatal =>
+          raise UnreadableDirectory(path)
+        _ => ()
+      }
       ctx.record(path, err.message())
       { entries: [], failures: [], }
     }
@@ -215,7 +264,7 @@ async fn[Source : @platform.ScanSource] scan_children(
       ctx.skipped_excluded = ctx.skipped_excluded + 1
       continue
     }
-    if cross_device(is_dir, entry.device, root_device, one_file_system) {
+    if cross_device(entry.device, root_device, one_file_system) {
       ctx.skipped_mount = ctx.skipped_mount + 1
       continue
     }
@@ -228,14 +277,19 @@ async fn[Source : @platform.ScanSource] scan_children(
       direct_folders = direct_folders + 1
       total_folders = total_folders + 1U + subtree.folders
       total_files = total_files + subtree.files
-      total_size = total_size + subtree.size
+      total_size = ctx.add_size(child_path, total_size, subtree.size)
     } else {
       ignore(
         ctx.builder.add_file(folder, name, entry.size, entry.mtime, flags~),
       )
       direct_files = direct_files + 1
       total_files = total_files + 1U
-      total_size = total_size + entry.size
+      total_size = ctx.add_size(child_path, total_size, entry.size)
+      ctx.total_file_size = ctx.add_size(
+        child_path,
+        ctx.total_file_size,
+        entry.size,
+      )
     }
   }
   ctx.builder.set_child_counts(folder, direct_files, direct_folders)
@@ -246,15 +300,16 @@ async fn[Source : @platform.ScanSource] scan_children(
 ///|
 /// Whether a directory entry lives on a different device than the root.
 ///
-/// Unknown device ids disable the check for that entry: a backend that cannot
-/// supply `st_dev` must not silently drop content.
+/// The check applies to every entry, not just directories: a bind-mounted
+/// regular file also crosses a file system boundary. Unknown device ids disable
+/// the check for that entry: a backend that cannot supply `st_dev` must not
+/// silently drop content.
 fn cross_device(
-  is_dir : Bool,
   device : UInt64?,
   root_device : UInt64?,
   enabled : Bool,
 ) -> Bool {
-  if !enabled || !is_dir {
+  if !enabled {
     return false
   }
   match (root_device, device) {

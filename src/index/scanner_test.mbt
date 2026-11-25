@@ -186,8 +186,8 @@ fn file_on_device(
 }
 
 ///|
-fn symlink_entry(name : BytesView) -> @platform.NodeInfo {
-  @platform.NodeInfo::new(name~, kind=@platform.Symlink, mtime=50L)
+fn symlink_entry(name : BytesView, size~ : Int64 = 0L) -> @platform.NodeInfo {
+  @platform.NodeInfo::new(name~, kind=@platform.Symlink, size~, mtime=50L)
 }
 
 ///|
@@ -345,14 +345,17 @@ async test "folder-only rules do not match files" {
 }
 
 ///|
-async test "symlinks are indexed as files and not descended into" {
-  let source = fake_source().dir(b"/r", [symlink_entry(b"link")])
+async test "symlinks are indexed as files with their own size and not descended into" {
+  let source = fake_source().dir(b"/r", [symlink_entry(b"link", size=7L)])
   let report = run(config([b"/r"]), source)
   assert_eq(report.store.folder_count(), 1)
   assert_eq(report.store.file_count(), 1)
   let link = report.store.file(0).unwrap()
   assert_true(link.is_symlink())
-  assert_eq(link.size(), 0L)
+  assert_eq(link.size(), 7L)
+  assert_eq(report.store.folder(0).unwrap().size(), 7L)
+  assert_eq(report.store.roots()[0].size, 7L)
+  assert_eq(report.store.total_size(), 7L)
 }
 
 ///|
@@ -361,6 +364,39 @@ async test "special files are indexed with the special flag" {
   let report = run(config([b"/r"]), source)
   let entry = report.store.file(0).unwrap()
   assert_eq(entry.flags() & @core.ENTRY_FLAG_SPECIAL, @core.ENTRY_FLAG_SPECIAL)
+}
+
+///|
+async test "regex excludes prune folders and filter files during scanning" {
+  let source = fake_source()
+    .dir(b"/r", [
+      dir_entry(b"cache"),
+      file_entry(b"drop.tmp", 2L),
+      file_entry(b"keep.txt", 3L),
+    ])
+    .dir(b"/r/cache", [file_entry(b"hidden", 100L)])
+  let excludes = [
+    @index.ExcludeRule::parse(
+      "regex:^cache$",
+      scope=@index.Basename,
+      target=@index.Folders,
+    ),
+    @index.ExcludeRule::parse(
+      "regex:^drop\\.tmp$",
+      scope=@index.Basename,
+      target=@index.Files,
+    ),
+  ]
+  let report = run(
+    @index.ScanConfig::new(roots=[@index.RootSpec::new(path=b"/r")], excludes~),
+    source,
+  )
+  assert_eq(report.skipped_excluded, 2)
+  assert_eq(report.issues.length(), 0)
+  assert_eq(report.store.folder_count(), 1)
+  assert_eq(report.store.file_count(), 1)
+  assert_eq(report.store.file_path(0), b"/r/keep.txt")
+  assert_eq(report.store.total_size(), 3L)
 }
 
 ///|
@@ -377,22 +413,142 @@ async test "an unreadable directory becomes an issue, not a failure" {
 }
 
 ///|
-async test "one-file-system skips directories on other devices" {
+async test "fatal unreadable policy rejects a child directory" {
+  let source = fake_source()
+    .dir(b"/r", [dir_entry(b"locked"), file_entry(b"ok.txt", 3L)])
+    .deny(b"/r/locked")
+  let err = expect_error(
+    @index.ScanConfig::new(
+      roots=[@index.RootSpec::new(path=b"/r")],
+      unreadable_directories=@index.Fatal,
+    ),
+    source,
+  )
+  match err {
+    @index.UnreadableDirectory(path) => {
+      assert_eq(path, b"/r/locked")
+      assert_eq(err.message(), "directory is not readable: /r/locked")
+    }
+    _ => abort("expected UnreadableDirectory, got \{err.message()}")
+  }
+}
+
+///|
+async test "fatal unreadable policy rejects an unreadable root listing" {
+  let source = fake_source().deny(b"/r")
+  let err = expect_error(
+    @index.ScanConfig::new(
+      roots=[@index.RootSpec::new(path=b"/r")],
+      unreadable_directories=@index.Fatal,
+    ),
+    source,
+  )
+  match err {
+    @index.UnreadableDirectory(path) => assert_eq(path, b"/r")
+    _ => abort("expected UnreadableDirectory, got \{err.message()}")
+  }
+}
+
+///|
+async test "fatal unreadable policy leaves vanished directories recoverable" {
+  let source = fake_source().root(b"/r")
+  let report = run(
+    @index.ScanConfig::new(
+      roots=[@index.RootSpec::new(path=b"/r")],
+      unreadable_directories=@index.Fatal,
+    ),
+    source,
+  )
+  assert_eq(report.issues.length(), 1)
+  assert_eq(report.issues[0].path, b"/r")
+  assert_eq(report.store.folder_count(), 1)
+}
+
+///|
+async test "one-file-system skips every cross-device entry kind" {
   let source = fake_source()
     .dir(b"/r", [
       dir_on_device(b"mnt", 2UL),
       file_on_device(b"remote.bin", 4L, 2UL),
+      @platform.NodeInfo::new(
+        name=b"remote.sock",
+        kind=@platform.Other,
+        mtime=50L,
+        device=Some(2UL),
+      ),
+      file_on_device(b"local.bin", 3L, 1UL),
     ])
     .root_on_device(b"/r", 1UL)
   let config = @index.ScanConfig::new(roots=[
     @index.RootSpec::new(path=b"/r", one_file_system=true),
   ])
   let report = run(config, source)
-  assert_eq(report.skipped_mount, 1)
+  assert_eq(report.skipped_mount, 3)
+  assert_eq(report.issues.length(), 0)
   assert_eq(report.store.folder_count(), 1)
-  // Files are not mount points; the check only applies to directories.
   assert_eq(report.store.file_count(), 1)
-  assert_eq(report.store.total_size(), 4L)
+  assert_eq(report.store.file_path(0), b"/r/local.bin")
+  assert_eq(report.store.total_size(), 3L)
+  assert_eq(report.store.file(0).unwrap().flags() & @core.ENTRY_FLAG_SPECIAL, 0)
+}
+
+///|
+async test "one-file-system disabled keeps cross-device entries" {
+  let source = fake_source()
+    .dir(b"/r", [dir_on_device(b"mnt", 2UL), file_on_device(b"remote", 4L, 2UL)])
+    .dir(b"/r/mnt", [file_entry(b"inside", 1L)])
+    .root_on_device(b"/r", 1UL)
+  let report = run(config([b"/r"]), source)
+  assert_eq(report.skipped_mount, 0)
+  assert_eq(report.store.folder_count(), 2)
+  assert_eq(report.store.file_count(), 2)
+  assert_eq(report.store.total_size(), 5L)
+}
+
+///|
+async test "one-file-system applies to symlinks on other devices" {
+  let source = fake_source()
+    .dir(b"/r", [symlink_entry(b"remote-link", size=9L)])
+    .root_on_device(b"/r", 1UL)
+  source.dirs.set(
+    b"/r",
+    @platform.DirListing::new(entries=[
+      @platform.NodeInfo::new(
+        name=b"remote-link",
+        kind=@platform.Symlink,
+        size=9L,
+        mtime=50L,
+        device=Some(2UL),
+      ),
+    ]),
+  )
+  let report = run(
+    @index.ScanConfig::new(roots=[
+      @index.RootSpec::new(path=b"/r", one_file_system=true),
+    ]),
+    source,
+  )
+  assert_eq(report.skipped_mount, 1)
+  assert_eq(report.store.file_count(), 0)
+}
+
+///|
+async test "each root uses its own device for one-file-system" {
+  let source = fake_source()
+    .dir(b"/first", [file_on_device(b"x", 1L, 1UL)])
+    .dir(b"/second", [file_on_device(b"x", 2L, 2UL)])
+    .root_on_device(b"/first", 1UL)
+    .root_on_device(b"/second", 2UL)
+  let report = run(
+    @index.ScanConfig::new(roots=[
+      @index.RootSpec::new(path=b"/first", one_file_system=true),
+      @index.RootSpec::new(path=b"/second", one_file_system=true),
+    ]),
+    source,
+  )
+  assert_eq(report.skipped_mount, 0)
+  assert_eq(report.store.file_count(), 2)
+  assert_eq(report.store.total_size(), 3L)
 }
 
 ///|
@@ -773,6 +929,52 @@ async test "deep directory chains preserve the parent chain" {
   assert_true(@util.starts_with(report.store.file_path(0)[:], b"/r/d"[:]))
   assert_true(@util.ends_with(report.store.file_path(0)[:], b"/leaf"[:]))
   assert_true(@util.contains_bytes(report.store.file_path(0)[:], b"/d/d/d"[:]))
+}
+
+///|
+async test "nested size overflow saturates every total and warns once" {
+  let source = fake_source()
+    .dir(b"/r", [dir_entry(b"a"), file_entry(b"z", 1L)])
+    .dir(b"/r/a", [
+      file_entry(b"x", 9223372036854775800L),
+      file_entry(b"y", 10L),
+    ])
+  let report = run(config([b"/r"]), source)
+  let store = report.store
+  assert_eq(report.issues.length(), 1)
+  assert_eq(report.issues[0].path, b"/r/a/y")
+  assert_eq(
+    report.issues[0].message,
+    "size overflow: cumulative size saturated at the Int64 limit",
+  )
+  assert_eq(store.folder(0).unwrap().size(), 9223372036854775807L)
+  assert_eq(store.folder(1).unwrap().size(), 9223372036854775807L)
+  assert_eq(store.roots()[0].size, 9223372036854775807L)
+  assert_eq(store.total_size(), 9223372036854775807L)
+  for id in 0..<store.folder_count() {
+    assert_true(store.folder(id).unwrap().size() >= 0L)
+  }
+}
+
+///|
+async test "global size overflow across roots saturates and warns once" {
+  let source = fake_source()
+    .dir(b"/first", [file_entry(b"x", 9223372036854775800L)])
+    .dir(b"/second", [file_entry(b"y", 10L)])
+  let report = run(config([b"/first", b"/second"]), source)
+  assert_eq(report.issues.length(), 1)
+  assert_eq(report.issues[0].path, b"/second/y")
+  assert_eq(report.store.roots()[0].size, 9223372036854775800L)
+  assert_eq(report.store.roots()[1].size, 10L)
+  assert_eq(report.store.total_size(), 9223372036854775807L)
+  assert_eq(
+    report.store.folder(0).unwrap().size(),
+    report.store.roots()[0].size,
+  )
+  assert_eq(
+    report.store.folder(1).unwrap().size(),
+    report.store.roots()[1].size,
+  )
 }
 
 ///|

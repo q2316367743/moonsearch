@@ -5,8 +5,7 @@ pub(all) enum ExcludeKind {
   Fixed
   /// Shell-style wildcard match (`*`, `?`, and `\` escapes).
   Glob
-  /// Regular expression match. Accepted by the rule model but not implemented
-  /// yet; the CLI rejects such rules when parsing options.
+  /// Regular expression match using the query regex compiler and syntax.
   Regex
 }
 
@@ -30,34 +29,45 @@ pub(all) enum ExcludeTarget {
 ///|
 /// One exclude rule.
 ///
-/// Rules are evaluated by the scanner before an entry is added. The subject is
-/// raw bytes, so a rule never needs to decode a name. `pattern` is kept as text
-/// for `--explain`-style diagnostics while `pattern_bytes` is what matching
-/// uses.
+/// Rules are evaluated by the scanner before an entry is added. Fixed and glob
+/// rules match raw bytes and never decode a name. Regex rules reuse the query
+/// compiler, so their subjects must be valid UTF-8. `pattern` is kept as text
+/// for diagnostics while `pattern_bytes` is what fixed/glob matching uses.
 pub struct ExcludeRule {
   priv kind : ExcludeKind
   priv scope : ExcludeScope
   priv target : ExcludeTarget
   priv pattern : String
   priv pattern_bytes : Bytes
+  priv regex : @query.RegexPattern?
   priv active : Bool
 }
 
 ///|
 /// Build a rule from an explicit kind and pattern.
+///
+/// Regex patterns compile once, with case-sensitive matching like fixed/glob
+/// excludes. Invalid patterns raise the same `QueryError::BadRegex` used by
+/// query terms. Inactive rules are still validated so a typo cannot hide in a
+/// disabled rule.
 pub fn ExcludeRule::new(
   kind~ : ExcludeKind,
   pattern~ : StringView,
   scope~ : ExcludeScope = FullPath,
   target~ : ExcludeTarget = Both,
   active~ : Bool = true,
-) -> ExcludeRule {
+) -> ExcludeRule raise @query.QueryError {
+  let regex = match kind {
+    Regex => Some(@query.compile_regex(pattern, case_sensitive=true))
+    _ => None
+  }
   {
     kind,
     scope,
     target,
     pattern: "\{pattern}",
     pattern_bytes: @utf8.encode(pattern),
+    regex,
     active,
   }
 }
@@ -68,24 +78,18 @@ pub fn ExcludeRule::new(
 /// A leading `fixed:`, `glob:`, or `regex:` selects the kind; without a prefix
 /// the pattern is a glob. Glob is the default because a pattern without
 /// wildcards matches exactly, so literal names keep working and `*.tmp` does
-/// what the user expects.
-///
-/// Raises `UnsupportedExclude` for `regex:` because the query regex engine
-/// arrives in a later step.
+/// what the user expects. Regex errors use the query error model.
 pub fn ExcludeRule::parse(
   spec : StringView,
   scope~ : ExcludeScope = FullPath,
   target~ : ExcludeTarget = Both,
-) -> ExcludeRule raise IndexError {
-  let text = "\{spec}"
+) -> ExcludeRule raise @query.QueryError {
   if starts_with_literal(spec, "fixed:") {
     ExcludeRule::new(kind=Fixed, pattern=spec[6:], scope~, target~)
   } else if starts_with_literal(spec, "glob:") {
     ExcludeRule::new(kind=Glob, pattern=spec[5:], scope~, target~)
   } else if starts_with_literal(spec, "regex:") {
-    raise UnsupportedExclude(
-      "regex exclude rules are not implemented yet: \{text}",
-    )
+    ExcludeRule::new(kind=Regex, pattern=spec[6:], scope~, target~)
   } else {
     ExcludeRule::new(kind=Glob, pattern=spec, scope~, target~)
   }
@@ -169,7 +173,11 @@ pub fn ExcludeRule::matches(
   match self.kind {
     Fixed => @util.eq_bytes(subject, self.pattern_bytes, false)
     Glob => @util.glob_match(subject, self.pattern_bytes[:])
-    Regex => false
+    Regex =>
+      match self.regex {
+        Some(regex) => regex.matches_bytes(subject)
+        None => false
+      }
   }
 }
 

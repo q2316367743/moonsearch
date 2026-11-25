@@ -15,11 +15,46 @@ fn reference_join(path : String, name : String) -> String {
 }
 
 ///|
+/// Independent `lstat` size for the POSIX oracle test.
+#cfg(not(platform="windows"))
+#borrow(path)
+extern "C" fn test_lstat_size(path : Bytes, path_len : Int32) -> Int64 = "ms_test_lstat_size"
+
+///|
+#cfg(not(platform="windows"))
+async fn reference_size(path : String, kind : @fs.FileKind) -> Int64 {
+  match kind {
+    @fs.Regular => @fs.file_size(path) catch { err => abort(err.to_string()) }
+    @fs.SymLink => {
+      let bytes = @utf8.encode(path)
+      let size = test_lstat_size(bytes, bytes.length())
+      if size < 0L {
+        abort("lstat failed for \{path}")
+      }
+      size
+    }
+    _ => 0L
+  }
+}
+
+///|
+#cfg(platform="windows")
+async fn reference_size(path : String, kind : @fs.FileKind) -> Int64 {
+  if kind is @fs.Regular {
+    @fs.file_size(path) catch {
+      err => abort(err.to_string())
+    }
+  } else {
+    0L
+  }
+}
+
+///|
 /// Walk `path` with plain `readdir`/`lstat` calls and record every entry.
 ///
 /// This deliberately does not share code with the scanner: it spells paths
-/// with `@util.join_path`, treats symlinks as zero-sized files, and sums
-/// subtree sizes on the way out.
+/// with `@util.join_path`, uses independent metadata calls, treats symlinks as
+/// non-directories, and sums subtree sizes on the way out.
 async fn reference_walk(path : String, tree : RefTree) -> Int64 {
   let names = @fs.readdir(
     path,
@@ -34,7 +69,7 @@ async fn reference_walk(path : String, tree : RefTree) -> Int64 {
     if kind is @fs.Directory {
       total = total + reference_walk(child, tree)
     } else {
-      let size = if kind is @fs.Regular { @fs.file_size(child) } else { 0L }
+      let size = reference_size(child, kind)
       tree.files.set(child, size)
       total = total + size
     }
@@ -53,7 +88,7 @@ async test "the system backend matches an independent directory walk" {
   @fs.write_text("\{dir}/.hidden", "hh")
   @fs.write_text("\{dir}/sub/report.pdf", "abc")
   @fs.write_text("\{dir}/sub/deep/x", "1")
-  @fs.symlink(target="\{dir}/sub", "\{dir}/link")
+  @fs.symlink(target="sub", "\{dir}/link")
   let root = @fs.realpath(dir)
   let config = @index.ScanConfig::new(
     roots=[@index.RootSpec::new(path=@utf8.encode(root))],
@@ -65,8 +100,10 @@ async test "the system backend matches an independent directory walk" {
   let tree : RefTree = { files: Map([]), folders: Map([]), }
   let total = reference_walk(root, tree)
   @fs.remove(dir, recursive=true)
-  // The fixture itself: 5 + 2 + 3 + 1 bytes; the symlink contributes zero.
-  assert_eq(total, 11L)
+  // The fixture itself has 11 regular-file bytes. The independent walk also
+  // supplies the platform's symlink size (3 bytes on POSIX, zero on Windows).
+  let link_size = tree.files.get("\{root}/link").unwrap()
+  assert_eq(total, 11L + link_size)
   assert_eq(report.issues.length(), 0)
   assert_eq(report.store.file_count(), tree.files.length())
   assert_eq(report.store.folder_count(), tree.folders.length())

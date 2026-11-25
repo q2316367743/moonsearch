@@ -213,6 +213,33 @@ test "database round-trips invalid UTF-8 roots and distinct names byte-exactly" 
 }
 
 ///|
+test "database round-trips symlink sizes and saturated folder totals" {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/r", false, 10L)
+  ignore(
+    builder.add_file(root, b"link", 7L, 11L, flags=@core.ENTRY_FLAG_SYMLINK),
+  )
+  ignore(builder.add_file(root, b"large", 9223372036854775800L, 12L))
+  builder.set_child_counts(root, 2U, 0U)
+  builder.add_folder_size(root, 7L)
+  builder.add_folder_size(root, 9223372036854775800L)
+  builder.add_folder_size(root, 1L)
+  builder.set_root_stats(root, 2U, 0U, 9223372036854775807L)
+  let original = @index.Index::build(builder.finish(built_at=42L))
+  let bytes = encoded(original)
+  let loaded = decoded(bytes)
+  assert_stores_equal(original.store(), loaded.store())
+  let link = loaded.store().file(0).unwrap()
+  assert_true(link.is_symlink())
+  assert_eq(link.size(), 7L)
+  assert_eq(loaded.store().folder(0).unwrap().size(), 9223372036854775807L)
+  assert_eq(loaded.store().roots()[0].size, 9223372036854775807L)
+  assert_eq(loaded.store().total_size(), 9223372036854775807L)
+  assert_eq(loaded.ranges().size().equal(9223372036854775807L).cardinality(), 1)
+  assert_eq(loaded.to_bytes() catch { err => abort(err.message()) }, bytes)
+}
+
+///|
 test "database rejects a NUL in a root path" {
   let builder = @index.Builder::new()
   let root = builder.add_root(b"/raw\x00root", false, 0L)

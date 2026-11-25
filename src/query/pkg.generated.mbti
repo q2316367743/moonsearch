@@ -10,6 +10,8 @@ pub fn bad_regex(StringView) -> QueryError
 
 pub fn bad_value(Int32, StringView, StringView, StringView) -> QueryError
 
+pub fn compile_regex(StringView, case_sensitive? : Bool) -> RegexPattern raise QueryError
+
 pub fn constrain_kind(Query, KindFilter) -> Query
 
 pub fn kind_query(KindFilter) -> Query
@@ -122,6 +124,11 @@ pub enum Query {
   Not(Query)
 }
 pub fn Query::describe(Self) -> String
+
+pub struct RegexPattern {
+  // private fields
+}
+pub fn RegexPattern::matches_bytes(Self, BytesView) -> Bool
 
 pub struct Term {
   // private fields

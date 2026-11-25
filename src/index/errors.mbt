@@ -11,8 +11,8 @@ pub suberror IndexError {
   RootNotDirectory(Bytes)
   /// `nested` lies inside `outer` and nested roots were not allowed.
   NestedRoots(outer~ : Bytes, nested~ : Bytes)
-  /// An exclude rule uses a feature this version does not implement.
-  UnsupportedExclude(String)
+  /// A directory could not be read and the configured policy makes it fatal.
+  UnreadableDirectory(Bytes)
   /// A name does not fit in the `UInt16` length field.
   NameTooLong(Int32)
   /// The name pool reached its 32-bit offset limit.
@@ -30,7 +30,8 @@ pub fn IndexError::message(self : IndexError) -> String {
       "root is not a directory: \{@utf8.decode_lossy(path)}"
     NestedRoots(outer~, nested~) =>
       "root \{@utf8.decode_lossy(nested)} is inside \{@utf8.decode_lossy(outer)}; pass --allow-nested-roots to index both"
-    UnsupportedExclude(message) => message
+    UnreadableDirectory(path) =>
+      "directory is not readable: \{@utf8.decode_lossy(path)}"
     NameTooLong(length) => "a name is too long (\{length} bytes)"
     NamePoolFull => "the name pool reached its 32-bit offset limit"
     Io(message) => message

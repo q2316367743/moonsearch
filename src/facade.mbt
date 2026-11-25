@@ -36,6 +36,7 @@ pub using @core {
   type NameRef,
   type RootInfo,
   type Store,
+  saturating_add,
 }
 
 ///|
@@ -125,6 +126,7 @@ pub using @index {
   type TrigramIndex,
   type TrigramLookup,
   type TrigramPosting,
+  type UnreadableDirectoryPolicy,
   scan,
 }
 
@@ -139,6 +141,7 @@ pub using @query {
   type Macros,
   type Query,
   type QueryError,
+  type RegexPattern,
   type Term,
   type TermBody,
   type Token,
@@ -146,6 +149,7 @@ pub using @query {
   type VisibilityFilter,
   bad_regex,
   bad_value,
+  compile_regex,
   constrain_kind,
   kind_query,
   lex,

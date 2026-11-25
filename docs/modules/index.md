@@ -2,7 +2,7 @@
 
 `src/index` 负责把目录树变成 `core.Store`，并在扫描结束后建立 S07 的字段字典 `Dict`、
 S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依赖 `core`、`ids`、
-`util` 与 `platform`，不依赖查询层。
+`platform`、`query` 与 `util`；对 `query` 的依赖仅用于复用正则编译与错误模型。
 
 ## 职责
 
@@ -10,7 +10,7 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
   `fstatat(AT_SYMLINK_NOFOLLOW)`、`closedir` 与字节 `realpath`；名字和根路径不经过 UTF-8
   解码。Windows 保留 async/fs 适配层。
 - 每个目录项按名字的原始字节自然排序，再应用排除规则、隐藏文件、one-file-system 与
-  后序统计。
+  后序统计。one-file-system 比较每个条目的 `st_dev`，目录、普通文件与符号链接都会过滤。
 - `Builder`：以 `BytesView` 追加根、文件夹、文件，维护原始字节名字池与两个条目数组。
 - `Dict`：低基数字段的位图集合（扩展名、类型、隐藏、根、内置分类）。
 - `Ranges`：高基数与范围字段的有序 `(value, id)` 数组（大小、时间、深度、子项数、父目录）。
@@ -40,9 +40,25 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
 
 - 每个目录项先按名字的自然顺序排序，再决定 id，因此 `readdir` 顺序不会进入索引。
 - 条目按前序分配 id：父目录一定在子条目之前；大小与子项计数在递归返回时后序累加。
-- 符号链接不跟随，作为文件条目记录 `ENTRY_FLAG_SYMLINK`；特殊文件记录
-  `ENTRY_FLAG_SPECIAL`；以 `.` 开头的名字记录 `ENTRY_FLAG_HIDDEN`。
+- 符号链接不跟随，作为文件条目记录 `ENTRY_FLAG_SYMLINK`；POSIX 后端用 `lstat` 的
+  `st_size` 记录链接自身尺寸，并计入文件与文件夹统计。特殊文件记录 `ENTRY_FLAG_SPECIAL`；
+  以 `.` 开头的名字记录 `ENTRY_FLAG_HIDDEN`。
+- 目录列表失败默认记录 `ScanIssue` 并返回空统计；`ScanConfig::unreadable_directories`
+  可设为 `Fatal`，让权限拒绝抛出 `IndexError::UnreadableDirectory`。条目消失等竞争错误
+  在该策略下仍可恢复。
+- 尺寸累加统一走 `core::saturating_add`。文件夹、根统计与 `Store::total_size` 都饱和到
+  `Int64` 边界；每次扫描最多记录一次稳定溢出告警。
 - `Builder::finish` 生成不可变 `Store`，规范顺序在 `Store::new` 中建立。
+
+### 排除规则
+
+`ExcludeRule` 支持 `Fixed`、`Glob`、`Regex`，`FullPath`/`Basename` 两种范围，以及
+`Both`/`Files`/`Folders` 三种目标。规则在构造时编译一次，扫描时不再解析模式。
+
+- `fixed:` 与 `glob:` 直接匹配原始字节；不带前缀的规则按 glob 处理。
+- `regex:` 调用 `query::compile_regex`，沿用查询正则语法与 `QueryError::BadRegex`。
+  排除规则默认大小写敏感且非锚定，需要整名时写 `^...$`；非法 UTF-8 主体不匹配。
+- 非活跃规则不匹配，但构造时仍校验模式，避免禁用规则中隐藏非法配置。
 
 ## 字段字典 `Dict`
 
@@ -381,6 +397,12 @@ release 构建、单文件 100 万条目（1 个根 + 100 万文件，名字 `fi
 
 ## 测试
 
+- `scanner_test.mbt`：fake source 覆盖排序、隐藏/固定/glob/正则排除、跨设备目录、
+  普通文件与特殊条目、每根独立设备号、符号链接尺寸、不可读目录策略、嵌套与多根尺寸溢出。
+- `exclude_test.mbt`：三种规则 × 两种范围 × 三种目标矩阵，非法正则错误模型，
+  大小写、锚定、非活跃规则与非法 UTF-8 主体。
+- `system_scan_test.mbt` / `system_oracle_test.mbt`：真实 POSIX 设备号、符号链接与
+  悬空链接的 `lstat` 尺寸、权限拒绝策略，以及与独立目录遍历的统计对拍。
 - `dict_test.mbt`：统一 id、隐藏/可见划分、扩展名折叠与空扩展名、分类物化、根集合、
   确定性、空索引。
 - `range_test.mbt`：`RangeIndex` 的排序、上下界、半开区间、空/反向区间、重复值、密度

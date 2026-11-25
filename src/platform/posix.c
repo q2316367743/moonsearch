@@ -157,6 +157,27 @@ int32_t ms_test_rmdir(moonbit_bytes_t path, int32_t path_len) {
   return result;
 }
 
+/* Independent lstat size used by the real-file-system oracle tests. */
+MOONBIT_FFI_EXPORT
+int64_t ms_test_lstat_size(moonbit_bytes_t path, int32_t path_len) {
+  if (path_len < 0 || memchr(path, '\0', (size_t)path_len) != NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+  char *copy = malloc((size_t)path_len + 1);
+  if (copy == NULL) {
+    return -1;
+  }
+  memcpy(copy, path, (size_t)path_len);
+  copy[path_len] = '\0';
+  struct stat info;
+  int result = lstat(copy, &info);
+  int saved_errno = errno;
+  free(copy);
+  errno = saved_errno;
+  return result == 0 ? (int64_t)info.st_size : -1;
+}
+
 /*
  * Return the byte length, zero at end-of-directory, -1 on an OS error, and -2
  * when the name does not fit. The caller owns the destination buffer.

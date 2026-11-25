@@ -14,9 +14,9 @@ pub(all) enum NodeKind {
 ///|
 /// One file system entry with the metadata the scanner needs.
 ///
-/// `size` is the file size for regular files and zero for directories and
-/// special files. For symbolic links it is also zero: the link itself occupies
-/// no searchable bytes and counting the target would double count it.
+/// `size` is the file size for regular files. POSIX symbolic links report the
+/// link's own `lstat` size; backends without that metadata report zero.
+/// Directories and special files report zero.
 pub(all) struct NodeInfo {
   name : Bytes
   kind : NodeKind

@@ -64,7 +64,7 @@ priv struct NameMatcher {
   needle : Bytes
   fold : Bool
   path : Bool
-  regex : @string.Regex?
+  regex : @query.RegexPattern?
 }
 
 ///|
@@ -173,24 +173,14 @@ fn compile_name(
   let needle = @utf8.encode(text)
   let path = flags.search_path
   if flags.regex {
-    let pattern = if flags.case_sensitive {
-      text
-    } else {
-      // The v1 matcher folds ASCII only; `(?i:...)` gives the regex engine the
-      // same case-insensitive behavior as the substring paths.
-      "(?i:\{text})"
-    }
-    let compiled = Ok(@string.Regex::Regex(pattern)) catch { _ => Err(()) }
-    match compiled {
-      Ok(regex) =>
-        {
-          kind: Regex,
-          needle,
-          fold: !flags.case_sensitive,
-          path,
-          regex: Some(regex),
-        }
-      Err(_) => raise @query.bad_regex(text)
+    {
+      kind: Regex,
+      needle,
+      fold: !flags.case_sensitive,
+      path,
+      regex: Some(
+        @query.compile_regex(text, case_sensitive=flags.case_sensitive),
+      ),
     }
   } else if flags.exact {
     { kind: Exact, needle, fold: !flags.case_sensitive, path, regex: None, }

@@ -281,14 +281,15 @@ pub fn Store::name_bytes(self : Store) -> Int32 {
 }
 
 ///|
-/// Sum of the sizes of all file entries.
+/// Sum of the sizes of all file entries, saturating at `Int64::MAX`.
 ///
 /// Folders are excluded on purpose: their sizes already include their subtree,
 /// so adding both would count every byte twice.
 pub fn Store::total_size(self : Store) -> Int64 {
   let mut total = 0L
   for entry in self.files {
-    total = total + entry.size()
+    let (next, _) = saturating_add(total, entry.size())
+    total = next
   }
   total
 }

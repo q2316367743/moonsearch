@@ -134,6 +134,30 @@ test "a minimum-size delta on a positive entry is exact" {
 }
 
 ///|
+test "saturating_add reports exact boundaries and clamps overflow" {
+  assert_eq(
+    @core.saturating_add(9223372036854775800L, 8L),
+    (9223372036854775807L, true),
+  )
+  assert_eq(
+    @core.saturating_add(9223372036854775800L, 6L),
+    (9223372036854775806L, false),
+  )
+  assert_eq(
+    @core.saturating_add(9223372036854775807L, 0L),
+    (9223372036854775807L, false),
+  )
+  assert_eq(
+    @core.saturating_add(-9223372036854775807L - 1L, -1L),
+    (-9223372036854775807L - 1L, true),
+  )
+  assert_eq(
+    @core.saturating_add(-9223372036854775807L - 1L, 1L),
+    (-9223372036854775807L, false),
+  )
+}
+
+///|
 test "the special flag is independent from hidden and symlink" {
   let special = @core.Entry::file(
     parent=0,

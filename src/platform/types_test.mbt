@@ -28,6 +28,16 @@ test "node and listing constructors keep their fields" {
   assert_eq(dir.size, 0L)
   assert_eq(dir.mtime, 0L)
   assert_eq(dir.device, None)
+  let link = @platform.NodeInfo::new(
+    name=b"link",
+    kind=@platform.Symlink,
+    size=3L,
+    mtime=43L,
+    device=Some(3UL),
+  )
+  assert_true(link.kind is @platform.Symlink)
+  assert_eq(link.size, 3L)
+  assert_eq(link.device, Some(3UL))
   let failure = @platform.DirFailure::new(name=b"gone", message="vanished")
   assert_eq(failure.name, b"gone")
   assert_eq(failure.message, "vanished")
