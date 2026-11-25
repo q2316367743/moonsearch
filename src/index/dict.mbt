@@ -232,10 +232,10 @@ fn build_roots(
 ///|
 /// Root index of a folder, propagating the answer up the parent chain.
 ///
-/// Folder ids from the builder are pre-order, so the parent is normally
-/// resolved already. The explicit path buffer also handles a store assembled
-/// with an arbitrary array order, and the length guard stops a corrupted parent
-/// cycle instead of looping forever.
+/// Canonical folder ids are ordered by name rather than depth, so a parent may
+/// appear after its child. The explicit path buffer resolves either direction,
+/// and the length guard stops a corrupted parent cycle instead of looping
+/// forever.
 fn resolve_root(
   store : @core.Store,
   resolved : Array[Int32],

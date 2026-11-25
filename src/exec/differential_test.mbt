@@ -323,6 +323,39 @@ fn diff_stop_gram_store() -> @core.Store raise @index.IndexError {
 }
 
 ///|
+/// A nested-root fixture whose duplicate paths force parent-id remapping and
+/// deterministic tie-breaks before any candidate source is built.
+fn diff_nested_root_store(
+  reverse : Bool,
+) -> @core.Store raise @index.IndexError {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/diff", false, 1700000000L)
+  let outer = builder.add_folder(root, b"sub", 1700000001L)
+  if reverse {
+    ignore(builder.add_file(outer, b"shared.txt", 1L, 1700000002L))
+    ignore(builder.add_file(outer, b"outer.txt", 3L, 1700000002L))
+  } else {
+    ignore(builder.add_file(outer, b"outer.txt", 3L, 1700000002L))
+    ignore(builder.add_file(outer, b"shared.txt", 1L, 1700000002L))
+  }
+  builder.set_child_counts(outer, 2U, 0U)
+  builder.add_folder_size(outer, 4L)
+  builder.set_root_stats(0, 2U, 1U, 4L)
+  let nested = builder.add_root(b"/diff/sub", false, 1700000003L)
+  if reverse {
+    ignore(builder.add_file(nested, b"shared.txt", 2L, 1700000004L))
+    ignore(builder.add_file(nested, b"nested.txt", 4L, 1700000004L))
+  } else {
+    ignore(builder.add_file(nested, b"nested.txt", 4L, 1700000004L))
+    ignore(builder.add_file(nested, b"shared.txt", 2L, 1700000004L))
+  }
+  builder.set_child_counts(nested, 2U, 0U)
+  builder.add_folder_size(nested, 6L)
+  builder.set_root_stats(1, 2U, 0U, 6L)
+  builder.finish(built_at=1700000000L)
+}
+
+///|
 /// Build an index over a fixture, failing the test on an internal error.
 fn diff_index(store : @core.Store, trigram~ : Bool = true) -> @index.Index {
   @index.Index::build(store, eager=@index.RangeFieldSet::all(), trigram~)
@@ -360,6 +393,36 @@ test "indexed and scan engines agree on an empty store" {
   )
   let index = diff_index(store)
   diff_run(index, "empty", diff_corpus(DIFF_SEED, 100))
+}
+
+///|
+test "nested-root canonical ids agree across engines and database round-trip" {
+  let forward = diff_nested_root_store(false) catch {
+    err => abort("nested fixture failed: \{err.message()}")
+  }
+  let reverse = diff_nested_root_store(true) catch {
+    err => abort("reversed nested fixture failed: \{err.message()}")
+  }
+  let original = diff_index(forward)
+  let reversed = diff_index(reverse)
+  let original_bytes = original.to_bytes() catch { err => abort(err.message()) }
+  let reversed_bytes = reversed.to_bytes() catch { err => abort(err.message()) }
+  assert_eq(original_bytes, reversed_bytes)
+  let loaded = @index.Index::from_bytes(original_bytes[:], verify=true) catch {
+    err => abort("nested fixture reload failed: \{err.message()}")
+  }
+  for (index, label) in [(original, "nested"), (loaded, "nested-db")] {
+    diff_run(index, label, diff_corpus(DIFF_SEED, 80))
+    diff_check(index, label, "parent:/diff/sub")
+    diff_check(index, label, "parent:/diff")
+    diff_check(index, label, "depth:>=1")
+  }
+  assert_eq(
+    loaded.to_bytes() catch {
+      err => abort(err.message())
+    },
+    original_bytes,
+  )
 }
 
 ///|

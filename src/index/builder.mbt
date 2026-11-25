@@ -1,10 +1,10 @@
 ///|
 /// Accumulates entries while a scan runs.
 ///
-/// The builder owns the name pool and the folder/file arrays. Ids are assigned
-/// in insertion order, which is deterministic because directory listings are
-/// sorted by name before they are consumed. Once the scan is done, `finish`
-/// hands the parts to an immutable `Store`.
+/// The builder owns the name pool and the folder/file arrays. Ids are temporary
+/// insertion ids while the scan runs; `finish` hands the parts to `Store::new`,
+/// which physically sorts both arrays and remaps parents and roots before any
+/// derived index is built.
 pub struct Builder {
   priv names : @core.NamePool
   priv folders : Array[@core.Entry]
@@ -22,9 +22,9 @@ pub fn Builder::new() -> Builder {
 /// Append a root folder and record its configuration.
 ///
 /// The root's name is the normalized root path itself, so path reconstruction
-/// can stop at `NO_PARENT`. The returned id is the folder id to use as the
-/// parent of every entry below this root; `root_count() - 1` is the index for
-/// `set_root_stats`.
+/// can stop at `NO_PARENT`. The returned temporary id is the folder id to use
+/// as the parent of every entry below this root; `root_count() - 1` is the index
+/// for `set_root_stats`. `finish` remaps it to the final canonical folder id.
 pub fn Builder::add_root(
   self : Builder,
   path : BytesView,

@@ -342,9 +342,9 @@ fn parse_order(
 /// Validate that ORDER is still the canonical `(name, path)` sequence.
 ///
 /// Comparing adjacent names is free for the common case; a full path is only
-/// materialized when the names tie, which is exactly what `Store::new` does.
-/// Equal name and path are accepted because the build-time input index, the
-/// final tie-breaker, is not persisted.
+/// materialized when the names tie. Exact name/path ties use the persisted
+/// store-wide id, which puts folders before files and matches `Store::new`'s
+/// linear merge of the two physically sorted arrays.
 fn validate_canonical_order(store : @core.Store) -> Unit raise DbError {
   let order = store.entries_in_order()
   for position in 1..<order.length() {
@@ -360,8 +360,12 @@ fn validate_canonical_order(store : @core.Store) -> Unit raise DbError {
     if name_order == 0 {
       let left_path = store.entry_path(left)
       let right_path = store.entry_path(right)
-      if @util.cmp_paths(left_path[:], right_path[:]) > 0 {
+      let path_order = @util.cmp_paths(left_path[:], right_path[:])
+      if path_order > 0 {
         raise DbError::Corrupt("order is not sorted by path")
+      }
+      if path_order == 0 && store.global_id(left) > store.global_id(right) {
+        raise DbError::Corrupt("order has an invalid duplicate-path tie-break")
       }
     }
   }

@@ -1,8 +1,8 @@
 # MSDB v3 数据库格式
 
-`moonsearch` 的持久化文件把一次扫描的全部派生结构写进单个文件：条目、名字池、规范
-顺序、字段字典、范围索引与 trigram posting。加载后查询直接使用这些结构，不重新扫描、
-不重建字典、不重排 trigram。
+`moonsearch` 的持久化文件把一次扫描的全部派生结构写进单个文件：条目、名字池、物理
+规范 id、合并规范顺序、字段字典、范围索引与 trigram posting。加载后查询直接使用这些
+结构，不重新扫描、不重建字典、不重排 trigram。
 
 - 文件扩展名：`.msdb`
 - 默认路径：`$XDG_DATA_HOME/moonsearch/index.msdb`，否则
@@ -78,7 +78,7 @@ count       u32            必须等于 header.root_count
   path_len  u32            原始路径字节数
   path      bytes          绝对路径，不要求合法 UTF-8
   flags     u32            bit0 = one_file_system
-  folder    u32            根文件夹 id，必须 < folder_count
+  folder    u32            最终规范根文件夹 id，必须 < folder_count
   files     u32            子树文件数
   folders   u32            子树文件夹数（不含根自身）
   size      i64            子树字节数
@@ -119,8 +119,11 @@ num_files    u32   直接子文件数
 num_folders  u32   直接子文件夹数
 ```
 
-加载后必须通过父链环检测：任何父链都必须在有限步内到达根，否则拒绝整个文件。这样
-`Store::folder_path` 的向上遍历不会因损坏输入而死循环。
+新写入的记录按数组下标物理满足 `(name, path)` 自然序。构建时先使用临时插入 id，
+排序后建立 `old_id -> new_id`，所有 `parent` 与 ROOTS.folder 都已回填到最终 id 空间。
+同路径重复项使用所属根、父路径与条目字段做确定性 tie-break，因此嵌套根和乱序扫描得
+到相同字节。加载后必须通过父链环检测：任何父链都必须在有限步内到达根，否则拒绝整个
+文件。这样 `Store::folder_path` 的向上遍历不会因损坏输入而死循环。
 
 ## 6. FILES
 
@@ -134,10 +137,14 @@ size         i64
 mtime        i64
 ```
 
+文件数组同样按 `(name, path)` 自然序物理排列，`parent` 使用回填后的规范文件夹 id。
+Dict、Ranges 与 POSTINGS 都在重排完成后构建，因此其中的全局 id 不需要加载时转换。
+
 ## 7. ORDER
 
-`folder_count + file_count` 个 `u32`，按构建时的规范顺序（`(name, path)` 自然序）
-存放全局 id：
+`folder_count + file_count` 个 `u32`，按构建时的跨类型规范顺序（`(name, path)` 自然序）
+存放全局 id。FOLDERS 与 FILES 各自已经规范排序，ORDER 是两者的线性归并结果，不再承担
+数组内部重排：
 
 ```text
 GlobalId = folder id                        0 .. folder_count - 1
@@ -145,8 +152,10 @@ GlobalId = folder id                        0 .. folder_count - 1
 ```
 
 读取端要求它是 `0 .. total-1` 的排列：每个 id 在范围内且不重复。相邻条目还必须满足
-`(name, path)` 单调：名字相同（自然序）时才比较完整路径。加载后直接作为 `Store` 的
-`order`，不重新排序；顺序损坏时拒绝整个文件。
+`(name, path)` 单调：名字相同（自然序）时才比较完整路径；完全同键时文件夹在前。加载后
+直接作为 `Store` 的 `order`，不重新排序；顺序损坏时拒绝整个文件。二进制布局未变，因此
+版本仍为 v3.0；旧 v3 文件可通过 ORDER 保持查询顺序，新写入文件同时保证条目数组的物理
+规范顺序。
 
 ## 8. DICT
 
@@ -276,4 +285,6 @@ full_crc     u32   覆盖 [0, checksum_section.offset)
 - **主版本**：section 语义不兼容时递增；读取器拒绝其他主版本。v3 将 ROOTS
   从“必须合法 UTF-8”改为“Unix 原始字节”，因此拒绝 v2，避免旧读取器误拒新库或折叠路径。
 - **次版本**：只增加 section 或字段时递增；读取器跳过未知 section，按已知字段加载。
+- S05 规范 id 重排改变新写入记录的排列与 id 赋值，但不改变 section 布局；ORDER 仍可
+  恢复旧 v3 文件的查询顺序，因此保持 v3.0。
 - 每次格式变更必须同步更新本文件与 `src/index/db_test.mbt` 的布局断言。

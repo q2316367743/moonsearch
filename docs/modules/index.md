@@ -38,8 +38,10 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
 
 ## 扫描与构建器
 
-- 每个目录项先按名字的自然顺序排序，再决定 id，因此 `readdir` 顺序不会进入索引。
-- 条目按前序分配 id：父目录一定在子条目之前；大小与子项计数在递归返回时后序累加。
+- 每个目录项先按名字的自然顺序排序；Builder 按前序分配临时 id，父目录一定先于子条目。
+  大小与子项计数在递归返回时后序累加。
+- `Builder::finish` 经 `Store::new` 分别规范排序文件夹/文件数组，回填 parent 与根 id，
+  再归并规范顺序；`readdir` 顺序不会进入最终物理 id 或数据库字节。
 - 符号链接不跟随，作为文件条目记录 `ENTRY_FLAG_SYMLINK`；POSIX 后端用 `lstat` 的
   `st_size` 记录链接自身尺寸，并计入文件与文件夹统计。特殊文件记录 `ENTRY_FLAG_SPECIAL`；
   以 `.` 开头的名字记录 `ENTRY_FLAG_HIDDEN`。
@@ -48,7 +50,8 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
   在该策略下仍可恢复。
 - 尺寸累加统一走 `core::saturating_add`。文件夹、根统计与 `Store::total_size` 都饱和到
   `Int64` 边界；每次扫描最多记录一次稳定溢出告警。
-- `Builder::finish` 生成不可变 `Store`，规范顺序在 `Store::new` 中建立。
+- `Builder::finish` 生成不可变 `Store`；物理规范 id、父链回填与合并规范顺序都在
+  `Store::new` 中建立，之后才构建 Dict/Ranges/Trigram。
 
 ### 排除规则
 
@@ -312,8 +315,9 @@ Index::to_bytes:
 - `NAMES` 先按名字去重再排序，front coding 的公共前缀因此最大化；记录里的
   `name_index` 是名字表序号，加载时把名字按顺序追加到新 `NamePool` 并保存返回的
   `NameRef`，因此条目中的引用自然重建。
-- `ORDER` 直接写 `Store::entries_in_order` 的全局 id。恢复时校验它是排列，然后交给
-  `Store::restore`；不再执行 `Store::new` 的规范排序。
+- FOLDERS/FILES 按最终物理规范 id 写入，parent 与 ROOTS.folder 已回填；ORDER 直接写
+  `Store::entries_in_order` 的合并全局 id。恢复时校验它是排列及 `(name, path, GlobalId)`
+  顺序，然后交给 `Store::restore`；不再执行 `Store::new` 的规范排序。
 - `DICT` 的 `Ids` 值使用 `@ids.Ids::to_bytes`，每个值前带 `u32` 字节长度，读取器可以
   独立解码并拒绝尾随字节。
 - `RANGES` 只写 `Ranges::is_loaded` 为真的字段。未写出的字段在加载后仍按需从

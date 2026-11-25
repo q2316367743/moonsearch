@@ -202,13 +202,14 @@ test "database round-trips invalid UTF-8 roots and distinct names byte-exactly" 
   assert_eq(loaded.store().roots()[0].path, b"/raw-\xff")
   assert_eq(
     loaded.store().entry_name(@core.EntryRef::new(@core.File, 0)),
-    b"bad-\xff"[:],
+    b"bad-\xfe"[:],
   )
   assert_eq(
     loaded.store().entry_name(@core.EntryRef::new(@core.File, 1)),
-    b"bad-\xfe"[:],
+    b"bad-\xff"[:],
   )
-  assert_eq(loaded.store().file_path(0), b"/raw-\xff/bad-\xff")
+  assert_eq(loaded.store().file_path(0), b"/raw-\xff/bad-\xfe")
+  assert_eq(loaded.store().file_path(1), b"/raw-\xff/bad-\xff")
   assert_eq(loaded.to_bytes() catch { err => abort(err.message()) }, bytes)
 }
 
@@ -229,7 +230,7 @@ test "database round-trips symlink sizes and saturated folder totals" {
   let bytes = encoded(original)
   let loaded = decoded(bytes)
   assert_stores_equal(original.store(), loaded.store())
-  let link = loaded.store().file(0).unwrap()
+  let link = loaded.store().file(1).unwrap()
   assert_true(link.is_symlink())
   assert_eq(link.size(), 7L)
   assert_eq(loaded.store().folder(0).unwrap().size(), 9223372036854775807L)
@@ -416,4 +417,54 @@ test "database info reads the header without loading the store" {
   assert_eq(info.file_size, bytes.length().to_int64())
   assert_true(info.trigram_count > 0)
   assert_eq(info.sections.length(), 9)
+}
+
+///|
+test "database persists physical canonical ids, parents, roots, and order" {
+  let store = canonical_builder(false).finish(built_at=125L) catch {
+    err => abort(err.message())
+  }
+  let original = @index.Index::build(store)
+  let bytes = encoded(original)
+  let loaded = decoded(bytes)
+  let restored = loaded.store()
+  let folder_paths = [b"/r", b"/r/a2", b"/r/a10", b"/r/z10"]
+  let file_paths = [
+    b"/r/file2", b"/r/file10", b"/r/a2/same.txt", b"/r/a10/same.txt",
+  ]
+  for id in 0..<restored.folder_count() {
+    assert_eq(restored.folder_path(id), folder_paths[id])
+  }
+  for id in 0..<restored.file_count() {
+    assert_eq(restored.file_path(id), file_paths[id])
+  }
+  assert_eq(restored.roots()[0].folder, 0)
+  assert_eq(restored.file(2).unwrap().parent(), 1)
+  assert_eq(restored.file(3).unwrap().parent(), 2)
+  assert_eq(restored.global_id(@core.EntryRef::new(@core.File, 0)), 4)
+  let order = restored
+    .entries_in_order()
+    .map(fn(entry) { restored.global_id(entry) })
+  assert_eq(order, [0, 1, 2, 4, 5, 6, 7, 3])
+  assert_eq(loaded.ranges().parent_ids(b"/r/a2"[:]).to_sorted_ids(), [6])
+  assert_eq(loaded.ranges().depth().equal(1L).to_sorted_ids(), [1, 2, 3, 4, 5])
+  assert_eq(loaded.dict().root(0).unwrap().cardinality(), 8)
+  assert_eq(loaded.to_bytes() catch { err => abort(err.message()) }, bytes)
+}
+
+///|
+test "database round-trips duplicate nested-root parent buckets" {
+  let store = nested_builder(true).finish(built_at=126L) catch {
+    err => abort(err.message())
+  }
+  let loaded = decoded(encoded(@index.Index::build(store)))
+  assert_eq(loaded.store().roots()[0].folder, 0)
+  assert_eq(loaded.store().roots()[1].folder, 1)
+  assert_eq(loaded.store().file(0).unwrap().parent(), 2)
+  assert_eq(loaded.store().file(1).unwrap().parent(), 3)
+  assert_eq(loaded.store().file(4).unwrap().parent(), 4)
+  assert_eq(loaded.store().file(5).unwrap().parent(), 1)
+  assert_eq(loaded.ranges().parent_ids(b"/r/sub"[:]).to_sorted_ids(), [
+    2, 3, 7, 8, 9, 10,
+  ])
 }

@@ -259,11 +259,11 @@ test "raw formats preserve distinct invalid UTF-8 names and NUL records" {
   ]
   assert_eq(
     @exec.format_hits(store, hits, @exec.FormatOptions::new()).bytes,
-    b"/raw/bad-\xff\n/raw/bad-\xfe",
+    b"/raw/bad-\xfe\n/raw/bad-\xff",
   )
   assert_eq(
     @exec.format_hits(store, hits, @exec.FormatOptions::new(format=@exec.Names)).bytes,
-    b"bad-\xff\nbad-\xfe",
+    b"bad-\xfe\nbad-\xff",
   )
   let template = template_of("{path}|{name}")
   assert_eq(
@@ -272,14 +272,14 @@ test "raw formats preserve distinct invalid UTF-8 names and NUL records" {
       hits,
       @exec.FormatOptions::new(format=@exec.Template(template)),
     ).bytes,
-    b"/raw/bad-\xff|bad-\xff\n/raw/bad-\xfe|bad-\xfe",
+    b"/raw/bad-\xfe|bad-\xfe\n/raw/bad-\xff|bad-\xff",
   )
   let nul = @exec.format_hits(
     store,
     hits,
     @exec.FormatOptions::new(null_terminated=true),
   )
-  assert_eq(nul.bytes, b"/raw/bad-\xff\x00/raw/bad-\xfe\x00")
+  assert_eq(nul.bytes, b"/raw/bad-\xfe\x00/raw/bad-\xff\x00")
   assert_eq(nul.stdout_bytes(), nul.bytes)
   assert_eq(
     @exec.format_hits(
@@ -287,7 +287,7 @@ test "raw formats preserve distinct invalid UTF-8 names and NUL records" {
       hits,
       @exec.FormatOptions::new(relative_to=Some(b"/raw")),
     ).stdout_bytes(),
-    b"bad-\xff\nbad-\xfe\n",
+    b"bad-\xfe\nbad-\xff\n",
   )
 }
 

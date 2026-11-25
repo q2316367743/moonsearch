@@ -36,9 +36,10 @@ pub fn RootInfo::new(
 ///
 /// A store owns the name pool and the folder/file arrays built by a scan. The
 /// arrays are indexed by `FolderId` and `EntryId` respectively; every collection
-/// the query layer builds later refers to entries through those ids. A finished
-/// store is only read, which is what makes it safe to share and, from S12 on,
-/// straightforward to serialize.
+/// the query layer builds later refers to entries through those ids. Each array
+/// is physically ordered by `(name, path)`, so its indexes are already canonical
+/// within that entry kind. A finished store is only read, which is what makes it
+/// safe to share and straightforward to serialize.
 pub struct Store {
   priv names : NamePool
   priv folders : Array[Entry]
@@ -51,13 +52,14 @@ pub struct Store {
 }
 
 ///|
-/// Assemble a store from already-built parts.
+/// Assemble a store from parts that still use builder-assigned ids.
 ///
-/// The builder in the `index` package is the intended producer. The constructor
-/// validates nothing beyond what the parts already guarantee; ids in `entries`
-/// are interpreted as indexes into the two arrays. It also computes the
-/// canonical order, which is the only pre-sorted sequence the query engine
-/// keeps.
+/// The builder in the `index` package is the intended producer. Before the
+/// arrays become immutable, this constructor sorts folders and files separately
+/// by natural `(name, path)` order, builds the old-to-new id maps, and rewrites
+/// every parent and root folder id. It then computes the merged canonical order
+/// used by query output. Dict, Ranges, and Trigram are built only after this
+/// step, so all derived structures use the final id space.
 pub fn Store::new(
   names~ : NamePool,
   folders~ : Array[Entry],
@@ -65,7 +67,9 @@ pub fn Store::new(
   roots~ : Array[RootInfo],
   built_at~ : Int64,
 ) -> Store {
-  let order = build_order(names, folders, files)
+  let (folders, files, roots, order) = normalize_entries(
+    names, folders, files, roots,
+  )
   { names, folders, files, roots, built_at, order, }
 }
 
@@ -325,7 +329,8 @@ pub fn Store::file_path(self : Store, id : EntryId) -> Bytes {
 /// Build the path of an entry from its own name and its parent folder.
 ///
 /// The chain is walked from the parent up to the root, then written in reverse.
-/// A root name of `/` must not produce a doubled separator.
+/// A step limit keeps hand-built malformed cycles finite. A root name of `/`
+/// must not produce a doubled separator.
 fn join_chain(
   names : NamePool,
   folders : Array[Entry],
@@ -334,10 +339,12 @@ fn join_chain(
 ) -> Bytes {
   let refs : Array[NameRef] = [name]
   let mut current = parent
-  while current >= 0 && current < folders.length() {
+  let mut remaining = folders.length()
+  while current >= 0 && current < folders.length() && remaining > 0 {
     let entry = folders[current]
     refs.push(entry.name())
     current = entry.parent()
+    remaining = remaining - 1
   }
   let buffer = @buffer.Buffer()
   let mut index = refs.length() - 1
@@ -359,66 +366,329 @@ fn join_chain(
 }
 
 ///|
-/// Compute the canonical order of all entries.
-///
-/// Names are the primary key and full paths the secondary key, with the entry's
-/// position in the input as a final tie-breaker. Both keys use the natural path
-/// ordering from `@util.cmp_paths`, so `file2` sorts before `file10`.
-fn build_order(
-  names : NamePool,
-  folders : Array[Entry],
-  files : Array[Entry],
-) -> Array[EntryRef] {
-  let folder_count = folders.length()
-  let total = folder_count + files.length()
-  let refs : Array[EntryRef] = []
-  let paths : Array[Bytes] = []
-  for id in 0..<folder_count {
-    let entry = folders[id]
-    refs.push(EntryRef::new(Folder, id))
-    paths.push(join_chain(names, folders, entry.name(), entry.parent()))
-  }
-  for id in 0..<files.length() {
-    let entry = files[id]
-    refs.push(EntryRef::new(File, id))
-    paths.push(join_chain(names, folders, entry.name(), entry.parent()))
-  }
-  let indices : Array[Int32] = []
-  for index in 0..<total {
-    indices.push(index)
-  }
-  indices.sort_by(fn(left, right) {
-    let left_name = ref_name(names, folders, files, refs[left])
-    let right_name = ref_name(names, folders, files, refs[right])
-    let name_order = @util.cmp_paths(left_name, right_name)
-    if name_order != 0 {
-      name_order
-    } else {
-      let path_order = @util.cmp_paths(paths[left][:], paths[right][:])
-      if path_order != 0 {
-        path_order
-      } else {
-        left - right
-      }
-    }
-  })
-  let ordered : Array[EntryRef] = []
-  for index in indices {
-    ordered.push(refs[index])
-  }
-  ordered
+/// One entry plus the keys needed while builder ids are being normalized.
+priv struct OrderedEntry {
+  old_id : Int32
+  path : Bytes
+  /// Nearest configured root. Nested roots can duplicate a path; this keeps
+  /// their otherwise identical records independent of scan insertion order.
+  root : Int32
 }
 
 ///|
-/// Name bytes behind an entry reference. Only called for ids built above.
-fn ref_name(
+/// Physically canonicalize both entry arrays and remap every folder reference.
+fn normalize_entries(
   names : NamePool,
   folders : Array[Entry],
   files : Array[Entry],
-  entry : EntryRef,
-) -> BytesView {
-  match entry.kind {
-    Folder => names.view(folders[entry.id].name())
-    File => names.view(files[entry.id].name())
+  roots : Array[RootInfo],
+) -> (Array[Entry], Array[Entry], Array[RootInfo], Array[EntryRef]) {
+  let folder_count = folders.length()
+  let owners = resolve_root_owners(folders, roots)
+  let ordered_folders = Array::makei(folder_count, fn(id) {
+    let entry = folders[id]
+    {
+      old_id: id,
+      path: join_chain(names, folders, entry.name(), entry.parent()),
+      root: owners[id],
+    }
+  })
+  ordered_folders.sort_by(fn(left, right) {
+    compare_ordered(names, folders, folders, left, right, true)
+  })
+  let ordered_files = Array::makei(files.length(), fn(id) {
+    let entry = files[id]
+    let parent = entry.parent()
+    let root = if parent >= 0 && parent < folder_count {
+      owners[parent]
+    } else {
+      -1
+    }
+    {
+      old_id: id,
+      path: join_chain(names, folders, entry.name(), parent),
+      root,
+    }
+  })
+  ordered_files.sort_by(fn(left, right) {
+    compare_ordered(names, folders, files, left, right, false)
+  })
+  let folder_map = Array::makei(folder_count, fn(_) { -1 })
+  for new_id in 0..<ordered_folders.length() {
+    folder_map[ordered_folders[new_id].old_id] = new_id
   }
+  let normalized_folders : Array[Entry] = []
+  for ordered in ordered_folders {
+    let entry = folders[ordered.old_id]
+    remap_parent(entry, folder_map, folder_count)
+    normalized_folders.push(entry)
+  }
+  let normalized_files : Array[Entry] = []
+  for ordered in ordered_files {
+    let entry = files[ordered.old_id]
+    remap_parent(entry, folder_map, folder_count)
+    normalized_files.push(entry)
+  }
+  let normalized_roots = roots.map(fn(root) {
+    let folder = if root.folder >= 0 && root.folder < folder_count {
+      folder_map[root.folder]
+    } else {
+      root.folder
+    }
+    RootInfo::new(
+      path=root.path,
+      one_file_system=root.one_file_system,
+      folder~,
+      files=root.files,
+      folders=root.folders,
+      size=root.size,
+    )
+  })
+  let order = merge_order(
+    names, normalized_folders, normalized_files, ordered_folders, ordered_files,
+  )
+  (normalized_folders, normalized_files, normalized_roots, order)
+}
+
+///|
+/// Compare two builder entries by natural name and path, then by deterministic
+/// intrinsic fields. A real scan cannot contain the same path twice under one
+/// root, and nested-root copies are separated by `root`; the old id is only a
+/// final tie-break for locally identical hand-built records.
+fn compare_ordered(
+  names : NamePool,
+  folders : Array[Entry],
+  entries : Array[Entry],
+  left : OrderedEntry,
+  right : OrderedEntry,
+  is_folder : Bool,
+) -> Int32 {
+  let left_entry = entries[left.old_id]
+  let right_entry = entries[right.old_id]
+  let name_order = names.compare(left_entry.name(), right_entry.name())
+  if name_order != 0 {
+    return name_order
+  }
+  let path_order = @util.cmp_paths(left.path[:], right.path[:])
+  if path_order != 0 {
+    return path_order
+  }
+  let root_order = compare_int32(left.root, right.root)
+  if root_order != 0 {
+    return root_order
+  }
+  let left_parent_path = parent_path(names, folders, left_entry.parent())
+  let right_parent_path = parent_path(names, folders, right_entry.parent())
+  let parent_order = @util.cmp_paths(left_parent_path[:], right_parent_path[:])
+  if parent_order != 0 {
+    return parent_order
+  }
+  let flags_order = compare_int32(
+    left_entry.flags().to_int(),
+    right_entry.flags().to_int(),
+  )
+  if flags_order != 0 {
+    return flags_order
+  }
+  let size_order = compare_int64(left_entry.size(), right_entry.size())
+  if size_order != 0 {
+    return size_order
+  }
+  let mtime_order = compare_int64(left_entry.mtime(), right_entry.mtime())
+  if mtime_order != 0 {
+    return mtime_order
+  }
+  if is_folder {
+    let files_order = compare_int32(
+      left_entry.num_files().reinterpret_as_int(),
+      right_entry.num_files().reinterpret_as_int(),
+    )
+    if files_order != 0 {
+      return files_order
+    }
+    let folders_order = compare_int32(
+      left_entry.num_folders().reinterpret_as_int(),
+      right_entry.num_folders().reinterpret_as_int(),
+    )
+    if folders_order != 0 {
+      return folders_order
+    }
+  }
+  let raw_name_order = compare_lexical(
+    names.view(left_entry.name()),
+    names.view(right_entry.name()),
+  )
+  if raw_name_order != 0 {
+    return raw_name_order
+  }
+  let raw_path_order = compare_lexical(left.path[:], right.path[:])
+  if raw_path_order != 0 {
+    return raw_path_order
+  }
+  compare_int32(left.old_id, right.old_id)
+}
+
+///|
+/// Rewrite a valid builder parent through the old-to-new folder map. Invalid
+/// parents are left untouched so hand-built stores keep their existing graceful
+/// path truncation behavior.
+fn remap_parent(
+  entry : Entry,
+  folder_map : Array[Int32],
+  folder_count : Int32,
+) -> Unit {
+  let parent = entry.parent()
+  if parent >= 0 && parent < folder_count {
+    entry.set_parent(folder_map[parent])
+  }
+}
+
+///|
+/// Full path of a parent folder, or an empty path for a root/invalid parent.
+fn parent_path(
+  names : NamePool,
+  folders : Array[Entry],
+  parent : FolderId,
+) -> Bytes {
+  if parent < 0 || parent >= folders.length() {
+    return b""
+  }
+  let entry = folders[parent]
+  join_chain(names, folders, entry.name(), entry.parent())
+}
+
+///|
+/// Assign every folder to its nearest configured root without recursion.
+///
+/// The scanner creates roots before their children, but `Store::new` also
+/// accepts arbitrary array order. A three-state walk handles both late parents
+/// and malformed cycles deterministically; cycle members remain unassigned.
+fn resolve_root_owners(
+  folders : Array[Entry],
+  roots : Array[RootInfo],
+) -> Array[Int32] {
+  let count = folders.length()
+  let owners = Array::makei(count, fn(_) { -1 })
+  let states = Array::makei(count, fn(_) { b'\x00' })
+  for index in 0..<roots.length() {
+    let folder = roots[index].folder
+    if folder >= 0 &&
+      folder < count &&
+      (owners[folder] < 0 || index < owners[folder]) {
+      owners[folder] = index
+      states[folder] = b'\x02'
+    }
+  }
+  let chain : Array[Int32] = []
+  for start in 0..<count {
+    if states[start] != b'\x00' {
+      continue
+    }
+    let mut current = start
+    while current >= 0 &&
+          current < count &&
+          states[current] == b'\x00' &&
+          chain.length() < count {
+      states[current] = b'\x01'
+      chain.push(current)
+      current = folders[current].parent()
+    }
+    let owner = if current >= 0 && current < count && states[current] == b'\x02' {
+      owners[current]
+    } else {
+      -1
+    }
+    for position in 0..<chain.length() {
+      let node = chain[position]
+      states[node] = b'\x02'
+      owners[node] = owner
+    }
+    while !chain.is_empty() {
+      ignore(chain.pop())
+    }
+  }
+  owners
+}
+
+///|
+/// Three-way comparison of two 32-bit integers.
+fn compare_int32(left : Int32, right : Int32) -> Int32 {
+  if left < right {
+    -1
+  } else if left > right {
+    1
+  } else {
+    0
+  }
+}
+
+///|
+/// Three-way comparison of two 64-bit integers.
+fn compare_int64(left : Int64, right : Int64) -> Int32 {
+  if left < right {
+    -1
+  } else if left > right {
+    1
+  } else {
+    0
+  }
+}
+
+///|
+/// Three-way lexicographic byte comparison.
+fn compare_lexical(left : BytesView, right : BytesView) -> Int32 {
+  let order = left.lexical_compare(right)
+  if order < 0 {
+    -1
+  } else if order > 0 {
+    1
+  } else {
+    0
+  }
+}
+
+///|
+/// Merge the two physically sorted arrays into the single canonical order.
+///
+/// Both inputs are already sorted by natural `(name, path)`, so this is linear
+/// rather than a third comparison sort. Exact cross-kind ties put the folder
+/// first, matching the store-wide id rule.
+fn merge_order(
+  names : NamePool,
+  folders : Array[Entry],
+  files : Array[Entry],
+  ordered_folders : Array[OrderedEntry],
+  ordered_files : Array[OrderedEntry],
+) -> Array[EntryRef] {
+  let order : Array[EntryRef] = []
+  let mut folder = 0
+  let mut file = 0
+  while folder < folders.length() && file < files.length() {
+    let name_order = names.compare(folders[folder].name(), files[file].name())
+    let take_folder = if name_order != 0 {
+      name_order < 0
+    } else {
+      let path_order = @util.cmp_paths(
+        ordered_folders[folder].path[:],
+        ordered_files[file].path[:],
+      )
+      path_order <= 0
+    }
+    if take_folder {
+      order.push(EntryRef::new(Folder, folder))
+      folder = folder + 1
+    } else {
+      order.push(EntryRef::new(File, file))
+      file = file + 1
+    }
+  }
+  while folder < folders.length() {
+    order.push(EntryRef::new(Folder, folder))
+    folder = folder + 1
+  }
+  while file < files.length() {
+    order.push(EntryRef::new(File, file))
+    file = file + 1
+  }
+  order
 }

@@ -4,13 +4,13 @@
 ///
 /// ```text
 /// /r                      folder 0, size 65, mtime 1000
-///   a.txt                 file 0, size 10, mtime 100
-///   b.txt                 file 1, size 10, mtime 200
-///   sub                   folder 1, size 20, mtime 300
-///     c.bin               file 2, size 20, mtime 300
-///   deep                  folder 2, size 25, mtime 400
-///     deeper              folder 3, size 25, mtime 500
-///       d.txt             file 3, size 25, mtime 500
+///   a.txt                 file 0 (global 4), size 10, mtime 100
+///   b.txt                 file 1 (global 5), size 10, mtime 200
+///   deep                  folder 1, size 25, mtime 400
+///     deeper              folder 2, size 25, mtime 500
+///       d.txt             file 3 (global 7), size 25, mtime 500
+///   sub                   folder 3, size 20, mtime 300
+///     c.bin               file 2 (global 6), size 20, mtime 300
 /// ```
 ///
 /// Global ids are folders `0..3` followed by files `4..7`.
@@ -231,12 +231,12 @@ test "size index orders files and folders together" {
   let ranges = @index.Ranges::build(store)
   let size = ranges.size()
   assert_eq(range_values(size), [10L, 10L, 20L, 20L, 25L, 25L, 25L, 65L])
-  assert_eq(range_ids(size), [4, 5, 1, 6, 2, 3, 7, 0])
+  assert_eq(range_ids(size), [4, 5, 3, 6, 1, 2, 7, 0])
   // A folder's size is its subtree total, so the root is the largest entry.
   assert_eq(size.equal(65L).to_sorted_ids(), [0])
-  assert_eq(size.equal(20L).to_sorted_ids(), [1, 6])
-  assert_eq(size.equal(25L).to_sorted_ids(), [2, 3, 7])
-  assert_eq(size.range(10L, 25L).to_sorted_ids(), [1, 4, 5, 6])
+  assert_eq(size.equal(20L).to_sorted_ids(), [3, 6])
+  assert_eq(size.equal(25L).to_sorted_ids(), [1, 2, 7])
+  assert_eq(size.range(10L, 25L).to_sorted_ids(), [3, 4, 5, 6])
 }
 
 ///|
@@ -249,10 +249,10 @@ test "mtime index keeps duplicate timestamps in id order" {
   assert_eq(range_values(mtime), [
     100L, 200L, 300L, 300L, 400L, 500L, 500L, 1000L,
   ])
-  assert_eq(range_ids(mtime), [4, 5, 1, 6, 2, 3, 7, 0])
-  assert_eq(mtime.equal(300L).to_sorted_ids(), [1, 6])
-  assert_eq(mtime.equal(500L).to_sorted_ids(), [3, 7])
-  assert_eq(mtime.range(300L, 500L).to_sorted_ids(), [1, 2, 6])
+  assert_eq(range_ids(mtime), [4, 5, 3, 6, 1, 2, 7, 0])
+  assert_eq(mtime.equal(300L).to_sorted_ids(), [3, 6])
+  assert_eq(mtime.equal(500L).to_sorted_ids(), [2, 7])
+  assert_eq(mtime.range(300L, 500L).to_sorted_ids(), [1, 3, 6])
 }
 
 ///|
@@ -263,12 +263,12 @@ test "depth index matches the scan engine definition" {
   let ranges = @index.Ranges::build(store)
   let depth = ranges.depth()
   assert_eq(range_values(depth), [0L, 1L, 1L, 1L, 1L, 2L, 2L, 3L])
-  assert_eq(range_ids(depth), [0, 1, 2, 4, 5, 3, 6, 7])
+  assert_eq(range_ids(depth), [0, 1, 3, 4, 5, 2, 6, 7])
   assert_eq(depth.equal(0L).to_sorted_ids(), [0])
-  assert_eq(depth.equal(1L).to_sorted_ids(), [1, 2, 4, 5])
-  assert_eq(depth.equal(2L).to_sorted_ids(), [3, 6])
+  assert_eq(depth.equal(1L).to_sorted_ids(), [1, 3, 4, 5])
+  assert_eq(depth.equal(2L).to_sorted_ids(), [2, 6])
   assert_eq(depth.equal(3L).to_sorted_ids(), [7])
-  assert_eq(depth.at_least(2L).to_sorted_ids(), [3, 6, 7])
+  assert_eq(depth.at_least(2L).to_sorted_ids(), [2, 6, 7])
 }
 
 ///|
@@ -294,11 +294,11 @@ test "parent index is counting-sorted and skips roots" {
   let parent = ranges.parent()
   assert_eq(parent.len(), 7)
   assert_eq(range_values(parent), [0L, 0L, 0L, 0L, 1L, 2L, 3L])
-  assert_eq(range_ids(parent), [1, 2, 4, 5, 6, 3, 7])
-  assert_eq(parent.equal(0L).to_sorted_ids(), [1, 2, 4, 5])
-  assert_eq(parent.equal(1L).to_sorted_ids(), [6])
-  assert_eq(parent.equal(2L).to_sorted_ids(), [3])
-  assert_eq(parent.equal(3L).to_sorted_ids(), [7])
+  assert_eq(range_ids(parent), [1, 3, 4, 5, 2, 7, 6])
+  assert_eq(parent.equal(0L).to_sorted_ids(), [1, 3, 4, 5])
+  assert_eq(parent.equal(1L).to_sorted_ids(), [2])
+  assert_eq(parent.equal(2L).to_sorted_ids(), [7])
+  assert_eq(parent.equal(3L).to_sorted_ids(), [6])
 }
 
 ///|
@@ -308,11 +308,11 @@ test "parent paths resolve to folder ids and parent sets" {
   }
   let ranges = @index.Ranges::build(store)
   assert_eq(ranges.parent_of(b"/r"[:]), Some(0))
-  assert_eq(ranges.parent_of(b"/r/sub"[:]), Some(1))
-  assert_eq(ranges.parent_of(b"/r/deep/deeper"[:]), Some(3))
+  assert_eq(ranges.parent_of(b"/r/sub"[:]), Some(3))
+  assert_eq(ranges.parent_of(b"/r/deep/deeper"[:]), Some(2))
   assert_true(ranges.parent_of(b"/missing"[:]) is None)
   assert_true(ranges.parent_of(b"/r/sub/"[:]) is None)
-  assert_eq(ranges.parent_ids(b"/r"[:]).to_sorted_ids(), [1, 2, 4, 5])
+  assert_eq(ranges.parent_ids(b"/r"[:]).to_sorted_ids(), [1, 3, 4, 5])
   assert_eq(ranges.parent_ids(b"/r/sub"[:]).to_sorted_ids(), [6])
   assert_eq(ranges.parent_ids(b"/missing"[:]).cardinality(), 0)
 }
@@ -330,10 +330,11 @@ test "a duplicated nested-root path selects every parent bucket" {
   ignore(builder.add_file(nested_root, b"two.txt", 2L, 0L))
   let store = builder.finish(built_at=0L)
   let ranges = @index.Ranges::build(store)
-  assert_eq(ranges.parent_of(b"/r/sub"[:]), Some(sub))
+  // The nested root's full-path name sorts before the outer folder's basename.
+  assert_eq(ranges.parent_of(b"/r/sub"[:]), Some(1))
   assert_eq(ranges.parent_ids(b"/r/sub"[:]).to_sorted_ids(), [3, 4])
   // The outer path is unaffected: only the original `sub` is its child.
-  assert_eq(ranges.parent_ids(b"/r"[:]).to_sorted_ids(), [1])
+  assert_eq(ranges.parent_ids(b"/r"[:]).to_sorted_ids(), [2])
 }
 
 ///|
@@ -350,7 +351,7 @@ test "eager fields are built up front and the rest are lazy" {
   assert_false(ranges.is_loaded(@index.RangeField::Parent))
   assert_eq(ranges.mtime().len(), 8)
   assert_true(ranges.is_loaded(@index.RangeField::MTime))
-  assert_eq(ranges.depth().equal(2L).to_sorted_ids(), [3, 6])
+  assert_eq(ranges.depth().equal(2L).to_sorted_ids(), [2, 6])
   assert_true(ranges.is_loaded(@index.RangeField::Depth))
   assert_eq(ranges.child_count().equal(4L).to_sorted_ids(), [0])
   assert_true(ranges.is_loaded(@index.RangeField::ChildCount))
@@ -359,9 +360,9 @@ test "eager fields are built up front and the rest are lazy" {
 }
 
 ///|
-test "depth resolves a parent stored after its child" {
-  // The builder always assigns parents first, but Store::new accepts any array
-  // order; the memoized depth pass must still find the chain.
+test "depth resolves a parent that normalization places after its child" {
+  // The child is inserted first with a builder id. Canonical name ordering moves
+  // the root ahead of it and rewrites the parent before Ranges is built.
   let names = @core.NamePool::new()
   let root_name = names.add(b"/late"[:])
   let child_name = names.add(b"c"[:])
@@ -386,14 +387,14 @@ test "depth resolves a parent stored after its child" {
     built_at=0L,
   )
   let ranges = @index.Ranges::build(store)
-  assert_eq(ranges.depth().equal(0L).to_sorted_ids(), [1])
-  assert_eq(ranges.depth().equal(1L).to_sorted_ids(), [0])
+  assert_eq(ranges.depth().equal(0L).to_sorted_ids(), [0])
+  assert_eq(ranges.depth().equal(1L).to_sorted_ids(), [1])
   assert_eq(ranges.depth().equal(2L).to_sorted_ids(), [2])
   // The root has no parent, so only the child and the file enter the index.
   assert_eq(range_values(ranges.parent()), [0L, 1L])
-  assert_eq(range_ids(ranges.parent()), [2, 0])
-  assert_eq(ranges.parent().equal(1L).to_sorted_ids(), [0])
-  assert_eq(ranges.parent().equal(0L).to_sorted_ids(), [2])
+  assert_eq(range_ids(ranges.parent()), [1, 2])
+  assert_eq(ranges.parent().equal(1L).to_sorted_ids(), [2])
+  assert_eq(ranges.parent().equal(0L).to_sorted_ids(), [1])
 }
 
 ///|

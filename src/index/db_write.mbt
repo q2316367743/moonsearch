@@ -248,7 +248,7 @@ fn common_prefix(left : BytesView, right : BytesView) -> Int32 {
 }
 
 ///|
-/// Serialize the folder records in id order.
+/// Serialize folder records in their physical canonical id order.
 fn folders_section(
   store : @core.Store,
   name_index : Map[Bytes, Int32],
@@ -274,7 +274,7 @@ fn folders_section(
 }
 
 ///|
-/// Serialize the file records in id order.
+/// Serialize file records in their physical canonical id order.
 fn files_section(
   store : @core.Store,
   name_index : Map[Bytes, Int32],

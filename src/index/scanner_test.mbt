@@ -255,11 +255,10 @@ async test "scan builds folders, files, sizes, and paths" {
   assert_eq(store.folder_path(1), b"/r/a")
   assert_eq(store.folder_path(2), b"/r/a/inner")
   assert_eq(store.folder_path(3), b"/r/z")
-  // File ids follow the depth-first insertion order, not lexicographic path
-  // order: a's subtree is scanned before b.txt.
-  assert_eq(store.file_path(0), b"/r/a/inner/deep.bin")
-  assert_eq(store.file_path(1), b"/r/a/x.html")
-  assert_eq(store.file_path(2), b"/r/b.txt")
+  // File ids follow physical canonical name order, not depth-first scan order.
+  assert_eq(store.file_path(0), b"/r/b.txt")
+  assert_eq(store.file_path(1), b"/r/a/inner/deep.bin")
+  assert_eq(store.file_path(2), b"/r/a/x.html")
 }
 
 ///|
@@ -633,6 +632,13 @@ async test "nested roots are accepted with the flag" {
   assert_eq(report.store.roots().length(), 2)
   // The file is indexed under both roots, which is what opting in means.
   assert_eq(report.store.file_count(), 2)
+  assert_eq(report.store.folder_count(), 3)
+  assert_eq(report.store.roots()[0].folder, 0)
+  assert_eq(report.store.roots()[1].folder, 1)
+  assert_eq(report.store.file_path(0), b"/r/sub/x")
+  assert_eq(report.store.file_path(1), b"/r/sub/x")
+  assert_eq(report.store.file(0).unwrap().parent(), 2)
+  assert_eq(report.store.file(1).unwrap().parent(), 1)
 }
 
 ///|
@@ -990,10 +996,12 @@ async test "multiple roots are scanned independently and keep their order" {
   assert_eq(report.store.folder_count(), 3)
   assert_eq(report.store.file_count(), 3)
   assert_eq(report.store.total_size(), 7L)
-  // The first root's subtree is inserted before the second root's.
-  assert_eq(report.store.file_path(0), b"/second/b")
-  assert_eq(report.store.file_path(1), b"/second/sub/c")
-  assert_eq(report.store.file_path(2), b"/first/a")
+  // Root records keep configuration order, while file ids follow name order.
+  assert_eq(report.store.roots()[0].folder, 1)
+  assert_eq(report.store.roots()[1].folder, 0)
+  assert_eq(report.store.file_path(0), b"/first/a")
+  assert_eq(report.store.file_path(1), b"/second/b")
+  assert_eq(report.store.file_path(2), b"/second/sub/c")
 }
 
 ///|

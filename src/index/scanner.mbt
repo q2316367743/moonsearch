@@ -175,8 +175,9 @@ fn is_hidden_name(name : BytesView) -> Bool {
 /// Scan one root and append its entries to the builder.
 ///
 /// The root folder is created before its children (pre-order), which fixes its
-/// id before any recursion happens. Sizes and child counts are filled in on the
-/// way out (post-order), so each directory is updated exactly once.
+/// temporary builder id before any recursion happens. Sizes and child counts are
+/// filled in on the way out (post-order), so each directory is updated exactly
+/// once; `Store::new` canonicalizes and remaps all ids after the scan.
 async fn[Source : @platform.ScanSource] scan_root(
   source : Source,
   spec : RootSpec,

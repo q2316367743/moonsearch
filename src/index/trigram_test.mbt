@@ -4,17 +4,17 @@
 /// ```text
 /// /r                  folder 0
 ///   docs              folder 1
-///     report.pdf      file 3
-///     notes.txt       file 4
 ///   media             folder 2
-///     photo.JPG       file 5
-///   Report-2024.md    file 6
-///   aaaaa             file 7
-///   a                 file 8
-///   ab                file 9
-///   发票.txt          file 10
-///   .hidden           file 11
-///   abbaab            file 12
+///   .hidden           file 0 (global 3)
+///   Report-2024.md    file 1 (global 4)
+///   a                 file 2 (global 5)
+///   aaaaa             file 3 (global 6)
+///   ab                file 4 (global 7)
+///   abbaab            file 5 (global 8)
+///   notes.txt         file 6 (global 9)
+///   photo.JPG         file 7 (global 10)
+///   report.pdf        file 8 (global 11)
+///   发票.txt          file 9 (global 12)
 /// ```
 fn trigram_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
@@ -128,7 +128,7 @@ test "repeated windows are stored once per name" {
   let index = @index.TrigramIndex::build(store)
   // "aaaaa" yields "aaa" three times; the posting must still hold one id.
   let posting = index.posting(trigram_key("aaa")).unwrap()
-  assert_eq(posting_ids(posting), [7])
+  assert_eq(posting_ids(posting), [6])
 }
 
 ///|
@@ -136,13 +136,13 @@ test "lookup folds ASCII and intersects postings" {
   let store = trigram_fixture()
   let index = @index.TrigramIndex::build(store)
   // "report.pdf" and "Report-2024.md" share the folded "rep" trigram.
-  assert_eq(lookup_ids(index, "rep"), Some([3, 6]))
-  assert_eq(lookup_ids(index, "REP"), Some([3, 6]))
+  assert_eq(lookup_ids(index, "rep"), Some([4, 11]))
+  assert_eq(lookup_ids(index, "REP"), Some([4, 11]))
   assert_eq(lookup_ids(index, "REP"), lookup_ids(index, "rep"))
   // Every required trigram occurs in both names.
-  assert_eq(lookup_ids(index, "report"), Some([3, 6]))
+  assert_eq(lookup_ids(index, "report"), Some([4, 11]))
   // The uppercase name is matched through the folded index.
-  assert_eq(lookup_ids(index, "2024"), Some([6]))
+  assert_eq(lookup_ids(index, "2024"), Some([4]))
 }
 
 ///|
@@ -151,7 +151,7 @@ test "lookup returns a superset that still needs verification" {
   let index = @index.TrigramIndex::build(store)
   // "abbaab" contains both trigrams of "aabb" but not the substring itself.
   // The posting intersection is a superset; byte verification rejects it.
-  assert_eq(lookup_ids(index, "aabb"), Some([12]))
+  assert_eq(lookup_ids(index, "aabb"), Some([8]))
   let name = @utf8.encode("abbaab")
   assert_true(!@util.contains_bytes(name[:], @utf8.encode("aabb")[:]))
 }
@@ -185,7 +185,7 @@ test "non-ASCII needles use byte trigrams" {
   let store = trigram_fixture()
   let index = @index.TrigramIndex::build(store)
   // The name is six UTF-8 bytes, so four byte trigrams exist.
-  assert_eq(lookup_ids(index, "发票"), Some([10]))
+  assert_eq(lookup_ids(index, "发票"), Some([12]))
   // A byte that does not occur anywhere has no posting.
   assert_eq(lookup_ids(index, "发票x"), Some([]))
 }
@@ -194,7 +194,7 @@ test "non-ASCII needles use byte trigrams" {
 test "hidden names are indexed like every other name" {
   let store = trigram_fixture()
   let index = @index.TrigramIndex::build(store)
-  assert_eq(lookup_ids(index, "hidden"), Some([11]))
+  assert_eq(lookup_ids(index, "hidden"), Some([3]))
 }
 
 ///|

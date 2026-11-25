@@ -3,18 +3,18 @@
 /// without extensions, and a folder whose name contains dots.
 ///
 /// ```text
-/// /r1                     folders 0
-///   docs                  1        report.pdf (0), notes.txt (1)
-///   dir.with.dot          2
-///   .hidden                       2 (hidden)
-///   archive.tar.gz                3
-///   noext                         4
-///   UPPER.JPG                     5
-/// /r2                     3
-///   sub                   4        photo.jpeg (6)
-///   .secret               5 (hidden)
-///   file.                         7
-///   notes.TXT                     8
+/// /r1                     folder 0
+/// /r2                     folder 1
+///   .secret                folder 2 (hidden)
+///   sub                   folder 5        photo.jpeg (file 7)
+///   file.                 file 3
+///   notes.TXT              file 5
+/// /r1/dir.with.dot        folder 3
+/// /r1/docs                folder 4        notes.txt (file 6), report.pdf (file 8)
+/// /r1/.hidden             file 0 (hidden)
+/// /r1/UPPER.JPG           file 1
+/// /r1/archive.tar.gz      file 2
+/// /r1/noext               file 4
 /// ```
 fn dict_store() -> @core.Store raise @index.IndexError {
   let builder = @index.Builder::new()
@@ -89,7 +89,7 @@ test "the dictionary covers every entry exactly once" {
 ///|
 test "hidden and visible split the entry set" {
   let (store, dict) = fixture_dict()
-  assert_eq(dict.hidden().to_sorted_ids(), [5, 8])
+  assert_eq(dict.hidden().to_sorted_ids(), [2, 6])
   assert_eq(dict_paths(store, dict.hidden()), ["/r2/.secret", "/r1/.hidden"])
   assert_eq(dict.visible().cardinality(), 13)
   assert_eq(
@@ -115,7 +115,7 @@ test "extensions are ASCII-folded, sorted, and exclude folders" {
     "/r1/docs/report.pdf",
   ])
   assert_eq(dict_paths(store, dict.extension(b"txt"[:])), [
-    "/r1/docs/notes.txt", "/r2/notes.TXT",
+    "/r2/notes.TXT", "/r1/docs/notes.txt",
   ])
   assert_eq(dict_paths(store, dict.extension(b"jpg"[:])), ["/r1/UPPER.JPG"])
   assert_eq(dict_paths(store, dict.extension(b"jpeg"[:])), [
@@ -124,7 +124,7 @@ test "extensions are ASCII-folded, sorted, and exclude folders" {
   assert_eq(dict_paths(store, dict.extension(b"gz"[:])), ["/r1/archive.tar.gz"])
   // The empty extension holds every file without a dot extension.
   assert_eq(dict_paths(store, dict.extension(b""[0:0])), [
-    "/r1/.hidden", "/r1/noext", "/r2/file.",
+    "/r1/.hidden", "/r2/file.", "/r1/noext",
   ])
   // A folder named with dots never contributes an extension bucket.
   assert_eq(dict.extension(b"dot"[:]).cardinality(), 0)
@@ -136,7 +136,7 @@ test "extension lookups union like ext:a;b" {
   let (store, dict) = fixture_dict()
   let ids = dict.lookup_extensions([b"pdf", b"txt"])
   assert_eq(dict_paths(store, ids), [
-    "/r1/docs/report.pdf", "/r1/docs/notes.txt", "/r2/notes.TXT",
+    "/r2/notes.TXT", "/r1/docs/notes.txt", "/r1/docs/report.pdf",
   ])
   let duplicated = dict.lookup_extensions([b"txt", b"TXT"])
   assert_eq(duplicated.cardinality(), 2)
@@ -149,7 +149,7 @@ test "type categories are materialized from their extension lists" {
   let (store, dict) = fixture_dict()
   assert_eq(dict.type_category_count(), 6)
   assert_eq(dict_paths(store, dict.type_category(@util.TypeCategory::Doc)), [
-    "/r1/docs/report.pdf", "/r1/docs/notes.txt", "/r2/notes.TXT",
+    "/r2/notes.TXT", "/r1/docs/notes.txt", "/r1/docs/report.pdf",
   ])
   assert_eq(dict_paths(store, dict.type_category(@util.TypeCategory::Pic)), [
     "/r1/UPPER.JPG", "/r2/sub/photo.jpeg",
@@ -183,11 +183,11 @@ test "roots cover their whole subtree in configuration order" {
   assert_eq(dict.root_count(), 2)
   assert_eq(store.roots().length(), 2)
   assert_eq(dict_paths(store, dict.root(0).unwrap()), [
-    "/r1", "/r1/docs", "/r1/dir.with.dot", "/r1/docs/report.pdf", "/r1/docs/notes.txt",
-    "/r1/.hidden", "/r1/archive.tar.gz", "/r1/noext", "/r1/UPPER.JPG",
+    "/r1", "/r1/dir.with.dot", "/r1/docs", "/r1/.hidden", "/r1/UPPER.JPG", "/r1/archive.tar.gz",
+    "/r1/noext", "/r1/docs/notes.txt", "/r1/docs/report.pdf",
   ])
   assert_eq(dict_paths(store, dict.root(1).unwrap()), [
-    "/r2", "/r2/sub", "/r2/.secret", "/r2/sub/photo.jpeg", "/r2/file.", "/r2/notes.TXT",
+    "/r2", "/r2/.secret", "/r2/sub", "/r2/file.", "/r2/notes.TXT", "/r2/sub/photo.jpeg",
   ])
   assert_eq(dict.roots().length(), 2)
   assert_true(dict.root(-1) is None)
@@ -199,9 +199,9 @@ test "roots cover their whole subtree in configuration order" {
 }
 
 ///|
-test "root assignment tolerates a parent stored after its child" {
-  // The builder always assigns parents first, but Store::new accepts any array
-  // order; the root resolver must still find the chain.
+test "root assignment follows parents after canonical id normalization" {
+  // The child is inserted first. Name ordering moves the root ahead of it and
+  // rewrites the child's parent before the dictionary assigns root buckets.
   let names = @core.NamePool::new()
   let root_name = names.add(b"/late"[:])
   let child_name = names.add(b"c"[:])

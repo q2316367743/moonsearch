@@ -74,11 +74,11 @@ test "entries resolve through their ids" {
   let root = store.folder(0).unwrap()
   assert_true(root.is_root())
   assert_eq(root.mtime(), 10L)
-  let deep = store.folder(2).unwrap()
-  assert_eq(deep.parent(), 1)
+  let deep = store.folder(1).unwrap()
+  assert_eq(deep.parent(), 2)
   assert_eq(deep.mtime(), 12L)
   let second = store.file(1).unwrap()
-  assert_eq(second.parent(), 2)
+  assert_eq(second.parent(), 1)
   assert_eq(second.size(), 4L)
   assert_eq(second.mtime(), 21L)
 }
@@ -100,8 +100,8 @@ test "out-of-range ids yield None or empty paths" {
 test "paths are reconstructed through the parent chain" {
   let store = fixture_store()
   assert_eq(store.folder_path(0), b"/r")
-  assert_eq(store.folder_path(1), b"/r/sub")
-  assert_eq(store.folder_path(2), b"/r/sub/deep")
+  assert_eq(store.folder_path(1), b"/r/sub/deep")
+  assert_eq(store.folder_path(2), b"/r/sub")
   assert_eq(store.file_path(0), b"/r/a.txt")
   assert_eq(store.file_path(1), b"/r/sub/deep/b.bin")
 }
@@ -307,7 +307,7 @@ test "names are readable through the references entries store" {
   let root = store.folder(0).unwrap()
   assert_eq(store.name(root.name()), b"/r"[:])
   // Same bytes, same name pool entry; the pool does not deduplicate names.
-  let deep = store.folder(2).unwrap()
+  let deep = store.folder(1).unwrap()
   assert_eq(store.name(deep.name()), b"deep"[:])
 }
 
@@ -324,9 +324,9 @@ test "entries follow the canonical name then path order" {
   assert_true(entries[2].kind is @core.File)
   assert_eq(entries[2].id, 1)
   assert_true(entries[3].kind is @core.Folder)
-  assert_eq(entries[3].id, 2)
+  assert_eq(entries[3].id, 1)
   assert_true(entries[4].kind is @core.Folder)
-  assert_eq(entries[4].id, 1)
+  assert_eq(entries[4].id, 2)
   assert_eq(store.entry_name(entries[1]), b"a.txt"[:])
   assert_eq(store.entry_path(entries[2]), b"/r/sub/deep/b.bin")
   assert_eq(store.entry_size(entries[2]), Some(4L))

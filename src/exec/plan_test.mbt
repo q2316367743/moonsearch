@@ -311,7 +311,7 @@ test "the optimizer folds constants and prunes impossible domains" {
   match plan_of(index, "!ext:pdf") {
     @exec.Const(leaf) => {
       assert_eq(leaf.ids().cardinality(), index.entry_count() - 1)
-      assert_false(leaf.ids().contains(4))
+      assert_false(leaf.ids().contains(8))
     }
     _ => abort("expected the negation to fold to a constant")
   }
