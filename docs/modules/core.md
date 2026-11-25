@@ -5,7 +5,8 @@
 
 ## 职责
 
-- `NamePool`：分块字节池，名字以原始 UTF-8 字节追加，`NameRef { offset, length }` 零拷贝读取。
+- `NamePool`：分块字节池，名字以文件系统原始字节追加（不要求 UTF-8），
+  `NameRef { offset, length }` 零拷贝读取。
 - `Entry`：父目录、名字引用、flags、大小、mtime、直接子项计数。
 - `Store`：不可变内存索引，持有名字池、文件夹数组、文件数组与唯一的规范顺序。
 - `GlobalId`：把文件夹与文件映射到同一个非负整数空间。

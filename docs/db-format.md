@@ -75,8 +75,8 @@ length u64
 ```text
 count       u32            必须等于 header.root_count
 每条记录:
-  path_len  u32            UTF-8 字节数
-  path      bytes          绝对路径
+  path_len  u32            原始路径字节数
+  path      bytes          绝对路径，不要求合法 UTF-8
   flags     u32            bit0 = one_file_system
   folder    u32            根文件夹 id，必须 < folder_count
   files     u32            子树文件数
@@ -84,8 +84,9 @@ count       u32            必须等于 header.root_count
   size      i64            子树字节数
 ```
 
-路径必须是合法 UTF-8；解码失败按损坏文件处理。排除规则属于配置而不是索引状态，
-S12 不持久化，因此 `exclude_count` 为 0 且没有 EXCLUDES section。
+路径按 Unix 原始字节保存和恢复，读取器不做 UTF-8 解码；非法 UTF-8 根路径不会折叠为
+替换字符串。排除规则属于配置而不是索引状态，S12 不持久化，因此 `exclude_count` 为 0 且
+没有 EXCLUDES section。
 
 ## 4. NAMES
 

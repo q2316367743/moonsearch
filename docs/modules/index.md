@@ -6,8 +6,12 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
 
 ## 职责
 
-- 递归扫描根目录：排序后的 `readdir`、排除规则、隐藏文件、one-file-system、后序统计。
-- `Builder`：追加根、文件夹、文件，维护名字池与两个条目数组。
+- Unix 递归扫描使用 `platform/posix` 的最小 native stub：`opendir`、`readdir`、
+  `fstatat(AT_SYMLINK_NOFOLLOW)`、`closedir` 与字节 `realpath`；名字和根路径不经过 UTF-8
+  解码。Windows 保留 async/fs 适配层。
+- 每个目录项按名字的原始字节自然排序，再应用排除规则、隐藏文件、one-file-system 与
+  后序统计。
+- `Builder`：以 `BytesView` 追加根、文件夹、文件，维护原始字节名字池与两个条目数组。
 - `Dict`：低基数字段的位图集合（扩展名、类型、隐藏、根、内置分类）。
 - `Ranges`：高基数与范围字段的有序 `(value, id)` 数组（大小、时间、深度、子项数、父目录）。
 - `TrigramIndex`：名字的 3 字节倒排，为子串查询提供候选集。
@@ -305,7 +309,7 @@ Index::to_bytes:
 ```text
 Index::from_bytes:
   parse_envelope      magic / 版本 / endian / 计数 / section table / CRC
-  parse_roots         路径 UTF-8、folder id
+  parse_roots         原始路径字节、folder id
   parse_names         front coding、严格递增、单条与总量上限、重建 NamePool
   parse_entries       父 id、name_index、flags、size、mtime、子项计数
   validate_parent_chains  父链环检测

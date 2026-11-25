@@ -340,6 +340,9 @@ moonsearch count 'ext:mp4 dm:last30days'
   `{type}`、`{kind}`；转义：`\n`、`\t`、`\0`、`\\`。非法模板在扫描前即以退出码 2
   失败。
 - `--basename`、`--json`、`--format` 两两互斥；`--null` 可与任意格式组合。
+- Unix 默认路径、basename 与模板输出保留文件系统原始字节，不要求名称是合法 UTF-8；
+  `--null` 每条恰好输出一个 NUL，不额外添加换行。JSON 始终输出合法 UTF-8，非法字节以
+  U+FFFD 替换字符表示，同时向 stderr 输出稳定告警；需要无损字节时请使用默认/NUL 输出。
 - `--relative-to` 先解析 `realpath`：等于基准输出 `.`，其下路径去掉基准与一个分隔符，
   基准之外的路径保持绝对。
 - 类型名：目录为 `folder`，文件为 `app`/`archive`/`audio`/`doc`/`pic`/`video`，
@@ -380,8 +383,9 @@ moonsearch info --verify              # 数据库各段校验
 | [`docs/benchmarks.md`](docs/benchmarks.md) | 基准口径、实测结果与调优待办 |
 | [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) | 迁移计划与设计取舍 |
 
-迁移计划的 S01–S14 已完成；剩余计划项为 P1/P2 扩展（Unicode casefold、libmagic
-内容类型、PCRE2 正则、路径 trigram、增量监控、POSIX FFI 扫描后端）。
+补漏计划按步骤验收；S02 已建立 Unix 字节安全扫描与原始字节输出。其余步骤与明确的
+P1/P2 扩展（Unicode casefold、libmagic 内容类型、PCRE2 正则、路径 trigram、增量监控）
+以 [`plan/补漏计划书.md`](plan/补漏计划书.md) 的状态为准。
 
 ## 开发
 

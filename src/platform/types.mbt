@@ -18,7 +18,7 @@ pub(all) enum NodeKind {
 /// special files. For symbolic links it is also zero: the link itself occupies
 /// no searchable bytes and counting the target would double count it.
 pub(all) struct NodeInfo {
-  name : String
+  name : Bytes
   kind : NodeKind
   size : Int64
   mtime : Int64
@@ -33,13 +33,13 @@ pub(all) struct NodeInfo {
 ///|
 /// Build a `NodeInfo` explicitly, for backends and tests.
 pub fn NodeInfo::new(
-  name~ : String,
+  name~ : BytesView,
   kind~ : NodeKind,
   size~ : Int64 = 0L,
   mtime~ : Int64 = 0L,
   device~ : UInt64? = None,
 ) -> NodeInfo {
-  { name, kind, size, mtime, device, }
+  { name: name.to_owned(), kind, size, mtime, device, }
 }
 
 ///|
@@ -58,14 +58,14 @@ pub fn DirListing::new(
 /// `lstat`. The scanner records the failure and keeps going instead of failing
 /// the whole scan.
 pub(all) struct DirFailure {
-  name : String
+  name : Bytes
   message : String
 }
 
 ///|
 /// Record an entry that could not be inspected.
-pub fn DirFailure::new(name~ : String, message~ : String) -> DirFailure {
-  { name, message, }
+pub fn DirFailure::new(name~ : BytesView, message~ : String) -> DirFailure {
+  { name: name.to_owned(), message, }
 }
 
 ///|
@@ -104,12 +104,12 @@ pub(open) trait ScanSource {
   /// The order is irrelevant: the scanner sorts by name.
   ///
   /// Raises only when the directory itself cannot be opened or read.
-  async fn list(Self, StringView) -> DirListing raise PlatformError
+  async fn list(Self, BytesView) -> DirListing raise PlatformError
 
   /// Metadata of `path` itself, following a symlink at the root.
   ///
   /// Raises `NotDirectory` when the path is not a directory.
-  async fn stat(Self, StringView) -> NodeInfo raise PlatformError
+  async fn stat(Self, BytesView) -> NodeInfo raise PlatformError
 
   /// Whether `NodeInfo::device` carries a real device id.
   ///
@@ -119,7 +119,7 @@ pub(open) trait ScanSource {
   /// Resolve a configured root to an absolute path with symlinks removed.
   ///
   /// Raising `NotFound` here means the configured root does not exist.
-  async fn realpath(Self, StringView) -> String raise PlatformError
+  async fn realpath(Self, BytesView) -> Bytes raise PlatformError
 }
 
 ///|

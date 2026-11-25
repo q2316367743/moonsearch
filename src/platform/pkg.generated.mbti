@@ -2,6 +2,8 @@
 package "q2316367743/moonsearch/src/platform"
 
 // Values
+pub fn canonical_path(Bytes) -> Result[Bytes, Int32]
+
 pub fn system_source() -> SystemScanSource
 
 // Errors
@@ -32,6 +34,20 @@ pub(all) struct DirListing {
 }
 pub fn DirListing::new(entries~ : Array[NodeInfo], failures? : Array[DirFailure]) -> Self
 
+#external
+pub type Directory
+pub fn Directory::close(Self) -> Unit
+pub fn Directory::open(Bytes) -> Result[Self, Int32]
+pub fn Directory::read_name(Self, FixedArray[Byte]) -> DirectoryRead
+pub fn Directory::stat_into(Self, Bytes, FixedArray[Int64]) -> Result[Unit, Int32]
+
+pub enum DirectoryRead {
+  End
+  Name(Bytes)
+  NameTooLong
+  Failed(Int32)
+}
+
 pub(all) struct NodeInfo {
   name : String
   kind : NodeKind
@@ -47,6 +63,16 @@ pub(all) enum NodeKind {
   Symlink
   Other
 }
+
+pub struct PosixStat {
+  mode : UInt32
+  size : Int64
+  mtime : Int64
+  mtime_nsec : Int64
+  device : UInt64
+  inode : UInt64
+}
+pub fn PosixStat::from_buffer(FixedArray[Int64]) -> Self
 
 pub(all) struct SystemScanSource {
   // private fields

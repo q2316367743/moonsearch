@@ -6,4 +6,5 @@ import {
 
 options(
   "allow-experimental-packages": true,
+  "native-stub": ["posix.c"],
 )
