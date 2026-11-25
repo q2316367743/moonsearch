@@ -24,9 +24,8 @@ pub(all) struct NodeInfo {
   mtime : Int64
   /// Device id (`st_dev`) when the backend can supply one.
   ///
-  /// The pure MoonBit backend cannot read `st_dev`, so it reports `None`; the
-  /// scanner then treats every entry as being on the root device. A POSIX FFI
-  /// backend fills this in later without changing the scanner.
+  /// The POSIX backend always supplies `st_dev`. The Windows async/fs fallback
+  /// reports `None`, which disables device filtering for that backend.
   device : UInt64?
 }
 
