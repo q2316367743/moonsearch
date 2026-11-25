@@ -48,16 +48,14 @@ test "data home reports a missing environment" {
 }
 
 ///|
-test "home resolution prefers HOME and falls back to USERPROFILE" {
+test "home expansion prefers HOME and falls back to USERPROFILE" {
   assert_eq(
-    resolve_home(
-      lookup_of(Map([("HOME", "/home/u"), ("USERPROFILE", "C:/Users/u")])),
-    ),
-    Some("/home/u"),
+    expand_path("~", Map([("HOME", "/home/u"), ("USERPROFILE", "C:/Users/u")])),
+    Ok("/home/u"),
   )
   assert_eq(
-    resolve_home(lookup_of(Map([("USERPROFILE", "C:/Users/u")]))),
-    Some("C:/Users/u"),
+    expand_path("~", Map([("USERPROFILE", "C:/Users/u")])),
+    Ok("C:/Users/u"),
   )
-  assert_eq(resolve_home(lookup_of(Map([]))), None)
+  assert_true(expand_path("~", Map([])) is Err(_))
 }

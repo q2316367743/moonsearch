@@ -1,4 +1,5 @@
 import {
+  "q2316367743/moonsearch/src/config",
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/exec",
   "q2316367743/moonsearch/src/ids",

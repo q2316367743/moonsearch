@@ -1,29 +1,35 @@
 ///|
 /// Parse `--type`.
-fn kind_filter_of(
-  matches : @argparse.Matches,
-) -> Result[@query.KindFilter, String] {
-  match first_option_value(matches, "type").unwrap_or("any") {
-    "any" => Ok(@query.AnyKind)
-    "file" | "files" => Ok(@query.FilesOnly)
-    "folder" | "folders" => Ok(@query.FoldersOnly)
-    other => Err("error: --type must be any, file, or folder, got '\{other}'")
+fn kind_filter_of(invocation : Invocation) -> Result[@query.KindFilter, String] {
+  match explicit_option_value(invocation.matches, "type") {
+    Some(text) =>
+      match text {
+        "any" => Ok(@query.AnyKind)
+        "file" | "files" => Ok(@query.FilesOnly)
+        "folder" | "folders" => Ok(@query.FoldersOnly)
+        other =>
+          Err("error: --type must be any, file, or folder, got '\{other}'")
+      }
+    None => Ok(invocation.config.search.kind)
   }
 }
 
 ///|
-/// Build the initial term flags from the command line.
-fn query_flags_of(matches : @argparse.Matches) -> Result[@query.Flags, String] {
-  let kind = match kind_filter_of(matches) {
+/// Build the initial term flags from CLI and configured search defaults.
+fn query_flags_of(invocation : Invocation) -> Result[@query.Flags, String] {
+  let matches = invocation.matches
+  let search = invocation.config.search
+  let kind = match kind_filter_of(invocation) {
     Ok(kind) => kind
     Err(message) => return Err(message)
   }
   Ok(
     @query.Flags::new(
-      case_sensitive=flag_set(matches, "case-sensitive"),
-      exact=flag_set(matches, "exact"),
-      search_path=flag_set(matches, "search-path"),
-      regex=flag_set(matches, "regex"),
+      case_sensitive=flag_set(matches, "case-sensitive") ||
+        search.case_sensitive,
+      exact=flag_set(matches, "exact") || search.exact,
+      search_path=flag_set(matches, "search-path") || search.search_path,
+      regex=flag_set(matches, "regex") || search.regex,
       kind~,
     ),
   )
@@ -54,7 +60,14 @@ fn build_query(
       flags=@query.Flags::with_name_heuristics(parse_flags, text),
     )
   } else {
-    let parsed = Ok(@query.parse(text, flags=parse_flags, compat~)) catch {
+    let parsed = Ok(
+      @query.parse(
+        text,
+        flags=parse_flags,
+        macros=invocation.config.macros,
+        compat~,
+      ),
+    ) catch {
       err => Err("error: \{err.message()}")
     }
     match parsed {
@@ -74,8 +87,10 @@ priv enum Engine {
 
 ///|
 /// Parse `--engine`.
-fn engine_of(matches : @argparse.Matches) -> Result[Engine, String] {
-  match first_option_value(matches, "engine").unwrap_or("scan") {
+fn engine_of(invocation : Invocation) -> Result[Engine, String] {
+  let configured = invocation.config.engine.unwrap_or("scan")
+  match
+    explicit_option_value(invocation.matches, "engine").unwrap_or(configured) {
     "scan" => Ok(ScanEngine)
     "bitmap" => Ok(BitmapEngine)
     other => Err("error: --engine must be scan or bitmap, got '\{other}'")
@@ -83,26 +98,30 @@ fn engine_of(matches : @argparse.Matches) -> Result[Engine, String] {
 }
 
 ///|
-/// Parse `--limit`.
-fn limit_of(matches : @argparse.Matches) -> Result[Int32, String] {
-  let text = first_option_value(matches, "limit").unwrap_or("0")
-  match @query.parse_count(text) {
-    Some(value) =>
-      if value >= 0L && value <= 2147483647L {
-        Ok(value.to_int())
-      } else {
-        Err("error: --limit must be a non-negative integer, got '\{text}'")
+/// Parse `--limit`, then the configured limit, then zero (unlimited).
+fn limit_of(invocation : Invocation) -> Result[Int32, String] {
+  match explicit_option_value(invocation.matches, "limit") {
+    Some(text) =>
+      match @query.parse_count(text) {
+        Some(value) =>
+          if value >= 0L && value <= 2147483647L {
+            Ok(value.to_int())
+          } else {
+            Err("error: --limit must be a non-negative integer, got '\{text}'")
+          }
+        None =>
+          Err("error: --limit must be a non-negative integer, got '\{text}'")
       }
-    None => Err("error: --limit must be a non-negative integer, got '\{text}'")
+    None => Ok(invocation.config.search.limit)
   }
 }
 
 ///|
-/// Build scan options from `--limit`.
+/// Build scan options from the effective limit.
 fn scan_options_of(
-  matches : @argparse.Matches,
+  invocation : Invocation,
 ) -> Result[@exec.ScanOptions, String] {
-  let limit = match limit_of(matches) {
+  let limit = match limit_of(invocation) {
     Ok(limit) => limit
     Err(message) => return Err(message)
   }
@@ -112,9 +131,11 @@ fn scan_options_of(
 ///|
 /// Parse `--sort` and the ordering flags.
 fn order_options_of(
-  matches : @argparse.Matches,
+  invocation : Invocation,
 ) -> Result[@exec.OrderOptions, String] {
-  let text = first_option_value(matches, "sort").unwrap_or("name")
+  let matches = invocation.matches
+  let search = invocation.config.search
+  let text = explicit_option_value(matches, "sort").unwrap_or(search.sort)
   let key = match @exec.SortKey::from_name(text) {
     Some(key) => key
     None =>
@@ -122,15 +143,15 @@ fn order_options_of(
         "error: --sort must be name, path, size, mtime, ext, or type, got '\{text}'",
       )
   }
-  let limit = match limit_of(matches) {
+  let limit = match limit_of(invocation) {
     Ok(limit) => limit
     Err(message) => return Err(message)
   }
   Ok(
     @exec.OrderOptions::new(
       key~,
-      reverse=flag_set(matches, "reverse"),
-      folders_first=flag_set(matches, "folders-first"),
+      reverse=flag_set(matches, "reverse") || search.reverse,
+      folders_first=flag_set(matches, "folders-first") || search.folders_first,
       limit~,
     ),
   )
@@ -284,7 +305,7 @@ async fn query_source(invocation : Invocation) -> Result[QuerySource, String] {
       Ok(store) => store
       Err(message) => return Err(message)
     }
-    let index = live_index(store)
+    let index = live_index(invocation, store)
     let written : Result[Unit, String] = Ok(
       @index.Index::write_database(index, database),
     ) catch {
@@ -313,13 +334,19 @@ fn elapsed_ms(started : UInt64) -> Int64 {
 /// materialize on first use inside the query compiler. The trigram postings are
 /// built because a name term is the common case; `--no-trigram` belongs to the
 /// index command, which is where an index shape is chosen.
-fn live_index(store : @core.Store) -> @index.Index {
+fn live_index(invocation : Invocation, store : @core.Store) -> @index.Index {
+  let eager = match invocation.config.fast_fields {
+    Some(fields) => @index.RangeFieldSet::of(fields)
+    None =>
+      @index.RangeFieldSet::of([
+        @index.RangeField::Size,
+        @index.RangeField::MTime,
+      ])
+  }
   @index.Index::build(
     store,
-    eager=@index.RangeFieldSet::of([
-      @index.RangeField::Size,
-      @index.RangeField::MTime,
-    ]),
+    eager~,
+    trigram=invocation.config.trigram.unwrap_or(true),
   )
 }
 
@@ -414,12 +441,12 @@ fn append_warning(diagnostics : String, warning : String) -> String {
 /// Run `search` with the selected engine.
 async fn run_search(invocation : Invocation) -> CliResult {
   let matches = invocation.matches
-  let engine = match engine_of(matches) {
+  let engine = match engine_of(invocation) {
     Ok(engine) => engine
     Err(message) => return Failure(message)
   }
   let compat = flag_set(matches, "compat")
-  let order = match order_options_of(matches) {
+  let order = match order_options_of(invocation) {
     Ok(order) => order
     Err(message) => return Failure(message)
   }
@@ -427,7 +454,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
     Ok(output) => output
     Err(message) => return Failure(message)
   }
-  let flags = match query_flags_of(matches) {
+  let flags = match query_flags_of(invocation) {
     Ok(flags) => flags
     Err(message) => return Failure(message)
   }
@@ -435,7 +462,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
     Ok(query) => query
     Err(message) => return Failure(message)
   }
-  let options = match scan_options_of(matches) {
+  let options = match scan_options_of(invocation) {
     Ok(options) => options
     Err(message) => return Failure(message)
   }
@@ -493,7 +520,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
       let index = match source {
         Live(store) => {
           let build_started = @env.now()
-          let index = live_index(store)
+          let index = live_index(invocation, store)
           index_ms = Some(elapsed_ms(build_started))
           index
         }
@@ -582,11 +609,11 @@ fn explain_bitmap_plan(
 async fn run_count(invocation : Invocation) -> CliResult {
   let matches = invocation.matches
   let compat = flag_set(matches, "compat")
-  let engine = match engine_of(matches) {
+  let engine = match engine_of(invocation) {
     Ok(engine) => engine
     Err(message) => return Failure(message)
   }
-  let flags = match query_flags_of(matches) {
+  let flags = match query_flags_of(invocation) {
     Ok(flags) => flags
     Err(message) => return Failure(message)
   }
@@ -626,7 +653,7 @@ async fn run_count(invocation : Invocation) -> CliResult {
       let index = match source {
         Live(store) => {
           let build_started = @env.now()
-          let index = live_index(store)
+          let index = live_index(invocation, store)
           index_ms = Some(elapsed_ms(build_started))
           index
         }

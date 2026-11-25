@@ -32,6 +32,7 @@ pub(all) struct Invocation {
   query : String
   matches : @argparse.Matches
   env : Map[String, String]
+  config : @config.Config
 }
 
 ///|
@@ -57,7 +58,13 @@ fn make_invocation(
   matches : @argparse.Matches,
   env : Map[String, String],
 ) -> Invocation {
-  { command, query: query_of(matches), matches, env, }
+  {
+    command,
+    query: query_of(matches),
+    matches,
+    env,
+    config: @config.Config::default(),
+  }
 }
 
 ///|

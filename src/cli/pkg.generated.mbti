@@ -3,6 +3,7 @@ package "q2316367743/moonsearch/src/cli"
 
 import {
   "moonbitlang/core/argparse",
+  "q2316367743/moonsearch/src/config",
 }
 
 // Values
@@ -37,6 +38,7 @@ pub(all) struct Invocation {
   query : String
   matches : @argparse.Matches
   env : Map[String, String]
+  config : @config.Config
 }
 
 pub(all) enum Parsed {

@@ -163,6 +163,19 @@ pub using @query {
 }
 
 ///|
+pub using @config {
+  type Config,
+  type ConfigError,
+  type ExcludeConfig,
+  type RootConfig,
+  type SearchConfig,
+  default_config_path,
+  expand_path,
+  load_default,
+  load_explicit,
+}
+
+///|
 pub using @exec {
   type FormatOptions,
   type FormatOutput,

@@ -1,0 +1,77 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonsearch/src/config"
+
+import {
+  "q2316367743/moonsearch/src/index",
+  "q2316367743/moonsearch/src/query",
+}
+
+// Values
+pub fn default_config_path(Map[String, String]) -> String?
+
+pub fn expand_path(StringView, Map[String, String]) -> String raise ConfigError
+
+pub async fn load_default(env? : Map[String, String]) -> Config raise ConfigError
+
+pub async fn load_explicit(StringView, env? : Map[String, String]) -> Config raise ConfigError
+
+pub fn parse(StringView, env? : Map[String, String]) -> Config raise ConfigError
+
+// Errors
+pub suberror ConfigError {
+  Read(String)
+  Invalid(String)
+}
+pub fn ConfigError::message(Self) -> String
+
+// Types and methods
+pub struct Config {
+  database : String?
+  roots : Array[RootConfig]
+  exclude_hidden : Bool
+  excludes : Array[ExcludeConfig]
+  exclude_scope : @index.ExcludeScope
+  exclude_target : @index.ExcludeTarget
+  macros : @query.Macros
+  search : SearchConfig
+  engine : String?
+  fast_fields : Array[@index.RangeField]?
+  trigram : Bool?
+  one_file_system : Bool?
+  allow_nested_roots : Bool?
+  default_excludes : Bool?
+  unreadable_directories : @index.UnreadableDirectoryPolicy
+}
+pub fn Config::default() -> Self
+
+pub struct ExcludeConfig {
+  pattern : String
+  kind : @index.ExcludeKind
+  scope : @index.ExcludeScope
+  target : @index.ExcludeTarget
+  active : Bool
+}
+pub fn ExcludeConfig::new(pattern~ : String, kind? : @index.ExcludeKind, scope? : @index.ExcludeScope, target? : @index.ExcludeTarget, active? : Bool) -> Self
+
+pub struct RootConfig {
+  path : String
+  one_file_system : Bool?
+}
+pub fn RootConfig::new(path~ : String, one_file_system? : Bool?) -> Self
+
+pub struct SearchConfig {
+  sort : String
+  limit : Int32
+  reverse : Bool
+  folders_first : Bool
+  kind : @query.KindFilter
+  case_sensitive : Bool
+  exact : Bool
+  search_path : Bool
+  regex : Bool
+}
+pub fn SearchConfig::new() -> Self
+
+// Type aliases
+
+// Traits

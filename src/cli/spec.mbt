@@ -191,6 +191,11 @@ fn scan_options() -> Array[@argparse.OptionArg] {
       about="Range fields loaded eagerly: size,mtime",
       default_values=["size,mtime"],
     ),
+    @argparse.OptionArg(
+      "unreadable-directories",
+      about="Permission-denied directory policy: continue or fatal",
+      default_values=["continue"],
+    ),
   ]
 }
 

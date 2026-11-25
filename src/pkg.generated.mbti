@@ -3,6 +3,7 @@ package "q2316367743/moonsearch/src"
 
 import {
   "moonbitlang/x/time",
+  "q2316367743/moonsearch/src/config",
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/exec",
   "q2316367743/moonsearch/src/ids",
@@ -79,6 +80,8 @@ pub fn contains_bytes_with(BytesView, BytesView, Bool) -> Bool
 
 pub fn current_unix_seconds() -> Int64
 
+pub fn default_config_path(Map[String, String]) -> String?
+
 pub fn ends_with(BytesView, BytesView) -> Bool
 
 pub fn eq_bytes(BytesView, BytesView, Bool) -> Bool
@@ -94,6 +97,8 @@ pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @quer
 pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : @exec.ScanOptions, compat? : Bool) -> Array[@core.EntryRef] raise @query.QueryError
 
 pub fn exec_scan_with(@core.Store, @query.Query, options? : @exec.ScanOptions, compat? : Bool) -> Array[@core.EntryRef] raise @query.QueryError
+
+pub fn expand_path(StringView, Map[String, String]) -> String raise @config.ConfigError
 
 pub fn explain_query(@query.Query, options? : @exec.ScanOptions, compat? : Bool) -> String raise @query.QueryError
 
@@ -128,6 +133,10 @@ pub fn join_path(BytesView, BytesView) -> Bytes
 pub fn kind_query(@query.KindFilter) -> @query.Query
 
 pub fn lex(StringView) -> Array[@query.Token] raise @query.QueryError
+
+pub async fn load_default(env? : Map[String, String]) -> @config.Config raise @config.ConfigError
+
+pub async fn load_explicit(StringView, env? : Map[String, String]) -> @config.Config raise @config.ConfigError
 
 pub fn local_zone() -> @time.Zone
 
@@ -170,6 +179,10 @@ pub using @query {type CmpOp}
 
 pub using @query {type Comparison}
 
+pub using @config {type Config}
+
+pub using @config {type ConfigError}
+
 pub using @query {type DateComparison}
 
 pub using @util {type DateSpan}
@@ -193,6 +206,8 @@ pub type EntryId = Int32
 pub using @core {type EntryKind}
 
 pub using @core {type EntryRef}
+
+pub using @config {type ExcludeConfig}
 
 pub using @index {type ExcludeKind}
 
@@ -260,6 +275,8 @@ pub using @index {type Ranges}
 
 pub using @query {type RegexPattern}
 
+pub using @config {type RootConfig}
+
 pub using @core {type RootInfo}
 
 pub using @index {type RootSpec}
@@ -271,6 +288,8 @@ pub using @index {type ScanIssue}
 pub using @exec {type ScanOptions}
 
 pub using @index {type ScanReport}
+
+pub using @config {type SearchConfig}
 
 pub using @exec {type SortKey}
 

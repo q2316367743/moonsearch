@@ -32,12 +32,21 @@ async fn cli_diff_query(
   label : String,
   database : String,
   query : String,
+  config~ : String? = None,
 ) -> Unit {
+  let config_args = match config {
+    Some(path) => ["--config", path]
+    None => []
+  }
   let scan = cli_diff_outcome(
-    @cli.run(["search", "-D", database, "--engine", "scan", query]),
+    @cli.run(
+      ["search", "-D", database] + config_args + ["--engine", "scan", query],
+    ),
   )
   let bitmap = cli_diff_outcome(
-    @cli.run(["search", "-D", database, "--engine", "bitmap", query]),
+    @cli.run(
+      ["search", "-D", database] + config_args + ["--engine", "bitmap", query],
+    ),
   )
   if scan.code != bitmap.code ||
     scan.out != bitmap.out ||
@@ -47,10 +56,14 @@ async fn cli_diff_query(
     )
   }
   let scan_count = cli_diff_outcome(
-    @cli.run(["count", "-D", database, "--engine", "scan", query]),
+    @cli.run(
+      ["count", "-D", database] + config_args + ["--engine", "scan", query],
+    ),
   )
   let bitmap_count = cli_diff_outcome(
-    @cli.run(["count", "-D", database, "--engine", "bitmap", query]),
+    @cli.run(
+      ["count", "-D", database] + config_args + ["--engine", "bitmap", query],
+    ),
   )
   if scan_count.code != bitmap_count.code || scan_count.out != bitmap_count.out {
     abort(
@@ -248,6 +261,23 @@ async test "invalid queries and compat agree across engines" {
         "--type file folder: on \{engine}: expected empty output and exit 1",
       )
     }
+  }
+  @fs.remove(dir, recursive=true)
+}
+
+///|
+async test "configured macros agree across scan and bitmap engines" {
+  let dir = cli_diff_fixture()
+  let database = cli_diff_index("diff-config-macros", dir, [])
+  let config = "\{dir}/macros.json"
+  @fs.write_text(
+    config, "{\"macros\":{\"book\":\"ext:pdf;md\",\"code\":\"ext:zip;txt\",\"audio\":\"ext:pdf\",\"pub\":\"book:\",\"loop\":\"loop:\"}}",
+  )
+  for
+    query in [
+      "book:", "code:", "audio:", "pub:", "book: report", "file:book:", "loop:",
+    ] {
+    cli_diff_query("configured-macros", database, query, config=Some(config))
   }
   @fs.remove(dir, recursive=true)
 }

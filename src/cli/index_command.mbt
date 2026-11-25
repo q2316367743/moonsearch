@@ -17,17 +17,35 @@ fn first_option_value(matches : @argparse.Matches, name : String) -> String? {
 }
 
 ///|
+/// First option value only when it came from argv or the environment.
+///
+/// Argparse defaults are placeholders for help/rendering. Configuration values
+/// must be allowed to replace them, so callers use this when merging settings.
+fn explicit_option_value(matches : @argparse.Matches, name : String) -> String? {
+  match matches.values.get(name) {
+    Some(values) =>
+      match (values.get(0), matches.sources.get(name)) {
+        (Some(""), Some(@argparse.Env)) => None
+        (_, Some(@argparse.Default)) => None
+        (value, _) => value
+      }
+    None => None
+  }
+}
+
+///|
 /// Whether a flag was set.
 fn flag_set(matches : @argparse.Matches, name : String) -> Bool {
   matches.flags.get(name).unwrap_or(false)
 }
 
 ///|
-/// Parse `--exclude-scope`.
+/// Parse `--exclude-scope`, falling back to the configured default.
 fn exclude_scope_of(
   matches : @argparse.Matches,
+  fallback : String,
 ) -> Result[@index.ExcludeScope, String] {
-  match first_option_value(matches, "exclude-scope").unwrap_or("full_path") {
+  match explicit_option_value(matches, "exclude-scope").unwrap_or(fallback) {
     "full_path" => Ok(@index.FullPath)
     "basename" => Ok(@index.Basename)
     other =>
@@ -38,11 +56,12 @@ fn exclude_scope_of(
 }
 
 ///|
-/// Parse `--exclude-target`.
+/// Parse `--exclude-target`, falling back to the configured default.
 fn exclude_target_of(
   matches : @argparse.Matches,
+  fallback : String,
 ) -> Result[@index.ExcludeTarget, String] {
-  match first_option_value(matches, "exclude-target").unwrap_or("both") {
+  match explicit_option_value(matches, "exclude-target").unwrap_or(fallback) {
     "both" => Ok(@index.Both)
     "files" => Ok(@index.Files)
     "folders" => Ok(@index.Folders)
@@ -54,62 +73,218 @@ fn exclude_target_of(
 }
 
 ///|
-/// Build the scan configuration from the parsed command line.
-fn scan_config_of(invocation : Invocation) -> Result[@index.ScanConfig, String] {
-  let matches = invocation.matches
-  let roots = option_values(matches, "root") + option_values(matches, "roots")
-  if roots.is_empty() {
-    return Err(
-      "error: no roots configured; pass --root <PATH> or a root argument",
-    )
+/// Parse the unreadable-directory policy.
+fn unreadable_policy_of(
+  invocation : Invocation,
+) -> Result[@index.UnreadableDirectoryPolicy, String] {
+  match explicit_option_value(invocation.matches, "unreadable-directories") {
+    Some(value) =>
+      match value {
+        "continue" => Ok(@index.Continue)
+        "fatal" => Ok(@index.Fatal)
+        _ =>
+          Err(
+            "error: --unreadable-directories must be continue or fatal, got '\{value}'",
+          )
+      }
+    None => Ok(invocation.config.unreadable_directories)
   }
-  let scope = match exclude_scope_of(matches) {
-    Ok(scope) => scope
-    Err(message) => return Err(message)
+}
+
+///|
+/// Whether one-file-system filtering is enabled by any source.
+fn one_file_system_enabled(invocation : Invocation) -> Bool {
+  flag_set(invocation.matches, "one-file-system") ||
+  invocation.config.one_file_system.unwrap_or(false)
+}
+
+///|
+/// Expand a command-line root.
+fn cli_root(
+  path : String,
+  invocation : Invocation,
+) -> Result[@index.RootSpec, String] {
+  let env = effective_environment(invocation)
+  let expanded = try @config.expand_path(path, env) catch {
+    err => return Err("error: root \{path}: \{err.message()}")
+  } noraise {
+    value => value
   }
-  let target = match exclude_target_of(matches) {
-    Ok(target) => target
-    Err(message) => return Err(message)
-  }
-  let excludes : Array[@index.ExcludeRule] = []
-  for spec in option_values(matches, "exclude") {
-    let parsed = try @index.ExcludeRule::parse(spec, scope~, target~) catch {
-      err => Err(err.message())
-    } noraise {
-      rule => Ok(rule)
-    }
-    match parsed {
-      Ok(rule) => excludes.push(rule)
-      Err(message) => return Err("error: \{message}")
-    }
-  }
-  let one_file_system = flag_set(matches, "one-file-system")
-  let root_specs = roots.map(fn(path) {
-    @index.RootSpec::new(path=@utf8.encode(path), one_file_system~)
-  })
   Ok(
-    @index.ScanConfig::new(
-      roots=root_specs,
-      excludes~,
-      exclude_hidden=flag_set(matches, "exclude-hidden"),
-      allow_nested_roots=flag_set(matches, "allow-nested-roots"),
-      default_excludes=!flag_set(matches, "no-default-excludes"),
+    @index.RootSpec::new(
+      path=@utf8.encode(expanded),
+      one_file_system=one_file_system_enabled(invocation),
     ),
   )
 }
 
 ///|
-/// Parse `--fast-fields` into the range fields built eagerly.
-///
-/// The default `size,mtime` keeps startup work low; the remaining fields are
-/// built on first use by `Ranges`.
+/// Roots persisted by the database `update` reuses when neither CLI nor config
+/// supplies roots. Raw root bytes are preserved.
+async fn stored_roots(
+  invocation : Invocation,
+) -> Result[Array[@index.RootSpec], String] {
+  let database = match database_path(invocation) {
+    Ok(path) => path
+    Err(message) => return Err(message)
+  }
+  let exists = @fs.exists(database) catch { _ => false }
+  if !exists {
+    return Ok([])
+  }
+  let index = try @index.Index::read_database(database) catch {
+    err =>
+      return Err("error: cannot read roots from \{database}: \{err.message()}")
+  } noraise {
+    value => value
+  }
+  let roots : Array[@index.RootSpec] = []
+  for root in index.store().roots() {
+    let one_file_system = flag_set(invocation.matches, "one-file-system") ||
+      invocation.config.one_file_system.unwrap_or(root.one_file_system)
+    roots.push(@index.RootSpec::new(path=root.path, one_file_system~))
+  }
+  Ok(roots)
+}
+
+///|
+/// Build the scan configuration from CLI, environment-backed options, config,
+/// and defaults, in that order.
+async fn scan_config_of(
+  invocation : Invocation,
+) -> Result[@index.ScanConfig, String] {
+  let matches = invocation.matches
+  let supplied_roots = option_values(matches, "root") +
+    option_values(matches, "roots")
+  let root_specs = if supplied_roots.is_empty() {
+    if invocation.config.roots.is_empty() {
+      if invocation.command is Update {
+        match stored_roots(invocation) {
+          Ok(roots) => roots
+          Err(message) => return Err(message)
+        }
+      } else {
+        []
+      }
+    } else {
+      let roots : Array[@index.RootSpec] = []
+      for root in invocation.config.roots {
+        let one_file_system = flag_set(matches, "one-file-system") ||
+          root.one_file_system.unwrap_or(
+            invocation.config.one_file_system.unwrap_or(false),
+          )
+        roots.push(
+          @index.RootSpec::new(path=@utf8.encode(root.path), one_file_system~),
+        )
+      }
+      roots
+    }
+  } else {
+    let roots : Array[@index.RootSpec] = []
+    for path in supplied_roots {
+      match cli_root(path, invocation) {
+        Ok(root) => roots.push(root)
+        Err(message) => return Err(message)
+      }
+    }
+    roots
+  }
+  if root_specs.is_empty() {
+    return Err(
+      "error: no roots configured; pass --root <PATH> or a root argument",
+    )
+  }
+  let scope = match
+    exclude_scope_of(
+      matches,
+      match invocation.config.exclude_scope {
+        @index.FullPath => "full_path"
+        @index.Basename => "basename"
+      },
+    ) {
+    Ok(scope) => scope
+    Err(message) => return Err(message)
+  }
+  let target = match
+    exclude_target_of(
+      matches,
+      match invocation.config.exclude_target {
+        @index.Both => "both"
+        @index.Files => "files"
+        @index.Folders => "folders"
+      },
+    ) {
+    Ok(target) => target
+    Err(message) => return Err(message)
+  }
+  let excludes : Array[@index.ExcludeRule] = []
+  let cli_excludes = option_values(matches, "exclude")
+  if cli_excludes.is_empty() {
+    for rule in invocation.config.excludes {
+      let parsed = try
+        @index.ExcludeRule::new(
+          kind=rule.kind,
+          pattern=rule.pattern,
+          scope=rule.scope,
+          target=rule.target,
+          active=rule.active,
+        )
+      catch {
+        err => return Err("error: \{err.message()}")
+      } noraise {
+        value => value
+      }
+      excludes.push(parsed)
+    }
+  } else {
+    for spec in cli_excludes {
+      let parsed = try @index.ExcludeRule::parse(spec, scope~, target~) catch {
+        err => return Err("error: \{err.message()}")
+      } noraise {
+        rule => rule
+      }
+      excludes.push(parsed)
+    }
+  }
+  let unreadable_directories = match unreadable_policy_of(invocation) {
+    Ok(policy) => policy
+    Err(message) => return Err(message)
+  }
+  Ok(
+    @index.ScanConfig::new(
+      roots=root_specs,
+      excludes~,
+      exclude_hidden=flag_set(matches, "exclude-hidden") ||
+        invocation.config.exclude_hidden,
+      allow_nested_roots=flag_set(matches, "allow-nested-roots") ||
+        invocation.config.allow_nested_roots.unwrap_or(false),
+      default_excludes=!flag_set(matches, "no-default-excludes") &&
+        invocation.config.default_excludes.unwrap_or(true),
+      unreadable_directories~,
+    ),
+  )
+}
+
+///|
+/// Parse `--fast-fields`, then the configured selection, then `size,mtime`.
 fn fast_fields_of(
-  matches : @argparse.Matches,
+  invocation : Invocation,
 ) -> Result[@index.RangeFieldSet, String] {
-  let text = first_option_value(matches, "fast-fields").unwrap_or("size,mtime")
-  match @index.RangeFieldSet::parse(text) {
-    Ok(fields) => Ok(fields)
-    Err(message) => Err("error: \{message}")
+  match explicit_option_value(invocation.matches, "fast-fields") {
+    Some(text) =>
+      match @index.RangeFieldSet::parse(text) {
+        Ok(fields) => Ok(fields)
+        Err(message) => Err("error: \{message}")
+      }
+    None =>
+      match invocation.config.fast_fields {
+        Some(fields) => Ok(@index.RangeFieldSet::of(fields))
+        None =>
+          match @index.RangeFieldSet::parse("size,mtime") {
+            Ok(fields) => Ok(fields)
+            Err(message) => Err("error: \{message}")
+          }
+      }
   }
 }
 
@@ -234,7 +409,7 @@ async fn run_index(invocation : Invocation) -> CliResult {
     Ok(config) => config
     Err(message) => return Failure(message)
   }
-  let fast_fields = match fast_fields_of(invocation.matches) {
+  let fast_fields = match fast_fields_of(invocation) {
     Ok(fields) => fields
     Err(message) => return Failure(message)
   }
@@ -255,7 +430,8 @@ async fn run_index(invocation : Invocation) -> CliResult {
       let index = @index.Index::build(
         report.store,
         eager=fast_fields,
-        trigram=!flag_set(invocation.matches, "no-trigram"),
+        trigram=!flag_set(invocation.matches, "no-trigram") &&
+          invocation.config.trigram.unwrap_or(true),
       )
       let written : Result[Unit, String] = Ok(
         @index.Index::write_database(index, database),
@@ -275,8 +451,11 @@ async fn run_index(invocation : Invocation) -> CliResult {
           invocation, report, index, database, database_size, elapsed_ms,
         )
       }
-      if flag_set(invocation.matches, "one-file-system") &&
-        !report.device_ids_available {
+      let mut uses_one_file_system = false
+      for root in config.roots {
+        uses_one_file_system = uses_one_file_system || root.one_file_system
+      }
+      if uses_one_file_system && !report.device_ids_available {
         let warning = "warning: --one-file-system has no effect: this backend cannot read device ids"
         if diagnostics.is_empty() {
           diagnostics = warning

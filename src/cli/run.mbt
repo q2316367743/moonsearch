@@ -51,6 +51,39 @@ async fn execute(invocation : Invocation) -> CliResult {
 }
 
 ///|
+/// Load configuration after parsing but before dispatch.
+///
+/// Help and version never touch the filesystem. `--no-config` bypasses both the
+/// default XDG file and an explicitly selected file.
+async fn load_configuration(
+  invocation : Invocation,
+) -> Result[Invocation, String] {
+  if flag_set(invocation.matches, "no-config") {
+    return Ok(invocation)
+  }
+  let env = effective_environment(invocation)
+  let selected = match explicit_option_value(invocation.matches, "config") {
+    Some(path) => Some(path)
+    None => environment_value(env, "MOONSEARCH_CONFIG")
+  }
+  let config = match selected {
+    Some(path) =>
+      try @config.load_explicit(path, env~) catch {
+        err => return Err("error: \{err.message()}")
+      } noraise {
+        value => value
+      }
+    None =>
+      try @config.load_default(env~) catch {
+        err => return Err("error: \{err.message()}")
+      } noraise {
+        value => value
+      }
+  }
+  Ok({ ..invocation, config, })
+}
+
+///|
 /// Parse and run a command line.
 ///
 /// `argv` excludes the program name. Help and version requests succeed and
@@ -60,7 +93,11 @@ pub async fn run(
   env~ : Map[String, String] = Map([]),
 ) -> CliResult {
   match parse(argv, env~) {
-    Ok(Run(invocation)) => execute(invocation)
+    Ok(Run(invocation)) =>
+      match load_configuration(invocation) {
+        Ok(configured) => execute(configured)
+        Err(message) => Failure(message)
+      }
     Ok(ShowHelp(text)) => Success(text_line(text))
     Ok(ShowVersion(text)) => Success(text_line(text))
     Err(text) => Failure(text)

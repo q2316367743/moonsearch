@@ -51,25 +51,26 @@ Arguments:
   roots...  Root directories to index; may be repeated
 
 Options:
-  -h, --help                         Show help information.
-  -V, --version                      Show version information.
-  --no-config                        Do not read the configuration file
-  -v, --verbose                      Print detailed progress information
-  -q, --quiet                        Only print results and errors
-  --stats                            Print timings and index sizes to stderr
-  --explain                          Print the execution plan to stderr
-  -D, --database <database>          Path to the index database [env: MOONSEARCH_DATABASE]
-  --config <config>                  Path to the configuration file [env: MOONSEARCH_CONFIG]
-  --exclude-hidden                   Skip names that start with a dot
-  --one-file-system                  Do not cross file system boundaries
-  --no-default-excludes              Do not skip /proc, /sys, /dev, and /run
-  --allow-nested-roots               Allow roots that are nested inside each other
-  --no-trigram                       Do not build the trigram index
-  -r, --root <root>                  Root directory to index; may be repeated
-  -x, --exclude <exclude>            Exclude pattern; may be repeated
-  --exclude-scope <exclude-scope>    Pattern scope: full_path or basename [default: full_path]
-  --exclude-target <exclude-target>  Pattern target: both, files, or folders [default: both]
-  --fast-fields <fast-fields>        Range fields loaded eagerly: size,mtime [default: size,mtime]
+  -h, --help                                         Show help information.
+  -V, --version                                      Show version information.
+  --no-config                                        Do not read the configuration file
+  -v, --verbose                                      Print detailed progress information
+  -q, --quiet                                        Only print results and errors
+  --stats                                            Print timings and index sizes to stderr
+  --explain                                          Print the execution plan to stderr
+  -D, --database <database>                          Path to the index database [env: MOONSEARCH_DATABASE]
+  --config <config>                                  Path to the configuration file [env: MOONSEARCH_CONFIG]
+  --exclude-hidden                                   Skip names that start with a dot
+  --one-file-system                                  Do not cross file system boundaries
+  --no-default-excludes                              Do not skip /proc, /sys, /dev, and /run
+  --allow-nested-roots                               Allow roots that are nested inside each other
+  --no-trigram                                       Do not build the trigram index
+  -r, --root <root>                                  Root directory to index; may be repeated
+  -x, --exclude <exclude>                            Exclude pattern; may be repeated
+  --exclude-scope <exclude-scope>                    Pattern scope: full_path or basename [default: full_path]
+  --exclude-target <exclude-target>                  Pattern target: both, files, or folders [default: both]
+  --fast-fields <fast-fields>                        Range fields loaded eagerly: size,mtime [default: size,mtime]
+  --unreadable-directories <unreadable-directories>  Permission-denied directory policy: continue or fatal [default: continue]
 
 $ moonx q2316367743/moonsearch/cmd/moonsearch update --help
 Usage: moonsearch update [options] [roots...]
@@ -80,25 +81,26 @@ Arguments:
   roots...  Root directories to index; may be repeated
 
 Options:
-  -h, --help                         Show help information.
-  -V, --version                      Show version information.
-  --no-config                        Do not read the configuration file
-  -v, --verbose                      Print detailed progress information
-  -q, --quiet                        Only print results and errors
-  --stats                            Print timings and index sizes to stderr
-  --explain                          Print the execution plan to stderr
-  -D, --database <database>          Path to the index database [env: MOONSEARCH_DATABASE]
-  --config <config>                  Path to the configuration file [env: MOONSEARCH_CONFIG]
-  --exclude-hidden                   Skip names that start with a dot
-  --one-file-system                  Do not cross file system boundaries
-  --no-default-excludes              Do not skip /proc, /sys, /dev, and /run
-  --allow-nested-roots               Allow roots that are nested inside each other
-  --no-trigram                       Do not build the trigram index
-  -r, --root <root>                  Root directory to index; may be repeated
-  -x, --exclude <exclude>            Exclude pattern; may be repeated
-  --exclude-scope <exclude-scope>    Pattern scope: full_path or basename [default: full_path]
-  --exclude-target <exclude-target>  Pattern target: both, files, or folders [default: both]
-  --fast-fields <fast-fields>        Range fields loaded eagerly: size,mtime [default: size,mtime]
+  -h, --help                                         Show help information.
+  -V, --version                                      Show version information.
+  --no-config                                        Do not read the configuration file
+  -v, --verbose                                      Print detailed progress information
+  -q, --quiet                                        Only print results and errors
+  --stats                                            Print timings and index sizes to stderr
+  --explain                                          Print the execution plan to stderr
+  -D, --database <database>                          Path to the index database [env: MOONSEARCH_DATABASE]
+  --config <config>                                  Path to the configuration file [env: MOONSEARCH_CONFIG]
+  --exclude-hidden                                   Skip names that start with a dot
+  --one-file-system                                  Do not cross file system boundaries
+  --no-default-excludes                              Do not skip /proc, /sys, /dev, and /run
+  --allow-nested-roots                               Allow roots that are nested inside each other
+  --no-trigram                                       Do not build the trigram index
+  -r, --root <root>                                  Root directory to index; may be repeated
+  -x, --exclude <exclude>                            Exclude pattern; may be repeated
+  --exclude-scope <exclude-scope>                    Pattern scope: full_path or basename [default: full_path]
+  --exclude-target <exclude-target>                  Pattern target: both, files, or folders [default: both]
+  --fast-fields <fast-fields>                        Range fields loaded eagerly: size,mtime [default: size,mtime]
+  --unreadable-directories <unreadable-directories>  Permission-denied directory policy: continue or fatal [default: continue]
 
 $ moonx q2316367743/moonsearch/cmd/moonsearch index
 @STDOUT (empty)
@@ -307,5 +309,22 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch search --live --root fixture --for
 @STDOUT (empty)
 @STDERR
 error: unknown format placeholder '{bogus}'
+[2]
+```
+
+Configuration file selection (S04). File-content behavior is covered by the
+in-process CLI tests, which can create isolated temporary configuration files:
+
+```mooncram q2316367743/moonsearch
+$ moonx q2316367743/moonsearch/cmd/moonsearch index --no-config --config _build/cram-missing.json -D _build/cram-s04/no-config.msdb fixture
+roots: 1
+folders: 2
+files: 3
+bytes: 12
+
+$ moonx q2316367743/moonsearch/cmd/moonsearch index --config _build/cram-missing.json fixture
+@STDOUT (empty)
+@STDERR
+error: cannot read configuration _build/cram-missing.json: .* (regex)
 [2]
 ```

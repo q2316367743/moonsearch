@@ -73,7 +73,7 @@ moonsearch <command> [options] [query...]
 | 命令 | 用途 |
 | --- | --- |
 | `index` | 扫描根目录并写入索引数据库 |
-| `update` | 重新扫描根目录并替换索引数据库 |
+| `update` | 按显式根、配置根或现有数据库根重新扫描并替换索引 |
 | `search` | 查询索引（默认子命令） |
 | `count` | 输出命中数量 |
 | `info` | 显示数据库统计信息；`--verify` 校验每个段 |
@@ -88,24 +88,58 @@ moonsearch <command> [options] [query...]
 | 选项 | 说明 |
 | --- | --- |
 | `-D, --database <PATH>` | 数据库路径（`MOONSEARCH_DATABASE`） |
-| `--config <PATH>` | 预留：配置文件尚未读取（`MOONSEARCH_CONFIG`） |
-| `--no-config` | 预留：保留解析但不生效 |
+| `--config <PATH>` | 读取指定 JSON 配置（`MOONSEARCH_CONFIG`） |
+| `--no-config` | 完全跳过配置文件 |
 | `-v, --verbose` / `-q, --quiet` | 详细进度 / 只输出结果与错误 |
 | `--stats` | 向 stderr 输出耗时与索引体积 |
 | `--explain` | 向 stderr 输出解析后的查询与执行计划 |
 | `-h, --help` / `-V, --version` | 帮助 / 版本 |
 
+## 配置
+
+默认读取 `$XDG_CONFIG_HOME/moonsearch/config.json`，未设置 `XDG_CONFIG_HOME` 时读取
+`~/.config/moonsearch/config.json`。默认文件不存在不会报错；`--config` 指定的文件不存在或
+内容非法会以退出码 2 失败。`--no-config` 会跳过默认文件和显式文件。
+
+配置文件可保存 `database`、`roots`、排除规则、自定义宏、搜索默认值、查询引擎、范围字段和
+不可读目录策略。设置优先级为 CLI > 环境变量 > 配置文件 > 默认值。完整 schema、路径展开规则和
+宏写法见 [`docs/configuration.md`](docs/configuration.md)。
+
+```json
+{
+  "database": "$XDG_DATA_HOME/moonsearch/index.msdb",
+  "roots": [{"path": "~/Documents", "one_file_system": false}],
+  "exclude_hidden": true,
+  "excludes": [{"pattern": "node_modules", "kind": "glob", "scope": "basename", "target": "folders"}],
+  "macros": {"book": "ext:epub;pdf", "code": "ext:rs;go;mbt;py"},
+  "search": {"sort": "name", "limit": 20},
+  "engine": "bitmap",
+  "fast_fields": ["size", "mtime"]
+}
+```
+
+保存配置后可直接运行：
+
+```bash
+moonsearch index
+moonsearch update
+moonsearch book:
+moonsearch count code:
+```
+
+用户宏优先于同名内置分类宏。宏循环、嵌套超限和宏内非法查询会在展开时报告稳定错误。
+
 ## 数据库
 
 默认路径为 `$XDG_DATA_HOME/moonsearch/index.msdb`，未设置 `XDG_DATA_HOME` 时为
 `$HOME/.local/share/moonsearch/index.msdb`；Windows 上未设置 `HOME` 时用
-`%LOCALAPPDATA%\moonsearch\index.msdb`。`-D/--database` 与
-`MOONSEARCH_DATABASE` 可覆盖，路径开头的 `~/` 会展开。
+`%LOCALAPPDATA%\moonsearch\index.msdb`。优先级为 `-D/--database` > `MOONSEARCH_DATABASE` >
+配置文件的 `database` > 默认路径。路径支持 `~`、`$HOME` 和 `$XDG_*` 白名单展开。
 
 `search` 与 `count` 默认读取该数据库。数据库缺失时会报错并提示先运行 `index`；
 `--auto-index` 则在缺失时先扫描 `--root` 建库。
 
-`--live` 完全跳过数据库，直接扫描 `--root` 指定的目录：
+`--live` 完全跳过数据库，直接扫描 `--root` 或配置中的 `roots`：
 
 ```bash
 moonsearch search --live --root ~/Documents 'ext:jpg;png size:>1mb'
@@ -119,8 +153,9 @@ moonsearch index -r ~/Documents ~/Downloads   # 位置参数也可以
 moonsearch update ~/Documents                 # 重新扫描并原子替换
 ```
 
-`index` 与 `update` 行为相同：扫描、构建、原子写入；根目录必须显式给出。写入使用临时
-文件、`sync` 与 `rename`，失败时保留原数据库。
+`index` 与 `update` 都执行扫描、构建和原子写入。`index` 按命令行 > 配置选择根目录；`update`
+在没有显式根和配置根时再回退到现有数据库的 `ROOTS`。因此保存 `roots` 后 `index` 和 `update`
+都可以不带根参数。写入使用临时文件、`sync` 与 `rename`，失败时保留原数据库。
 
 | 选项 | 说明 |
 | --- | --- |
@@ -134,6 +169,7 @@ moonsearch update ~/Documents                 # 重新扫描并原子替换
 | `--fast-fields <LIST>` | 预建区间字段，默认 `size,mtime`；可选 `size`、`mtime`、`depth`、`childcount`、`parent` |
 | `--no-trigram` | 不构建 trigram 倒排；名称查询将退化为全扫描 |
 | `--one-file-system` | Unix POSIX 后端按 `st_dev` 过滤跨设备目录、普通文件与符号链接 |
+| `--unreadable-directories <POLICY>` | 不可读目录策略：`continue`（默认）或 `fatal`；也可在配置中设置 |
 
 排除规则写法：`fixed:` 做逐字节比较，`glob:` 支持 `*`、`?` 与 `\` 转义，不带前缀时
 默认按 glob 处理。`regex:` 复用查询正则编译器，默认大小写敏感、非锚定匹配；非法 UTF-8
@@ -244,7 +280,8 @@ moonsearch 'file:(pdf OR doc) dm:lastweek'
 `file:` / `folder:` 覆盖；因此 `--type file folder:` 匹配空集。
 
 自定义宏按自己保存的 flags 独立解析，外部修饰符不会渗入展开结果；需要限制宏时，把
-修饰符写进宏查询，或另写一个普通 term，例如 `book: file:`。
+修饰符写进宏查询，或另写一个普通 term，例如 `book: file:`。配置文件中的 `macros` 会传入
+CLI 查询解析器，并覆盖同名内置分类宏，详见 [`docs/configuration.md`](docs/configuration.md)。
 
 ### 取值
 

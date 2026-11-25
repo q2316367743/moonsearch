@@ -4,6 +4,7 @@ import {
   "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
+  "q2316367743/moonsearch/src/config",
   "q2316367743/moonsearch/src/core",
   "q2316367743/moonsearch/src/exec",
   "q2316367743/moonsearch/src/ids",
@@ -14,6 +15,7 @@ import {
 
 import {
   "moonbitlang/core/async",
+  "moonbitlang/core/json",
   "q2316367743/moonsearch/src/testkit",
   "q2316367743/moonsearch/src/util",
 } for "test"
