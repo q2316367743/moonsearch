@@ -275,15 +275,22 @@ pub fn extension_of(name : BytesView) -> BytesView {
 }
 
 ///|
-/// Whether a glob pattern contains an unescaped `*` or `?`.
+/// Whether a glob pattern contains glob syntax.
 ///
 /// The query layer uses this to decide between substring matching and the glob
-/// matcher. A backslash escapes the next byte, so `\*` is a literal asterisk.
+/// matcher. An unescaped `*` or `?` is glob syntax, and so is an escaped `*` or
+/// `?`: `\*` asks the glob matcher for a literal asterisk, which a substring
+/// search could not express. A backslash before any other byte stays a plain
+/// literal sequence, so a quoted name such as `a\c` remains a substring.
 pub fn has_glob_meta(pattern : BytesView) -> Bool {
+  let length = pattern.length()
   let mut i = 0
-  while i < pattern.length() {
+  while i < length {
     let byte = pattern[i]
     if byte == b'\\' {
+      if i + 1 < length && (pattern[i + 1] == b'*' || pattern[i + 1] == b'?') {
+        return true
+      }
       i = i + 2
     } else if byte == b'*' || byte == b'?' {
       return true

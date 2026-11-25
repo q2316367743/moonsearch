@@ -198,6 +198,14 @@ fn Parser::next_value(self : Parser) -> RawValue? raise QueryError {
     Some(op) => {
       let operator_pos = self.peek().pos()
       ignore(self.advance())
+      // `==` (and the spaced `= =`) is accepted as another spelling of the
+      // exact comparison. The lexer emits one `Equal` token per `=`, so a run
+      // of them is folded here instead of being left as a stray operator.
+      if op is Equal {
+        while self.peek().kind() is Equal {
+          ignore(self.advance())
+        }
+      }
       match self.peek().kind() {
         Word(text) => {
           let value_pos = self.peek().pos()
@@ -205,10 +213,17 @@ fn Parser::next_value(self : Parser) -> RawValue? raise QueryError {
           Some({ op: Some(op), text, pos: value_pos, })
         }
         found =>
-          raise Parse(
-            operator_pos,
-            "expected a value after '\{op.symbol()}', found \{found.describe()}",
-          )
+          if self.compat {
+            // A missing operand after an explicit operator is another delayed
+            // malformed value: leave an empty value so the field parser turns
+            // it into the empty set instead of escaping compat recovery.
+            Some({ op: Some(op), text: "", pos: operator_pos, })
+          } else {
+            raise Parse(
+              operator_pos,
+              "expected a value after '\{op.symbol()}', found \{found.describe()}",
+            )
+          }
       }
     }
     None =>

@@ -10,25 +10,25 @@ import {
 }
 
 // Values
-pub fn compile_indexed(@index.Index, @query.Query, options? : PlanOptions) -> Expr raise @query.QueryError
+pub fn compile_indexed(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> Expr raise @query.QueryError
 
 pub fn exec_count(@core.Store, @query.Query) -> Int32 raise @query.QueryError
 
-pub fn exec_count_with(@core.Store, @query.Query, options? : ScanOptions) -> Int32 raise @query.QueryError
+pub fn exec_count_with(@core.Store, @query.Query, options? : ScanOptions, compat? : Bool) -> Int32 raise @query.QueryError
 
-pub fn exec_indexed(@index.Index, @query.Query, options? : PlanOptions) -> @ids.Ids raise @query.QueryError
+pub fn exec_indexed(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> @ids.Ids raise @query.QueryError
 
-pub fn exec_indexed_count(@index.Index, @query.Query, options? : PlanOptions) -> Int32 raise @query.QueryError
+pub fn exec_indexed_count(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> Int32 raise @query.QueryError
 
 pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
 
-pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : ScanOptions, compat? : Bool) -> Array[@core.EntryRef] raise @query.QueryError
 
-pub fn exec_scan_with(@core.Store, @query.Query, options? : ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+pub fn exec_scan_with(@core.Store, @query.Query, options? : ScanOptions, compat? : Bool) -> Array[@core.EntryRef] raise @query.QueryError
 
-pub fn explain_indexed(@index.Index, @query.Query, options? : PlanOptions) -> String raise @query.QueryError
+pub fn explain_indexed(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> String raise @query.QueryError
 
-pub fn explain_query(@query.Query, options? : ScanOptions) -> String raise @query.QueryError
+pub fn explain_query(@query.Query, options? : ScanOptions, compat? : Bool) -> String raise @query.QueryError
 
 pub fn format_hits(@core.Store, Array[@core.EntryRef], FormatOptions) -> String
 

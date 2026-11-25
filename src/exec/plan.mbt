@@ -229,9 +229,10 @@ pub fn compile_indexed(
   index : @index.Index,
   query : @query.Query,
   options~ : PlanOptions = PlanOptions::new(),
+  compat~ : Bool = false,
 ) -> Expr raise @query.QueryError {
   let context = plan_context(index, options)
-  let expr = compile_plan(context, query)
+  let expr = compile_plan(context, query, compat~)
   if options.optimize {
     optimize_plan(expr, {
       universe: context.dict.all(),
@@ -251,8 +252,9 @@ pub fn exec_indexed(
   index : @index.Index,
   query : @query.Query,
   options~ : PlanOptions = PlanOptions::new(),
+  compat~ : Bool = false,
 ) -> @ids.Ids raise @query.QueryError {
-  let expr = compile_indexed(index, query, options~)
+  let expr = compile_indexed(index, query, options~, compat~)
   evaluate_plan(expr, { store: index.store(), universe: index.dict().all(), })
 }
 
@@ -265,8 +267,9 @@ pub fn exec_indexed_count(
   index : @index.Index,
   query : @query.Query,
   options~ : PlanOptions = PlanOptions::new(),
+  compat~ : Bool = false,
 ) -> Int32 raise @query.QueryError {
-  exec_indexed(index, query, options~).cardinality()
+  exec_indexed(index, query, options~, compat~).cardinality()
 }
 
 ///|
@@ -279,8 +282,9 @@ pub fn explain_indexed(
   index : @index.Index,
   query : @query.Query,
   options~ : PlanOptions = PlanOptions::new(),
+  compat~ : Bool = false,
 ) -> String raise @query.QueryError {
-  let expr = compile_indexed(index, query, options~)
+  let expr = compile_indexed(index, query, options~, compat~)
   describe_plan(expr, index.entry_count())
 }
 
@@ -306,34 +310,82 @@ fn plan_context(index : @index.Index, options : PlanOptions) -> PlanContext {
 ///|
 /// Compile one query node.
 ///
-/// A `Never` domain is answered with the empty set before any child is visited.
-/// This is the plan's type-domain pruning: `file:*.pdf folder:` never scans.
+/// A `Never` domain is answered with the empty set, but only after this subtree
+/// has been semantically validated. Type-domain pruning is an optimization, not
+/// an excuse to hide an invalid regex or date: `file:regex:"[" folder:` must
+/// still report the bad pattern even though `file:` and `folder:` cannot both
+/// hold.
 fn compile_plan(
   context : PlanContext,
   query : @query.Query,
+  compat~ : Bool = false,
 ) -> Expr raise @query.QueryError {
   if domain_of_query(query) is Never {
+    if !compat {
+      validate_terms(context, query)
+    }
     return none_expr()
   }
   match query {
     @query.MatchAll => all_expr(context.dict.all())
     @query.MatchNone => none_expr()
-    @query.Term(term) => compile_leaf(context, term)
+    @query.Term(term) => compile_leaf(context, term, compat~)
     @query.And(left, right) =>
-      Expr::And(compile_plan(context, left), compile_plan(context, right))
+      Expr::And(
+        compile_plan(context, left, compat~),
+        compile_plan(context, right, compat~),
+      )
     @query.Or(left, right) =>
-      Expr::Or(compile_plan(context, left), compile_plan(context, right))
-    @query.Not(inner) => Expr::Not(compile_plan(context, inner))
+      Expr::Or(
+        compile_plan(context, left, compat~),
+        compile_plan(context, right, compat~),
+      )
+    @query.Not(inner) => Expr::Not(compile_plan(context, inner, compat~))
+  }
+}
+
+///|
+/// Compile every term of a pruned subtree for its errors only.
+///
+/// The compiled leaves are discarded: the caller has already decided the
+/// subtree is empty. Running the term compiler is what surfaces the same
+/// `QueryError` the scan engine would report.
+fn validate_terms(
+  context : PlanContext,
+  query : @query.Query,
+) -> Unit raise @query.QueryError {
+  match query {
+    @query.Term(term) => ignore(compile_term(term, context.now, context.zone))
+    @query.And(left, right) | @query.Or(left, right) => {
+      validate_terms(context, left)
+      validate_terms(context, right)
+    }
+    @query.Not(inner) => validate_terms(context, inner)
+    @query.MatchAll | @query.MatchNone => ()
   }
 }
 
 ///|
 /// Compile one term into an indexed leaf, a trigram leaf, or a scan leaf.
+///
+/// With `compat`, a term that cannot be compiled becomes the empty set instead
+/// of raising, matching the parser's compat error recovery for delayed errors.
 fn compile_leaf(
   context : PlanContext,
   term : @query.Term,
+  compat~ : Bool = false,
 ) -> Expr raise @query.QueryError {
-  let scan = compile_term(term, context.now, context.zone)
+  let scan = if compat {
+    let compiled = Ok(compile_term(term, context.now, context.zone)) catch {
+      _ => Err(())
+    }
+    match compiled {
+      Ok(value) => value
+      Err(_) => return none_expr()
+    }
+  } else {
+    compile_term(term, context.now, context.zone)
+  }
   match scan.body {
     Name(matcher) => compile_name_leaf(context, scan, matcher)
     Kind(kind) => make_const(context, scan, kind_ids(context.dict, kind))

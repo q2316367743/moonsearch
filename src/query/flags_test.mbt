@@ -115,10 +115,46 @@ test "non-ASCII uppercase detection covers the documented ranges" {
   assert_eq(described_word("ӿ"), "(name \"ӿ\")")
   assert_eq(described_word("Ԁ"), "(name \"Ԁ\" case)")
   assert_eq(described_word("ԁ"), "(name \"ԁ\")")
+  // Latin Extended-B: standalone and alternating capitals.
+  assert_eq(described_word("Ɓ"), "(name \"Ɓ\" case)")
+  assert_eq(described_word("ƀ"), "(name \"ƀ\")")
+  assert_eq(described_word("Ș"), "(name \"Ș\" case)")
+  assert_eq(described_word("ș"), "(name \"ș\")")
+  assert_eq(described_word("Ǆ"), "(name \"Ǆ\" case)")
+  // Latin Extended Additional.
+  assert_eq(described_word("ẞ"), "(name \"ẞ\" case)")
+  assert_eq(described_word("ẞx"), "(name \"ẞx\" case)")
+  // Greek Extended.
+  assert_eq(described_word("ᾈ"), "(name \"ᾈ\" case)")
+  assert_eq(described_word("ᾀ"), "(name \"ᾀ\")")
+  // Armenian and Georgian.
+  assert_eq(described_word("Ա"), "(name \"Ա\" case)")
+  assert_eq(described_word("ա"), "(name \"ա\")")
+  assert_eq(described_word("Ⴀ"), "(name \"Ⴀ\" case)")
+  assert_eq(described_word("ა"), "(name \"ა\")")
   // Fullwidth Latin capitals.
   assert_eq(described_word("Ａ"), "(name \"Ａ\" case)")
   assert_eq(described_word("Ｚ"), "(name \"Ｚ\" case)")
   assert_eq(described_word("ａ"), "(name \"ａ\")")
+}
+
+///|
+test "the whole-query name heuristic fills only unset flags" {
+  let defaults = @query.Flags::new()
+  let path = defaults.with_name_heuristics("docs/report")
+  assert_true(path.search_path)
+  assert_false(path.case_sensitive)
+  let upper = defaults.with_name_heuristics("Ärger")
+  assert_true(upper.case_sensitive)
+  assert_false(upper.search_path)
+  // Explicit command-line flags win.
+  let explicit = @query.Flags::new(case_sensitive=true).with_name_heuristics(
+    "Ärger",
+  )
+  assert_true(explicit.case_sensitive)
+  assert_true(
+    @query.Flags::new(search_path=false).with_name_heuristics("docs/report").search_path,
+  )
 }
 
 ///|

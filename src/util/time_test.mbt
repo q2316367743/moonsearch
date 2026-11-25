@@ -98,6 +98,13 @@ test "relative last forms are rolling windows ending now" {
     Some((1710496800L, TEST_NOW)),
   )
   assert_eq(utc_span("previousmonth", TEST_NOW), Some((1707998400L, TEST_NOW)))
+  // `past` is the plan's alias for the same rolling window as `last`.
+  assert_eq(utc_span("pastweek", TEST_NOW), utc_span("lastweek", TEST_NOW))
+  assert_eq(utc_span("past3days", TEST_NOW), utc_span("last3days", TEST_NOW))
+  assert_eq(
+    utc_span("pastfiveweeks", TEST_NOW),
+    utc_span("lastfiveweeks", TEST_NOW),
+  )
 }
 
 ///|

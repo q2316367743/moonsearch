@@ -156,10 +156,16 @@ test "extension extraction handles multi-dot, hidden, and trailing dots" {
 }
 
 ///|
-test "glob meta detection skips escaped metacharacters" {
+test "glob meta detection treats escaped wildcards as glob syntax" {
   assert_true(@util.has_glob_meta(b"*.txt"[0:5]))
   assert_true(@util.has_glob_meta(b"a?b"[0:3]))
   assert_false(@util.has_glob_meta(b"plain.txt"[0:9]))
-  assert_false(@util.has_glob_meta(b"a\\*b"[0:4]))
+  // `\*` and `\?` ask for a literal wildcard, which only the glob matcher can
+  // express, so they must select the glob path instead of a substring search.
+  assert_true(@util.has_glob_meta(b"a\\*b"[0:4]))
+  assert_true(@util.has_glob_meta(b"a\\?b"[0:4]))
   assert_true(@util.has_glob_meta(b"a\\*b*"[0:5]))
+  // A backslash before an ordinary byte stays a plain substring byte.
+  assert_false(@util.has_glob_meta(b"a\\cb"[0:4]))
+  assert_false(@util.has_glob_meta(b"\\\\"[0:2]))
 }

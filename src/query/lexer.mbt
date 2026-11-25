@@ -11,7 +11,9 @@
 /// - `=`, `:`, `<`, `<=`, `>`, `>=`, `!`, `(`, and `)` are reserved.
 /// - `"..."` copies everything up to the next quote verbatim, so a regular
 ///   expression keeps its backslashes. Outside quotes, `\` escapes the next
-///   character. There are no C-style escapes: `\n` is the letter `n`.
+///   character. There are no C-style escapes: `\n` is the letter `n`. The
+///   backslash is kept only for `\*` and `\?`, so the glob matcher can tell a
+///   literal asterisk or question mark from a wildcard.
 /// - `name:` becomes a field token. It is empty when the colon is followed by
 ///   whitespace or the end of the query.
 /// - `AND`, `OR`, and `NOT` are operators only in uppercase and only when they
@@ -212,7 +214,15 @@ fn Lexer::word(self : Lexer) -> Token raise QueryError {
       if self.pos >= self.input.length() {
         raise Lex(escape_pos, "trailing '\\' at the end of the query")
       }
-      chars.push(self.char_at(self.pos))
+      let escaped_char = self.char_at(self.pos)
+      // Keep the backslash for the glob metacharacters: `\*` and `\?` must
+      // reach the glob matcher as literal asterisk and question mark rather
+      // than turning into wildcards. Other escapes keep their old meaning and
+      // leave no backslash in the word.
+      if escaped_char == '*' || escaped_char == '?' {
+        chars.push('\\')
+      }
+      chars.push(escaped_char)
       self.pos = self.pos + self.char_len_at(self.pos)
       escaped = true
       continue

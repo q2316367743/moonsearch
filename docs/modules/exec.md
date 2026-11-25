@@ -41,6 +41,12 @@ Query
 常量折叠与类型域剪枝发生在 `compile_query`：`None` 吸收 AND，`All` 吸收 OR，`Not`
 互补。求值按 AND/OR 短路，`--limit` 在收集到足够条目时停止。
 
+位图计划的类型域剪枝是纯优化，不能掩盖语义错误：`compile_plan` 在把 `Never` 域折叠成
+空集前先调用 `validate_terms`，所以 `file:regex:"[" folder:` 仍然报告非法正则，而不是
+静默返回空集。`--compat` 把编译期的非法正则/日期转换成该 term 的空集；两者都在
+`compile_query` / `compile_leaf` 内按 term 处理，`OR` 的其他分支仍然有效。CLI 的
+`--type` 先由 `query.constrain_kind` 变成独立 `Kind` 项，再进入两套引擎。
+
 ## 谓词
 
 | 叶子 | 规则 |
@@ -91,7 +97,8 @@ S08 的 `index.Ranges` 必须与扫描谓词对同一字段给出同一集合。
   `empty:` 等价于文件夹的 `childcount` 为 0；
 - `depth` 的根为 0，文件等于父目录深度加 1；
 - `parent:` 只匹配有父目录的条目，根永不匹配；路径按字节精确比较，尾斜杠在编译期
-  归一化；
+  归一化；`--allow-nested-roots` 下同一路径可能有多个文件夹 id，`parent_ids` 对这些
+  父桶求并集，避免只命中最低 id 的那一份；
 - `dm:` 的日历解析仍在 `compile.mbt` 完成，索引只接收解析后的绝对秒区间。
 
 ## 与 trigram 倒排共享的规则

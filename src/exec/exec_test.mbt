@@ -103,6 +103,30 @@ test "glob patterns replace substring matching" {
 }
 
 ///|
+test "escaped glob wildcards are literal and ? matches one scalar" {
+  let builder = @index.Builder::new()
+  let root = builder.add_root("/r", false, 0L)
+  ignore(builder.add_file(root, "index*", 1L, 0L))
+  ignore(builder.add_file(root, "indexed", 1L, 0L))
+  ignore(builder.add_file(root, "é.txt", 1L, 0L))
+  ignore(builder.add_file(root, "€.txt", 1L, 0L))
+  ignore(builder.add_file(root, "ab.txt", 1L, 0L))
+  builder.set_child_counts(root, 5U, 0U)
+  let store = builder.finish(built_at=0L)
+  let run = fn(text : String) {
+    let query = query_of(text)
+    let hits = @exec.exec_scan_with(store, query) catch {
+      err => abort("query '\{text}' failed: \{err.message()}")
+    }
+    hits.map(fn(entry) { @utf8.decode_lossy(store.entry_path(entry)) })
+  }
+  assert_eq(run("index\\*"), ["/r/index*"])
+  assert_eq(run("indexed"), ["/r/indexed"])
+  assert_eq(run("?.txt"), ["/r/é.txt", "/r/€.txt"])
+  assert_eq(run("??.txt"), ["/r/ab.txt"])
+}
+
+///|
 test "regular expressions match the name" {
   assert_eq(matched("regex:\"^photo\""), ["/root/media/photo.JPG"])
   assert_eq(matched("regex:\"\\.pdf$\""), ["/root/docs/report.pdf"])
@@ -132,6 +156,8 @@ test "size: compares bytes over files and folders" {
   assert_eq(matched("size:..100"), ["/root/.hidden", "/root/archive"])
   assert_eq(matched("size:1kb..2kb"), ["/root/docs", "/root/docs/report.pdf"])
   assert_eq(matched("file:size:2000"), ["/root/media/photo.JPG"])
+  assert_eq(matched("size:==2000"), matched("size:2000"))
+  assert_eq(matched("size: = = 2000"), matched("size:2000"))
 }
 
 ///|
@@ -184,6 +210,8 @@ test "dm: compares modification time against calendar units" {
   assert_eq(matched("dm:2024-02"), ["/root/docs/notes.txt"])
   assert_eq(matched("dm:2024").length(), 8)
   assert_eq(matched("dm:2025"), [])
+  assert_eq(matched("dm:pastweek"), matched("dm:lastweek"))
+  assert_eq(matched("dm:past3days"), matched("dm:last3days"))
   assert_eq(matched("dm:>=2024-03-01"), [
     "/root/.hidden", "/root/archive", "/root/docs", "/root/readme.md", "/root/docs/report.pdf",
   ])

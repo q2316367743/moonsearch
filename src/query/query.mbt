@@ -48,6 +48,22 @@ pub fn kind_query(kind : KindFilter) -> Query {
 }
 
 ///|
+/// Intersect a query with a global kind constraint.
+///
+/// The CLI's `--type` is not a term modifier: it applies to every result and
+/// cannot be overridden by a `file:` or `folder:` written in the query. The
+/// command wraps the parsed query with this function, so `--type file folder:`
+/// is a contradiction and matches nothing instead of silently dropping the
+/// command-line constraint.
+pub fn constrain_kind(query : Query, kind : KindFilter) -> Query {
+  if kind is AnyKind {
+    query
+  } else {
+    make_and(query, Query::Term(Term::new(TermBody::Kind(kind))))
+  }
+}
+
+///|
 /// Flags that apply to this term.
 pub fn Term::flags(self : Term) -> Flags {
   self.flags

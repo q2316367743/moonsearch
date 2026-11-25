@@ -234,6 +234,10 @@ test "size values support every comparison form" {
   assert_eq(parsed("size:>=1mb"), "(size >= 1000000)")
   assert_eq(parsed("size:<2kb"), "(size < 2000)")
   assert_eq(parsed("size:<=2kb"), "(size <= 2000)")
+  assert_eq(parsed("size:==5"), "(size = 5)")
+  assert_eq(parsed("size: = = 5"), "(size = 5)")
+  assert_eq(parsed("depth:==2"), "(depth = 2)")
+  assert_eq(parsed("dm:==2024-03"), "(dm = \"2024-03\")")
   assert_eq(parsed("size:1kb..2mb"), "(size .. 1000 2000000)")
   assert_eq(parsed("size:..1mb"), "(size .. 0 1000000)")
   assert_eq(parsed("size:1mb.."), "(size .. 1000000 9223372036854775807)")
@@ -325,6 +329,9 @@ test "a malformed size is an error at the value" {
 test "compat turns malformed values into the empty set" {
   assert_eq(parsed_compat("size:abc"), "none")
   assert_eq(parsed_compat("size:"), "none")
+  assert_eq(parsed_compat("size:="), "none")
+  assert_eq(parsed_compat("size:=="), "none")
+  assert_eq(parsed_compat("depth: ="), "none")
   assert_eq(parsed_compat("depth:1..2..3"), "none")
 }
 

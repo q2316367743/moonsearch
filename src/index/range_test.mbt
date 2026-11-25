@@ -318,6 +318,25 @@ test "parent paths resolve to folder ids and parent sets" {
 }
 
 ///|
+test "a duplicated nested-root path selects every parent bucket" {
+  // `--allow-nested-roots` indexes `/r/sub` twice: once as a child of `/r`
+  // and once as its own root. Both copies own children, so `parent:` must
+  // union both buckets instead of returning only the lowest folder id.
+  let builder = @index.Builder::new()
+  let root = builder.add_root("/r", false, 0L)
+  let sub = builder.add_folder(root, "sub", 0L)
+  ignore(builder.add_file(sub, "one.txt", 1L, 0L))
+  let nested_root = builder.add_root("/r/sub", false, 0L)
+  ignore(builder.add_file(nested_root, "two.txt", 2L, 0L))
+  let store = builder.finish(built_at=0L)
+  let ranges = @index.Ranges::build(store)
+  assert_eq(ranges.parent_of(b"/r/sub"[:]), Some(sub))
+  assert_eq(ranges.parent_ids(b"/r/sub"[:]).to_sorted_ids(), [3, 4])
+  // The outer path is unaffected: only the original `sub` is its child.
+  assert_eq(ranges.parent_ids(b"/r"[:]).to_sorted_ids(), [1])
+}
+
+///|
 test "eager fields are built up front and the rest are lazy" {
   let store = range_store() catch {
     err => abort("fixture failed: \{err.message()}")

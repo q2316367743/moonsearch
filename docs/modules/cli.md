@@ -24,7 +24,8 @@
 ```text
 argv
   → parse: subcommand + options/flags + positionals（默认 search）
-  → build_query: --type/-c/-e/-p/-r/--regex 与应用到 parser 的初始 Flags
+  → build_query: -c/-e/-p/-r 作为 parser 初始 Flags；--type 解析后由
+    query.constrain_kind 作为全局约束求交；--regex 应用自动路径/大小写规则
   → 校验输出参数：--sort、--limit、--json/--format/--basename/--null/--relative-to
   → query_source
       --live          : 扫描 roots → Store（不读写数据库）
@@ -100,7 +101,7 @@ header 与 section table；`--verify` 额外校验全文件 CRC。默认数据�
 - 持久化：`index` 写库、`info --verify` 读头、删除根目录后 `search`/`count` 仍从库中
   命中、bitmap 引擎直接读库、`--no-trigram` 库退化为扫描、损坏数据库以退出码 2 失败；
 - `search`/`count` 的 `--live`、`--auto-index`、多 root、`--type`、`--regex`、
-  `--explain`、`--stats`；
+  `--explain`、`--stats`；`--compat` 把解析期与编译期的非法值、非法正则/日期变成空集；
 - 每个排序键、`--reverse`、`--folders-first`、`--limit`、`--basename`、`--null`、
   `--json`、`--format`、`--relative-to` 的进程内输出；
 - 同一夹具上 `--engine scan` 与 `--engine bitmap` 的 stdout 与退出码逐字节一致。

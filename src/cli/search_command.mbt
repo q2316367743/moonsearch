@@ -40,19 +40,29 @@ fn build_query(
   flags : @query.Flags,
 ) -> Result[@query.Query, String] {
   let text = invocation.query
-  if flags.regex {
-    let query = if text.is_empty() && !(flags.kind is @query.AnyKind) {
-      @query.kind_query(flags.kind)
-    } else {
-      @query.name_query(text, flags~)
-    }
-    return Ok(query)
-  }
   let compat = flag_set(invocation.matches, "compat")
-  let parsed = Ok(@query.parse(text, flags~, compat~)) catch {
-    err => Err("error: \{err.message()}")
+  // `--type` is a global constraint, not a seed for term flags: a query-local
+  // `file:` or `folder:` must not override it. Parse with a neutral kind and
+  // intersect the command-line kind afterwards.
+  let global_kind = flags.kind
+  let parse_flags = flags.with_kind(@query.AnyKind)
+  let query = if flags.regex {
+    // `--regex` bypasses the parser, so apply the same term-level automatic
+    // path and case rules the parser gives a bare word.
+    @query.name_query(
+      text,
+      flags=@query.Flags::with_name_heuristics(parse_flags, text),
+    )
+  } else {
+    let parsed = Ok(@query.parse(text, flags=parse_flags, compat~)) catch {
+      err => Err("error: \{err.message()}")
+    }
+    match parsed {
+      Ok(value) => value
+      Err(message) => return Err(message)
+    }
   }
-  parsed
+  Ok(@query.constrain_kind(query, global_kind))
 }
 
 ///|
@@ -398,6 +408,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
     Ok(engine) => engine
     Err(message) => return Failure(message)
   }
+  let compat = flag_set(matches, "compat")
   let order = match order_options_of(matches) {
     Ok(order) => order
     Err(message) => return Failure(message)
@@ -444,11 +455,18 @@ async fn run_search(invocation : Invocation) -> CliResult {
       let exec_started = @env.now()
       let scan_options = @exec.ScanOptions::new(limit=collect_limit)
       let executed = if reverse_name {
-        Ok(@exec.exec_scan_reverse_with(store, query, options=scan_options)) catch {
+        Ok(
+          @exec.exec_scan_reverse_with(
+            store,
+            query,
+            options=scan_options,
+            compat~,
+          ),
+        ) catch {
           err => Err("error: \{err.message()}")
         }
       } else {
-        Ok(@exec.exec_scan_with(store, query, options=scan_options)) catch {
+        Ok(@exec.exec_scan_with(store, query, options=scan_options, compat~)) catch {
           err => Err("error: \{err.message()}")
         }
       }
@@ -458,7 +476,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
       }
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_scan_plan(query, options)
+        plan = explain_scan_plan(query, options, compat)
       }
     }
     BitmapEngine => {
@@ -472,7 +490,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
         Persisted(index) => index
       }
       let exec_started = @env.now()
-      let executed = Ok(@exec.exec_indexed(index, query)) catch {
+      let executed = Ok(@exec.exec_indexed(index, query, compat~)) catch {
         err => Err("error: \{err.message()}")
       }
       let ids = match executed {
@@ -482,7 +500,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
       hits = hits_of_ids(store, ids, collect_limit, reverse=reverse_name)
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_bitmap_plan(index, query)
+        plan = explain_bitmap_plan(index, query, compat)
       }
     }
   }
@@ -517,8 +535,9 @@ async fn run_search(invocation : Invocation) -> CliResult {
 fn explain_scan_plan(
   query : @query.Query,
   options : @exec.ScanOptions,
+  compat : Bool,
 ) -> String {
-  let explained = Ok(@exec.explain_query(query, options~)) catch {
+  let explained = Ok(@exec.explain_query(query, options~, compat~)) catch {
     err => Err(err.message())
   }
   match explained {
@@ -529,8 +548,12 @@ fn explain_scan_plan(
 
 ///|
 /// Compile the indexed plan for `--explain`.
-fn explain_bitmap_plan(index : @index.Index, query : @query.Query) -> String {
-  let explained = Ok(@exec.explain_indexed(index, query)) catch {
+fn explain_bitmap_plan(
+  index : @index.Index,
+  query : @query.Query,
+  compat : Bool,
+) -> String {
+  let explained = Ok(@exec.explain_indexed(index, query, compat~)) catch {
     err => Err(err.message())
   }
   match explained {
@@ -543,6 +566,7 @@ fn explain_bitmap_plan(index : @index.Index, query : @query.Query) -> String {
 /// Run `count` with the selected engine.
 async fn run_count(invocation : Invocation) -> CliResult {
   let matches = invocation.matches
+  let compat = flag_set(matches, "compat")
   let engine = match engine_of(matches) {
     Ok(engine) => engine
     Err(message) => return Failure(message)
@@ -571,7 +595,7 @@ async fn run_count(invocation : Invocation) -> CliResult {
   match engine {
     ScanEngine => {
       let exec_started = @env.now()
-      let counted = Ok(@exec.exec_count_with(store, query, options~)) catch {
+      let counted = Ok(@exec.exec_count_with(store, query, options~, compat~)) catch {
         err => Err("error: \{err.message()}")
       }
       count = match counted {
@@ -580,7 +604,7 @@ async fn run_count(invocation : Invocation) -> CliResult {
       }
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_scan_plan(query, options)
+        plan = explain_scan_plan(query, options, compat)
       }
     }
     BitmapEngine => {
@@ -594,7 +618,7 @@ async fn run_count(invocation : Invocation) -> CliResult {
         Persisted(index) => index
       }
       let exec_started = @env.now()
-      let counted = Ok(@exec.exec_indexed_count(index, query)) catch {
+      let counted = Ok(@exec.exec_indexed_count(index, query, compat~)) catch {
         err => Err("error: \{err.message()}")
       }
       count = match counted {
@@ -603,7 +627,7 @@ async fn run_count(invocation : Invocation) -> CliResult {
       }
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_bitmap_plan(index, query)
+        plan = explain_bitmap_plan(index, query, compat)
       }
     }
   }

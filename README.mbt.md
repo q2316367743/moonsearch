@@ -160,7 +160,14 @@ bytes: 6
 ### 基本匹配
 
 裸词按**名称子串**匹配，默认 ASCII 大小写不敏感；包含 `/` 的裸词按**完整路径**匹配。
-`"..."` 原样保留空格与特殊字符，`\` 转义下一个字符。
+`"..."` 原样保留空格与特殊字符，`\` 转义下一个字符。含非 ASCII 大写字母的词项自动
+改为大小写敏感（v1 只折叠 ASCII）。
+
+glob 中 `*` 匹配任意字节序列，`?` 匹配**一个 Unicode 标量**（一个完整 UTF-8 字符，
+非法字节算一个单位），`\*` / `\?` 表示字面量星号/问号。正则使用 MoonBit 内置引擎：
+支持字符类、POSIX 类（`[[:digit:]]` 等）、`* + ? {n,m}` 量词、分组/替换、`^ $ \b`、
+`(?i:...)`；不支持 `\d` / `\s` / `\w` 简写、lookaround、反向引用和 `\xHH` 字节转义。
+`--regex` 同样应用上面两条自动路径/大小写规则。
 
 ```bash
 moonsearch report            # 名称包含 report
@@ -211,7 +218,8 @@ moonsearch 'file:(pdf OR doc) dm:lastweek'
 | `empty:` | 空目录（不带值） | `empty:` |
 | `contenttype:` | MIME 类型；只写主类型或子类型均可 | `contenttype:pdf`、`contenttype:text` |
 
-`ext:` 与 `contenttype:` 仅匹配文件；子项计数与 `empty:` 仅匹配目录。
+`ext:` 与 `contenttype:` 仅匹配文件；子项计数与 `empty:` 仅匹配目录。使用
+`--allow-nested-roots` 时同一路径可能被索引多次，`parent:` 会合并该路径的所有副本。
 
 ### 修饰符
 
@@ -230,13 +238,18 @@ moonsearch 'file:(pdf OR doc) dm:lastweek'
 
 可以链式组合，例如 `file:hidden:doc:report`；`file:(a OR b)` 对两侧都生效，而
 `file:a OR b` 只约束 `a`。单独使用 `file:`、`folder:`、`hidden:`、`nohidden:` 也是
-有效的过滤器，等价于 `--type` / 可见性筛选。
+有效的过滤器。命令行的 `--type` 是**全局约束**，作用于整条查询，不能被查询内的
+`file:` / `folder:` 覆盖；因此 `--type file folder:` 匹配空集。
+
+自定义宏按自己保存的 flags 独立解析，外部修饰符不会渗入展开结果；需要限制宏时，把
+修饰符写进宏查询，或另写一个普通 term，例如 `book: file:`。
 
 ### 取值
 
 - 大小使用十进制单位：`k`/`kb` = 1000，`m`/`mb` = 10⁶，`g`/`gb` = 10⁹，
   `t`/`tb` = 10¹²；不带单位表示字节。
-- 比较符：`>`、`>=`、`<`、`<=`、`=`；不写比较符表示精确值。
+- 比较符：`>`、`>=`、`<`、`<=`、`=`；不写比较符表示精确值。`==`（包括分开写的
+  `= =`）是 `=` 的另一种写法。
 - 区间为半开 `lo..hi`，两端可省略：`1kb..2mb` = `[1000, 2000000)`；
   `..1mb` 只给上界，`1mb..` 只给下界。
 - 计数字段（`depth:`、`childcount:` 等）接受非负整数，同样支持比较符与区间。
@@ -248,8 +261,8 @@ moonsearch 'file:(pdf OR doc) dm:lastweek'
 
 - `today`、`yesterday`；星期名（`mon` / `monday`，最近一次出现）；月份名
   （`jan` / `january`，最近一次出现）；
-- `last` / `inthelast` / `prev` / `previous` + 单位，可带计数：`lastweek`、
-  `last3days`、`lastfiveweeks`；单位为 `year(s)`、`month(s)`、`week(s)`、`day(s)`、
+- `last` / `past` / `inthelast` / `prev` / `previous` + 单位，可带计数：`lastweek`、
+  `past3days`、`lastfiveweeks`；单位为 `year(s)`、`month(s)`、`week(s)`、`day(s)`、
   `hour(s)`、`min(s)`、`sec(s)`；
 - `this` + 单位，表示当前日历单位（周从周一开始）；
 - 显式日期 `YYYY[-MM[-DD[THH[:MM[:SS]]]]]`，支持两位年份。

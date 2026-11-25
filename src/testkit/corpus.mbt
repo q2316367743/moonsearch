@@ -28,10 +28,11 @@ pub fn semantic_queries() -> Array[String] {
      "case:REPORT", "case:report", "nocase:REPORT", "exact:readme.md", "exact:report",
     "case:exact:README.MD", "exact:发票", "path:docs", "path:/root/docs", "path:report",
     "nopath:/root", "path:regex:\"docs/.*\\.pdf$\"",
-    // Globs and regular expressions.
+    // Globs and regular expressions, including escaped wildcard literals.
      "*.pdf", "*.PDF", "?.txt", "photo*", "*.pdf OR *.txt", "*.hidden", ".hidden",
-    "regex:\"^report\"", "regex:\"\\.pdf$\"", "regex:\"^photo\"", "regex:\"^IMG_[0-9]+\"",
-    "regex:\"\\.(jpg|png)$\"", "regex:\"^REPORT\"", "case:regex:\"^REPORT\"",
+    "index\\*", "a\\?b", "\\*literal\\*", "regex:\"^report\"", "regex:\"\\.pdf$\"",
+    "regex:\"^photo\"", "regex:\"^IMG_[0-9]+\"", "regex:\"\\.(jpg|png)$\"", "regex:\"^REPORT\"",
+    "case:regex:\"^REPORT\"",
     // Extensions and categories.
      "ext:pdf", "ext:JPG", "ext:pdf;txt", "ext:PDF;TXT", "ext:", "ext:jpg;", "ext:mp4",
     "folder:ext:pdf", "file:ext:pdf", "doc:", "app:", "archive:", "audio:", "pic:",
@@ -42,10 +43,10 @@ pub fn semantic_queries() -> Array[String] {
     "hidden:(.hidden OR .git)", "!(file:report OR folder:docs)", "!folder:docs",
     // Sizes, counts, and ranges.
      "size:>1500", "size:>=1500", "size:<1500", "size:<=1500", "size:1500", "size:..100",
-    "size:1kb..2kb", "size:>1mb", "size:0", "size:>0", "size:>10mb", "file:size:2000",
-    "folder:size:>1000", "depth:0", "depth:1", "depth:<=2", "depth:>2", "depth:0..1",
-    "folder:depth:1", "childcount:0", "childcount:>0", "childcount:0..2", "childfilecount:2",
-    "childfoldercount:3", "empty:",
+    "size:==1500", "size: = = 1500", "size:1kb..2kb", "size:>1mb", "size:0", "size:>0",
+    "size:>10mb", "file:size:2000", "folder:size:>1000", "depth:0", "depth:1", "depth:<=2",
+    "depth:>2", "depth:0..1", "folder:depth:1", "childcount:0", "childcount:>0",
+    "childcount:0..2", "childfilecount:2", "childfoldercount:3", "empty:",
     // Paths and content types.
      "parent:/root/docs", "parent:/root/", "parent:/", "parent:/nope", "parent:/root/media",
     "contenttype:pdf", "contenttype:image", "contenttype:text", "contenttype:application",
@@ -70,7 +71,8 @@ pub fn semantic_queries() -> Array[String] {
 pub fn date_queries() -> Array[String] {
   [
     "dm:today", "dm:yesterday", "dm:lastweek", "dm:lastmonth", "dm:thisyear", "dm:>=today",
-    "dm:<today", "dm:lastweek..yesterday", "dm:..yesterday", "dm:last3days",
+    "dm:<today", "dm:lastweek..yesterday", "dm:..yesterday", "dm:last3days", "dm:pastweek",
+    "dm:past3days", "dm:pastfiveweeks",
   ]
 }
 
@@ -84,8 +86,9 @@ pub fn edge_queries() -> Array[String] {
     "\"report\"", "\"report final\"", "\"read me\"", "\"\"", "a\\ b", "a\\!b", "a\\(b",
     "a\\)b", "\\\"quoted\\\"", "\\\\", "\\AND", "AND", "OR", "NOT", "and", "or",
     "not", "report\tand\tpdf", "report   pdf", "report\npdf", "report\r\npdf", "a\\:b",
-    "size: = 1500", "size:>=1kb", "size:<1kb", "depth: = 2", "dm: = 2024-03", "report,notes",
-    "report;notes", "report+notes", "[report]", "report|notes",
+    "size: = 1500", "size: == 1500", "size:>=1kb", "size:<1kb", "depth: = 2", "dm: = 2024-03",
+    "report,notes", "report;notes", "report+notes", "[report]", "report|notes", "index\\*",
+    "a\\?b", "\\\\*", "a\\\\?b",
   ]
 }
 

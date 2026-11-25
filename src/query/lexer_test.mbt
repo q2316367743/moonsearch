@@ -65,6 +65,14 @@ test "backslash escapes the next character outside quotes" {
 }
 
 ///|
+test "escaped wildcards keep their backslash for the glob matcher" {
+  assert_eq(tokens_of("index\\*"), "'index\\*' end of query")
+  assert_eq(tokens_of("a\\?b"), "'a\\?b' end of query")
+  // Ordinary escapes still disappear.
+  assert_eq(tokens_of("a\\cb"), "'acb' end of query")
+}
+
+///|
 test "a colon turns a word into a field token" {
   assert_eq(tokens_of("file:"), "'file:' end of query")
   assert_eq(tokens_of("file:test"), "'file:' 'test' end of query")

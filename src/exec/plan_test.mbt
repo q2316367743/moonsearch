@@ -323,6 +323,62 @@ test "the optimizer folds constants and prunes impossible domains" {
 }
 
 ///|
+test "domain pruning does not hide invalid regex or date errors" {
+  let index = plan_index()
+  let store = index.store()
+  let scan_options = @exec.ScanOptions::new(
+    now=Some(TEST_NOW),
+    zone=Some(@time.utc_zone),
+  )
+  let bad_regex = query_of("file:regex:\"[\" folder:")
+  let indexed = Ok(@exec.exec_indexed(index, bad_regex, options=plan_options())) catch {
+    err => Err(err)
+  }
+  match indexed {
+    Err(err) =>
+      assert_true(err.message().contains("invalid regular expression"))
+    Ok(_) => abort("indexed engine hid the invalid regex")
+  }
+  let scanned = Ok(@exec.exec_scan_with(store, bad_regex, options=scan_options)) catch {
+    err => Err(err)
+  }
+  match scanned {
+    Err(err) =>
+      assert_true(err.message().contains("invalid regular expression"))
+    Ok(_) => abort("scan engine hid the invalid regex")
+  }
+  let bad_date = query_of("file:dm:nonsense folder:")
+  let indexed_date = Ok(
+    @exec.exec_indexed(index, bad_date, options=plan_options()),
+  ) catch {
+    err => Err(err)
+  }
+  match indexed_date {
+    Err(err) => assert_true(err.message().contains("expected a date"))
+    Ok(_) => abort("indexed engine hid the invalid date")
+  }
+  // `--compat` turns the delayed error into the empty set in both engines.
+  assert_eq(
+    @exec.exec_indexed(index, bad_regex, options=plan_options(), compat=true).cardinality(),
+    0,
+  )
+  assert_eq(
+    @exec.exec_scan_with(store, bad_date, options=scan_options, compat=true).length(),
+    0,
+  )
+  // A bad term inside OR only removes that term; the rest still matches.
+  let mixed = query_of("dm:nonsense OR report")
+  assert_eq(
+    @exec.exec_count_with(store, mixed, options=scan_options, compat=true),
+    @exec.exec_count_with(store, query_of("report"), options=scan_options),
+  )
+  assert_eq(
+    @exec.exec_indexed_count(index, mixed, options=plan_options(), compat=true),
+    @exec.exec_indexed_count(index, query_of("report"), options=plan_options()),
+  )
+}
+
+///|
 test "scan predicates are pushed below indexed candidates" {
   let index = plan_index()
   match plan_of(index, "*.pdf size:>1kb") {

@@ -10,6 +10,8 @@ pub fn bad_regex(StringView) -> QueryError
 
 pub fn bad_value(Int32, StringView, StringView, StringView) -> QueryError
 
+pub fn constrain_kind(Query, KindFilter) -> Query
+
 pub fn kind_query(KindFilter) -> Query
 
 pub fn lex(StringView) -> Array[Token] raise QueryError
@@ -83,6 +85,7 @@ pub fn Flags::new(case_sensitive? : Bool, exact? : Bool, search_path? : Bool, re
 pub fn Flags::with_case_sensitive(Self, Bool) -> Self
 pub fn Flags::with_exact(Self, Bool) -> Self
 pub fn Flags::with_kind(Self, KindFilter) -> Self
+pub fn Flags::with_name_heuristics(Self, StringView) -> Self
 pub fn Flags::with_regex(Self, Bool) -> Self
 pub fn Flags::with_search_path(Self, Bool) -> Self
 pub fn Flags::with_visibility(Self, VisibilityFilter) -> Self

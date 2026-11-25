@@ -47,10 +47,10 @@ priv suberror DateTextError {
 ///
 /// - `today`, `yesterday`, weekday names (`mon` / `monday`), and month names
 ///   (`jan` / `january`);
-/// - `last` / `inthelast` / `prev` / `previous` followed by a unit
+/// - `last` / `past` / `inthelast` / `prev` / `previous` followed by a unit
 ///   (`year`, `month`, `week`, `day`, `hour`, `min`, `sec`), optionally with a
 ///   count written as digits or as `one` through `ten`, `dozen`, or `hundred`
-///   (`lastfiveweeks`); these are rolling windows ending now;
+///   (`lastfiveweeks`, `past3days`); these are rolling windows ending now;
 /// - `this` followed by a unit, which selects the current calendar unit;
 /// - explicit dates `YYYY[-MM[-DD[THH[:MM[:SS]]]]]`, with an optional space
 ///   before the time. Two-digit years map below 70 to 2000-2069 and the rest to
@@ -292,16 +292,17 @@ fn split_count(text : StringView) -> (Int32, StringView)? {
 }
 
 ///|
-/// Parse the `last*`, `previous*`, and `this*` families.
+/// Parse the `last*`, `past*`, `previous*`, and `this*` families.
 fn relative_span(
   text : String,
   now : Int64,
   zone : @time.Zone,
 ) -> DateSpan? raise {
   // Longest prefixes first so `inthelast` wins over a hypothetical `in` and
-  // `previous` wins over `prev`.
+  // `previous` wins over `prev`. `past` is the plan's alias of `last` and
+  // produces the same rolling window ending now.
   let prefixes : Array[String] = [
-    "inthelast", "previous", "prev", "last", "this",
+    "inthelast", "previous", "prev", "last", "past", "this",
   ]
   for prefix in prefixes {
     match text.strip_prefix(prefix) {

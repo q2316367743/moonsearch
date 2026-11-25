@@ -4,13 +4,14 @@
 /// The pattern language is deliberately small:
 ///
 /// - `*` matches any run of bytes, including none and including `/`;
-/// - `?` matches exactly one byte;
+/// - `?` matches exactly one Unicode scalar value: an ASCII byte, a complete
+///   multi-byte UTF-8 sequence, or one invalid byte;
 /// - `\` makes the next byte literal, so `\*` matches a literal asterisk;
 /// - every other byte matches itself, case-sensitively.
 ///
 /// The match is anchored at both ends: the whole `text` must be consumed. This
-/// is the matcher used by exclude rules; it works on raw bytes so invalid UTF-8
-/// names keep working.
+/// is the matcher used by the query and exclude layers; it works on raw bytes
+/// so invalid UTF-8 names keep working.
 pub fn glob_match(text : BytesView, pattern : BytesView) -> Bool {
   glob_match_with(text, pattern, false)
 }
@@ -45,7 +46,7 @@ pub fn glob_match_with(
         pi = pi + 1
         continue
       } else if pattern_byte == b'?' {
-        ti = ti + 1
+        ti = ti + scalar_width(text, ti)
         pi = pi + 1
         matched = true
       } else if pattern_byte == b'\\' && pi + 1 < pattern_len {
@@ -64,7 +65,11 @@ pub fn glob_match_with(
       continue
     }
     if star_pi >= 0 {
-      star_ti = star_ti + 1
+      // Backtrack one scalar, not one byte, so `?` after `*` never starts in
+      // the middle of a multi-byte sequence.
+      if star_ti < text_len {
+        star_ti = star_ti + scalar_width(text, star_ti)
+      }
       ti = star_ti
       pi = star_pi + 1
     } else {
@@ -76,6 +81,66 @@ pub fn glob_match_with(
     pi = pi + 1
   }
   pi == pattern_len
+}
+
+///|
+/// Width in bytes of the Unicode scalar starting at `pos`.
+///
+/// A leading byte with no complete, valid continuation is one invalid byte, so
+/// `?` still consumes exactly one unit of malformed input.
+fn scalar_width(text : BytesView, pos : Int32) -> Int32 {
+  let length = text.length()
+  if pos < 0 || pos >= length {
+    return 1
+  }
+  let first = text[pos].to_int()
+  if first < 0x80 {
+    return 1
+  }
+  if first < 0xC2 {
+    return 1
+  }
+  if first < 0xE0 {
+    if pos + 1 < length && is_continuation(text, pos + 1) {
+      return 2
+    }
+    return 1
+  }
+  if first < 0xF0 {
+    if pos + 2 < length &&
+      is_continuation(text, pos + 1) &&
+      is_continuation(text, pos + 2) {
+      let code = ((first & 0x0F) << 12) |
+        ((text[pos + 1].to_int() & 0x3F) << 6) |
+        (text[pos + 2].to_int() & 0x3F)
+      if code >= 0x800 && !(code >= 0xD800 && code <= 0xDFFF) {
+        return 3
+      }
+    }
+    return 1
+  }
+  if first < 0xF5 {
+    if pos + 3 < length &&
+      is_continuation(text, pos + 1) &&
+      is_continuation(text, pos + 2) &&
+      is_continuation(text, pos + 3) {
+      let code = ((first & 0x07) << 18) |
+        ((text[pos + 1].to_int() & 0x3F) << 12) |
+        ((text[pos + 2].to_int() & 0x3F) << 6) |
+        (text[pos + 3].to_int() & 0x3F)
+      if code >= 0x10000 && code <= 0x10FFFF {
+        return 4
+      }
+    }
+    return 1
+  }
+  1
+}
+
+///|
+/// Whether the byte at `pos` is a UTF-8 continuation byte.
+fn is_continuation(text : BytesView, pos : Int32) -> Bool {
+  (text[pos].to_int() & 0xC0) == 0x80
 }
 
 ///|

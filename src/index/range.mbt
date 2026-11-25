@@ -433,9 +433,12 @@ priv struct ParentPaths {
 ///|
 /// Build the path-to-folder table.
 ///
-/// Equal paths cannot occur for a well-formed store (roots are deduplicated and
-/// every other folder has a distinct parent and name); the id tie-break keeps
-/// the order deterministic even for a hand-built store.
+/// A path is not necessarily unique: with `--allow-nested-roots` the nested
+/// subtree is indexed once under its outer root and once as a root of its own,
+/// so the same folder path owns two id spaces. The table keeps every pair,
+/// sorted by `(path, id)`; `lookup` returns the lowest id and `parent_ids`
+/// unions every id, which is what makes `parent:` match both copies. The id
+/// tie-break also keeps the order deterministic for a hand-built store.
 fn build_parent_paths(store : @core.Store) -> ParentPaths {
   let pairs : Array[(Bytes, Int32)] = []
   for id in 0..<store.folder_count() {
@@ -459,8 +462,11 @@ fn build_parent_paths(store : @core.Store) -> ParentPaths {
 }
 
 ///|
-/// Folder id of an exact path, or `None` when no folder has that path.
-fn ParentPaths::lookup(self : ParentPaths, path : BytesView) -> Int32? {
+/// Half-open positions of every folder whose path equals `path`.
+fn ParentPaths::equal_range(
+  self : ParentPaths,
+  path : BytesView,
+) -> (Int32, Int32) {
   let mut low = 0
   let mut high = self.paths.length()
   while low < high {
@@ -468,13 +474,37 @@ fn ParentPaths::lookup(self : ParentPaths, path : BytesView) -> Int32? {
     let order = self.paths[middle][:].lexical_compare(path)
     if order < 0 {
       low = middle + 1
-    } else if order > 0 {
-      high = middle
     } else {
-      return Some(self.ids[middle])
+      high = middle
     }
   }
-  None
+  let start = low
+  let mut upper = self.paths.length()
+  while low < upper {
+    let middle = (low + upper) / 2
+    let order = self.paths[middle][:].lexical_compare(path)
+    if order <= 0 {
+      low = middle + 1
+    } else {
+      upper = middle
+    }
+  }
+  (start, low)
+}
+
+///|
+/// Lowest folder id of an exact path, or `None` when no folder has that path.
+///
+/// Nested roots can store the same path more than once. This lookup keeps the
+/// historical single-id answer with the stable `(path, id)` tie-break; use
+/// `Ranges::parent_ids` when every copy must be selected.
+fn ParentPaths::lookup(self : ParentPaths, path : BytesView) -> Int32? {
+  let (start, end) = self.equal_range(path)
+  if start < end {
+    Some(self.ids[start])
+  } else {
+    None
+  }
 }
 
 ///|
@@ -917,8 +947,9 @@ pub fn Ranges::field(self : Ranges, field : RangeField) -> RangeIndex {
 }
 
 ///|
-/// Folder id of an exact directory path, or `None` when the path is not in the
-/// index. This is the lookup `parent:<path>` compiles to.
+/// Lowest folder id of an exact directory path, or `None` when the path is not
+/// in the index. When nested roots duplicate a path, `parent_ids` unions every
+/// copy; this lookup only reports the stable first one.
 pub fn Ranges::parent_of(self : Ranges, path : BytesView) -> Int32? {
   self.parent_paths().lookup(path)
 }
@@ -927,10 +958,21 @@ pub fn Ranges::parent_of(self : Ranges, path : BytesView) -> Int32? {
 /// Entries whose parent folder has exactly this path.
 ///
 /// Roots have no parent and are never selected. A path that names no folder
-/// yields the empty set, matching the scan predicate.
+/// yields the empty set, matching the scan predicate. When nested roots stored
+/// the same path under more than one folder id, every parent bucket is unioned
+/// so the query does not miss the copy that is not the lowest id.
 pub fn Ranges::parent_ids(self : Ranges, path : BytesView) -> @ids.Ids {
-  match self.parent_of(path) {
-    Some(folder) => self.parent().equal(folder.to_int64())
-    None => @ids.Ids::empty()
+  let paths = self.parent_paths()
+  let (start, end) = paths.equal_range(path)
+  if start >= end {
+    return @ids.Ids::empty()
   }
+  let parent = self.parent()
+  let mut result = parent.equal(paths.ids[start].to_int64())
+  let mut position = start + 1
+  while position < end {
+    result = result.union(parent.equal(paths.ids[position].to_int64()))
+    position = position + 1
+  }
+  result
 }

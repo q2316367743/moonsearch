@@ -73,14 +73,27 @@ fn compile_query(
   query : @query.Query,
   now : Int64,
   zone : @time.Zone,
+  compat~ : Bool = false,
 ) -> ScanExpr raise @query.QueryError {
   match query {
     @query.MatchAll => All
     @query.MatchNone => None
-    @query.Term(term) => Test(compile_term(term, now, zone))
+    @query.Term(term) =>
+      if compat {
+        // `--compat` turns a delayed semantic error (an invalid regex or date)
+        // into the empty set for that term, exactly like a malformed field at
+        // parse time. Other terms keep their normal meaning.
+        let compiled = Ok(compile_term(term, now, zone)) catch { _ => Err(()) }
+        match compiled {
+          Ok(value) => Test(value)
+          Err(_) => None
+        }
+      } else {
+        Test(compile_term(term, now, zone))
+      }
     @query.And(left, right) => {
-      let compiled_left = compile_query(left, now, zone)
-      let compiled_right = compile_query(right, now, zone)
+      let compiled_left = compile_query(left, now, zone, compat~)
+      let compiled_right = compile_query(right, now, zone, compat~)
       match (compiled_left, compiled_right) {
         (None, _) | (_, None) => None
         (All, expr) | (expr, All) => expr
@@ -88,8 +101,8 @@ fn compile_query(
       }
     }
     @query.Or(left, right) => {
-      let compiled_left = compile_query(left, now, zone)
-      let compiled_right = compile_query(right, now, zone)
+      let compiled_left = compile_query(left, now, zone, compat~)
+      let compiled_right = compile_query(right, now, zone, compat~)
       match (compiled_left, compiled_right) {
         (All, _) | (_, All) => All
         (None, expr) | (expr, None) => expr
@@ -97,7 +110,7 @@ fn compile_query(
       }
     }
     @query.Not(inner) =>
-      match compile_query(inner, now, zone) {
+      match compile_query(inner, now, zone, compat~) {
         All => None
         None => All
         expr => Not(expr)

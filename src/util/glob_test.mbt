@@ -25,13 +25,24 @@ test "glob star matches any run including separators" {
 }
 
 ///|
-test "glob question mark matches exactly one byte" {
+test "glob question mark matches exactly one Unicode scalar" {
   assert_true(matches(b"file1", b"file?"))
   assert_false(matches(b"file", b"file?"))
   assert_false(matches(b"file12", b"file?"))
   assert_true(matches(b"a/b", b"a?b"))
-  // A multi-byte UTF-8 character is not one byte.
-  assert_false(matches(b"\xC3\xA9", b"?"))
+  // A complete multi-byte sequence is one scalar.
+  assert_true(matches(b"\xC3\xA9", b"?"))
+  assert_true(matches(b"\xE2\x82\xAC", b"?"))
+  assert_true(matches(b"\xF0\x9F\x98\x80", b"?"))
+  assert_true(matches(b"\xC3\xA9x", b"??"))
+  assert_false(matches(b"\xC3\xA9", b"??"))
+  // An invalid or truncated byte is also one scalar, so one `?` consumes it.
+  assert_true(matches(b"\xFF", b"?"))
+  assert_true(matches(b"\xC3", b"?"))
+  assert_false(matches(b"\xFF\xFF", b"?"))
+  // `*` backtracks by scalar, never by half a sequence.
+  assert_true(matches(b"x\xC3\xA9", b"x*?"))
+  assert_true(matches(b"\xC3\xA9x", b"*x"))
 }
 
 ///|

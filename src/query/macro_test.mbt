@@ -77,6 +77,22 @@ test "macro flags apply to the macro's terms" {
 }
 
 ///|
+
+///|
+test "modifiers around an expansion do not change the macro's own terms" {
+  // A macro is parsed independently with its own flags, so `file:` outside it
+  // is not silently pushed into the expansion. The documented way to constrain
+  // a macro is to write the modifier inside the macro query or combine it as a
+  // separate term.
+  let macros = [@query.Macro::new(name="book", query="ext:epub;pdf")]
+  assert_eq(macro_parsed("file:book:", macros), "(ext \"epub\" \"pdf\")")
+  assert_eq(
+    macro_parsed("book: file:", macros),
+    "(and (ext \"epub\" \"pdf\") (kind file))",
+  )
+}
+
+///|
 test "macros take precedence over field functions" {
   let macros = [@query.Macro::new(name="size", query="ext:big")]
   assert_eq(macro_parsed("size:", macros), "(ext \"big\")")

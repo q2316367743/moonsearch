@@ -69,6 +69,8 @@ pub fn bad_value(Int32, StringView, StringView, StringView) -> @query.QueryError
 
 pub fn cmp_paths(BytesView, BytesView) -> Int32
 
+pub fn constrain_kind(@query.Query, @query.KindFilter) -> @query.Query
+
 pub fn contains_bytes(BytesView, BytesView) -> Bool
 
 pub fn contains_bytes_with(BytesView, BytesView, Bool) -> Bool
@@ -83,15 +85,15 @@ pub fn eq_ignore_ascii_case(BytesView, BytesView) -> Bool
 
 pub fn exec_count(@core.Store, @query.Query) -> Int32 raise @query.QueryError
 
-pub fn exec_count_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -> Int32 raise @query.QueryError
+pub fn exec_count_with(@core.Store, @query.Query, options? : @exec.ScanOptions, compat? : Bool) -> Int32 raise @query.QueryError
 
 pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
 
-pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : @exec.ScanOptions, compat? : Bool) -> Array[@core.EntryRef] raise @query.QueryError
 
-pub fn exec_scan_with(@core.Store, @query.Query, options? : @exec.ScanOptions) -> Array[@core.EntryRef] raise @query.QueryError
+pub fn exec_scan_with(@core.Store, @query.Query, options? : @exec.ScanOptions, compat? : Bool) -> Array[@core.EntryRef] raise @query.QueryError
 
-pub fn explain_query(@query.Query, options? : @exec.ScanOptions) -> String raise @query.QueryError
+pub fn explain_query(@query.Query, options? : @exec.ScanOptions, compat? : Bool) -> String raise @query.QueryError
 
 pub fn extension_of(BytesView) -> BytesView
 

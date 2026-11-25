@@ -146,6 +146,7 @@ pub using @query {
   type VisibilityFilter,
   bad_regex,
   bad_value,
+  constrain_kind,
   kind_query,
   lex,
   name_query,

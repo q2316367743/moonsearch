@@ -44,8 +44,9 @@ pub fn exec_scan_with(
   store : @core.Store,
   query : @query.Query,
   options~ : ScanOptions = ScanOptions::new(),
+  compat~ : Bool = false,
 ) -> Array[@core.EntryRef] raise @query.QueryError {
-  exec_scan_ordered(store, query, options, false)
+  exec_scan_ordered(store, query, options, false, compat~)
 }
 
 ///|
@@ -58,8 +59,9 @@ pub fn exec_scan_reverse_with(
   store : @core.Store,
   query : @query.Query,
   options~ : ScanOptions = ScanOptions::new(),
+  compat~ : Bool = false,
 ) -> Array[@core.EntryRef] raise @query.QueryError {
-  exec_scan_ordered(store, query, options, true)
+  exec_scan_ordered(store, query, options, true, compat~)
 }
 
 ///|
@@ -69,8 +71,14 @@ fn exec_scan_ordered(
   query : @query.Query,
   options : ScanOptions,
   reverse : Bool,
+  compat~ : Bool = false,
 ) -> Array[@core.EntryRef] raise @query.QueryError {
-  let expr = compile_query(query, resolved_now(options), resolved_zone(options))
+  let expr = compile_query(
+    query,
+    resolved_now(options),
+    resolved_zone(options),
+    compat~,
+  )
   let hits : Array[@core.EntryRef] = []
   if expr is None {
     return hits
@@ -119,8 +127,14 @@ pub fn exec_count_with(
   store : @core.Store,
   query : @query.Query,
   options~ : ScanOptions = ScanOptions::new(),
+  compat~ : Bool = false,
 ) -> Int32 raise @query.QueryError {
-  let expr = compile_query(query, resolved_now(options), resolved_zone(options))
+  let expr = compile_query(
+    query,
+    resolved_now(options),
+    resolved_zone(options),
+    compat~,
+  )
   match expr {
     None => 0
     All => store.entry_count()
@@ -141,8 +155,14 @@ pub fn exec_count_with(
 pub fn explain_query(
   query : @query.Query,
   options~ : ScanOptions = ScanOptions::new(),
+  compat~ : Bool = false,
 ) -> String raise @query.QueryError {
-  let expr = compile_query(query, resolved_now(options), resolved_zone(options))
+  let expr = compile_query(
+    query,
+    resolved_now(options),
+    resolved_zone(options),
+    compat~,
+  )
   explain_expr(expr)
 }
 

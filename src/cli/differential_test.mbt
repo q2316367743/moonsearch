@@ -211,3 +211,43 @@ async test "both engines format and order results identically" {
   assert_eq(comparisons, queries.length() * variants.length())
   @fs.remove(dir, recursive=true)
 }
+
+///|
+async test "invalid queries and compat agree across engines" {
+  let dir = cli_diff_fixture()
+  let database = cli_diff_index("diff-errors", dir, [])
+  let invalid : Array[String] = [
+    "file:regex:\"[\" folder:", "file:dm:nonsense folder:", "regex:\"(\"", "size:abc",
+    "dm:pastnonsenseweek",
+  ]
+  for query in invalid {
+    // Without `--compat` both engines report the same exit code and message.
+    cli_diff_query("invalid", database, query)
+    for engine in ["scan", "bitmap"] {
+      let tolerated = cli_diff_outcome(
+        @cli.run([
+          "search", "-D", database, "--engine", engine, "--compat", query,
+        ]),
+      )
+      if tolerated.code != 1 || tolerated.out != "" {
+        abort(
+          "compat '\{query}' on \{engine}: expected empty output and exit 1, got code=\{tolerated.code} out='\{tolerated.out}'",
+        )
+      }
+    }
+  }
+  // `--type` is a global constraint, so a contradicting modifier is empty.
+  for engine in ["scan", "bitmap"] {
+    let result = cli_diff_outcome(
+      @cli.run([
+        "search", "-D", database, "--engine", engine, "--type", "file", "folder:",
+      ]),
+    )
+    if result.code != 1 || result.out != "" {
+      abort(
+        "--type file folder: on \{engine}: expected empty output and exit 1",
+      )
+    }
+  }
+  @fs.remove(dir, recursive=true)
+}

@@ -1175,6 +1175,112 @@ async test "search --live supports limits, node kinds, and regex mode" {
 }
 
 ///|
+async test "search --regex applies automatic path searching" {
+  let dir = make_fixture("moonsearch-search-regex-path")
+  let real = real_dir(dir)
+  let result = @cli.run(["search", "--live", "--root", dir, "--regex", "sub/b"])
+  @fs.remove(dir, recursive=true)
+  match result {
+    @cli.Success(text) => assert_eq(text, "\{real}/sub/b.pdf")
+    _ => abort("--regex must search the full path when it contains a slash")
+  }
+}
+
+///|
+async test "--type is a global constraint that query modifiers cannot override" {
+  let dir = make_fixture("moonsearch-search-type-global")
+  let files = @cli.run([
+    "search", "--live", "--root", dir, "--type", "file", "folder:",
+  ])
+  let folders = @cli.run([
+    "search", "--live", "--root", dir, "--type", "folder", "file:",
+  ])
+  @fs.remove(dir, recursive=true)
+  assert_eq(files.exit_code(), 1)
+  assert_eq(folders.exit_code(), 1)
+  match files {
+    @cli.NoMatch(out, _) => assert_eq(out, "")
+    _ => abort("expected no matches for --type file folder:")
+  }
+}
+
+///|
+async test "delayed query errors are exit 2 and compat turns them into empty sets" {
+  let dir = make_fixture("moonsearch-search-errors")
+  let bad_queries = ["file:regex:\"[\" folder:", "file:dm:nonsense folder:"]
+  for query in bad_queries {
+    for engine in ["scan", "bitmap"] {
+      let rejected = @cli.run([
+        "search", "--live", "--root", dir, "--engine", engine, query,
+      ])
+      assert_eq(rejected.exit_code(), 2)
+      match rejected {
+        @cli.Failure(text) =>
+          assert_true(
+            text.contains("invalid regular expression") ||
+            text.contains("expected a date"),
+          )
+        _ => abort("expected a query error for '\{query}' on \{engine}")
+      }
+      let tolerated = @cli.run([
+        "search", "--live", "--root", dir, "--engine", engine, "--compat", query,
+      ])
+      assert_eq(tolerated.exit_code(), 1)
+      match tolerated {
+        @cli.NoMatch(out, _) => assert_eq(out, "")
+        _ => abort("expected an empty set for '\{query}' on \{engine}")
+      }
+    }
+  }
+  @fs.remove(dir, recursive=true)
+}
+
+///|
+async test "nested roots resolve every duplicate path in parent:" {
+  let dir = make_fixture("moonsearch-nested-parent")
+  let real = real_dir(dir)
+  let database = test_database("nested-parent")
+  let indexed = @cli.run([
+    "index",
+    "-D",
+    database,
+    "--allow-nested-roots",
+    dir,
+    "\{dir}/sub",
+  ])
+  let expected = "\{real}/sub/b.pdf\n\{real}/sub/b.pdf"
+  let scan = @cli.run([
+    "search",
+    "-D",
+    database,
+    "--engine",
+    "scan",
+    "parent:\{real}/sub",
+  ])
+  let bitmap = @cli.run([
+    "search",
+    "-D",
+    database,
+    "--engine",
+    "bitmap",
+    "parent:\{real}/sub",
+  ])
+  @fs.remove(dir, recursive=true)
+  match indexed {
+    @cli.Success(_) | @cli.SuccessWith(_, _) => ()
+    _ => abort("nested-root index failed")
+  }
+  match scan {
+    @cli.Success(text) => assert_eq(text, expected)
+    _ => abort("scan engine missed a nested-root parent bucket")
+  }
+  match bitmap {
+    @cli.Success(text) => assert_eq(text, expected)
+    _ => abort("bitmap engine missed a nested-root parent bucket")
+  }
+}
+
+///|
 async test "search --live explains the plan and prints statistics" {
   let dir = make_fixture("moonsearch-search-explain")
   let real = real_dir(dir)

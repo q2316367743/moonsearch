@@ -120,6 +120,29 @@ pub fn Flags::with_visibility(self : Flags, value : VisibilityFilter) -> Flags {
 }
 
 ///|
+/// Apply the term-level automatic path and case rules to a whole-query name.
+///
+/// This is the same rule the parser applies to a bare word:
+///
+/// - a name containing `/` searches the full path;
+/// - a name containing a non-ASCII uppercase letter becomes case-sensitive,
+///   because this version folds ASCII case only.
+///
+/// The CLI uses it for `--regex`, where the whole query bypasses the parser and
+/// therefore never passes through `Parser::name_flags`. Explicit `--search-path`
+/// and `--case-sensitive` already set the flag, so they still win.
+pub fn Flags::with_name_heuristics(self : Flags, text : StringView) -> Flags {
+  let mut flags = self
+  if !flags.search_path && text.contains_char('/') {
+    flags = flags.with_search_path(true)
+  }
+  if !flags.case_sensitive && contains_non_ascii_upper(text) {
+    flags = flags.with_case_sensitive(true)
+  }
+  flags
+}
+
+///|
 /// Whether every flag is at its default value.
 pub fn Flags::is_default(self : Flags) -> Bool {
   !self.case_sensitive &&
@@ -163,10 +186,12 @@ pub fn Flags::describe(self : Flags) -> String {
 ///
 /// The v1 matcher folds ASCII only, so a term written with a non-ASCII
 /// uppercase letter would silently stop matching its lowercase form. Such terms
-/// switch to case-sensitive matching. The check is a deliberately conservative
-/// range test for the common scripts: missing a rare uppercase letter only
-/// leaves the term case-insensitive, which is what the matcher supports anyway.
-/// Full Unicode category tables are a later step.
+/// switch to case-sensitive matching. The check is a range test for the scripts
+/// this version documents: Latin (including Extended-A/B/Additional), Greek
+/// (including Extended), Cyrillic, Armenian, Georgian, Glagolitic, and
+/// fullwidth Latin. Missing a rare uppercase letter only leaves the term
+/// case-insensitive, which is what the matcher supports anyway. Full Unicode
+/// category tables are a later step.
 fn contains_non_ascii_upper(text : StringView) -> Bool {
   for char in text.iter() {
     let code = char.to_int()
@@ -178,12 +203,13 @@ fn contains_non_ascii_upper(text : StringView) -> Bool {
 }
 
 ///|
-/// Uppercase letters from the Latin, Greek, and Cyrillic blocks.
+/// Uppercase letters from the Latin, Greek, and Cyrillic blocks, plus the other
+/// scripts this version documents.
 ///
-/// Latin Extended-A and the extended Cyrillic runs are not one simple
-/// alternating range: their case pairing switches direction part way through
-/// the block. The ranges below follow the actual Unicode pairings for the
-/// common blocks this version claims to detect.
+/// Latin Extended-A, Latin Extended-B, and the extended Cyrillic runs are not
+/// single simple alternating ranges: their case pairing switches direction part
+/// way through the block. The ranges below follow the actual Unicode pairings
+/// for the blocks this version claims to detect.
 fn is_common_upper(code : Int32) -> Bool {
   // Latin-1 Supplement: À-Ö and Ø-Þ.
   if (code >= 0x00C0 && code <= 0x00D6) || (code >= 0x00D8 && code <= 0x00DE) {
@@ -202,13 +228,24 @@ fn is_common_upper(code : Int32) -> Bool {
   if code == 0x0178 || code == 0x0179 || code == 0x017B || code == 0x017D {
     return true
   }
+  // Latin Extended-B has irregular capital positions.
+  if is_latin_ext_b_upper(code) {
+    return true
+  }
   // Greek: Ά, Έ-Ί, Ό, Ύ-Ώ, Α-Ρ, Σ-Ϋ.
   if code == 0x0386 ||
     (code >= 0x0388 && code <= 0x038A) ||
     code == 0x038C ||
     (code >= 0x038E && code <= 0x038F) ||
     (code >= 0x0391 && code <= 0x03A1) ||
-    (code >= 0x03A3 && code <= 0x03AB) {
+    (code >= 0x03A3 && code <= 0x03AB) ||
+    (code >= 0x03D2 && code <= 0x03D4) {
+    return true
+  }
+  if (code >= 0x03D8 && code <= 0x03EF) && code % 2 == 0 {
+    return true
+  }
+  if code == 0x03F4 || code == 0x03F7 || code == 0x03F9 || code == 0x03FA {
     return true
   }
   // Cyrillic: А-Я, Ѐ-Џ.
@@ -234,6 +271,107 @@ fn is_common_upper(code : Int32) -> Bool {
   if (code >= 0x0500 && code <= 0x052F) && code % 2 == 0 {
     return true
   }
+  // Armenian capitals.
+  if code >= 0x0531 && code <= 0x0556 {
+    return true
+  }
+  // Georgian Mkhedruli capitals and Mtavruli.
+  if (code >= 0x10A0 && code <= 0x10C5) || code == 0x10C7 || code == 0x10CD {
+    return true
+  }
+  if code >= 0x1C90 && code <= 0x1CBA {
+    return true
+  }
+  // Latin Extended Additional alternates capitals at even code points.
+  if code >= 0x1E00 && code <= 0x1EFF && code % 2 == 0 {
+    return true
+  }
+  // Greek Extended capitals.
+  if (code >= 0x1F08 && code <= 0x1F0F) ||
+    (code >= 0x1F18 && code <= 0x1F1D) ||
+    (code >= 0x1F28 && code <= 0x1F2F) ||
+    (code >= 0x1F38 && code <= 0x1F3F) ||
+    (code >= 0x1F48 && code <= 0x1F4D) ||
+    code == 0x1F59 ||
+    code == 0x1F5B ||
+    code == 0x1F5D ||
+    code == 0x1F5F ||
+    (code >= 0x1F68 && code <= 0x1F6F) ||
+    (code >= 0x1F88 && code <= 0x1F8F) ||
+    (code >= 0x1F98 && code <= 0x1F9F) ||
+    (code >= 0x1FA8 && code <= 0x1FAF) ||
+    (code >= 0x1FB8 && code <= 0x1FBC) ||
+    (code >= 0x1FC8 && code <= 0x1FCB) ||
+    (code >= 0x1FD8 && code <= 0x1FDB) ||
+    (code >= 0x1FE8 && code <= 0x1FEC) ||
+    (code >= 0x1FF8 && code <= 0x1FFB) {
+    return true
+  }
+  // Glagolitic capitals.
+  if code >= 0x2C00 && code <= 0x2C2E {
+    return true
+  }
+  // Cyrillic Extended-B and Latin Extended-D/E alternating capital runs.
+  if (code >= 0xA640 && code <= 0xA66D) && code % 2 == 0 {
+    return true
+  }
+  if (code >= 0xA680 && code <= 0xA69B) && code % 2 == 0 {
+    return true
+  }
+  if (code >= 0xA722 && code <= 0xA72F) && code % 2 == 0 {
+    return true
+  }
+  if (code >= 0xA732 && code <= 0xA76F) && code % 2 == 0 {
+    return true
+  }
+  if (code >= 0xA790 && code <= 0xA7AE) && code % 2 == 0 {
+    return true
+  }
   // Fullwidth Latin capitals.
   code >= 0xFF21 && code <= 0xFF3A
+}
+
+///|
+/// Latin Extended-B capitals.
+///
+/// The block mixes pairs that advance by one with capitals that stand alone, so
+/// the positions are listed rather than derived from parity.
+fn is_latin_ext_b_upper(code : Int32) -> Bool {
+  (code >= 0x0181 && code <= 0x0182) ||
+  code == 0x0184 ||
+  (code >= 0x0186 && code <= 0x0187) ||
+  (code >= 0x0189 && code <= 0x018B) ||
+  (code >= 0x018E && code <= 0x0191) ||
+  (code >= 0x0193 && code <= 0x0194) ||
+  (code >= 0x0196 && code <= 0x0198) ||
+  (code >= 0x019C && code <= 0x019D) ||
+  (code >= 0x019F && code <= 0x01A0) ||
+  code == 0x01A2 ||
+  code == 0x01A4 ||
+  (code >= 0x01A6 && code <= 0x01A7) ||
+  code == 0x01A9 ||
+  code == 0x01AC ||
+  (code >= 0x01AE && code <= 0x01AF) ||
+  (code >= 0x01B1 && code <= 0x01B3) ||
+  code == 0x01B5 ||
+  (code >= 0x01B7 && code <= 0x01B8) ||
+  code == 0x01BC ||
+  code == 0x01C4 ||
+  code == 0x01C7 ||
+  code == 0x01CA ||
+  ((code >= 0x01CD && code <= 0x01DB) && code % 2 == 1) ||
+  ((code >= 0x01DE && code <= 0x01EE) && code % 2 == 0) ||
+  code == 0x01F1 ||
+  code == 0x01F4 ||
+  (code >= 0x01F6 && code <= 0x01F8) ||
+  code == 0x01FA ||
+  code == 0x01FC ||
+  code == 0x01FE ||
+  ((code >= 0x0200 && code <= 0x0216) && code % 2 == 0) ||
+  ((code >= 0x0218 && code <= 0x0232) && code % 2 == 0) ||
+  (code >= 0x023A && code <= 0x023B) ||
+  (code >= 0x023D && code <= 0x023E) ||
+  code == 0x0241 ||
+  (code >= 0x0243 && code <= 0x0244) ||
+  ((code >= 0x0246 && code <= 0x024E) && code % 2 == 0)
 }
