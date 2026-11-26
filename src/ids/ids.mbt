@@ -85,6 +85,29 @@ pub fn Ids::cardinality(self : Ids) -> Int32 {
 }
 
 ///|
+/// Highest occupied 65536-id block, or `-1` for an empty set.
+pub fn Ids::max_block(self : Ids) -> Int32 {
+  match self {
+    Bitmap(bitmap) => bitmap.max_block()
+    Sorted(ids) =>
+      if ids.is_empty() {
+        -1
+      } else {
+        ids[ids.length() - 1] >> BITMAP_BLOCK_SHIFT
+      }
+  }
+}
+
+///|
+/// Highest id in the set, or `-1` when it is empty.
+pub fn Ids::max_id(self : Ids) -> Int32 {
+  match self {
+    Bitmap(bitmap) => bitmap.max_id()
+    Sorted(ids) => if ids.is_empty() { -1 } else { ids[ids.length() - 1] }
+  }
+}
+
+///|
 /// Whether the set has no ids.
 pub fn Ids::is_empty(self : Ids) -> Bool {
   self.cardinality() == 0

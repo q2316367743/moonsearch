@@ -176,6 +176,200 @@ fn assert_trigrams_equal(
 }
 
 ///|
+/// Little-endian u32 used by the database test fixture rewriter.
+fn put_test_u32(bytes : Array[Byte], offset : Int32, value : UInt32) -> Unit {
+  for index in 0..<4 {
+    bytes[offset + index] = ((value >> (index * 8)) & 0xFFU).to_byte()
+  }
+}
+
+///|
+/// Little-endian u64 used by the database test fixture rewriter.
+fn put_test_u64(bytes : Array[Byte], offset : Int32, value : UInt64) -> Unit {
+  for index in 0..<8 {
+    bytes[offset + index] = ((value >> (index * 8)) & 0xFFUL).to_byte()
+  }
+}
+
+///|
+/// Read a little-endian u32 from a test fixture.
+fn get_test_u32(bytes : Bytes, offset : Int32) -> UInt32 {
+  let mut value = 0U
+  for index in 0..<4 {
+    value = value | (bytes[offset + index].to_uint() << (index * 8))
+  }
+  value
+}
+
+///|
+/// Read a little-endian u16 from a test fixture.
+fn get_test_u16(bytes : Bytes, offset : Int32) -> UInt16 {
+  (bytes[offset].to_uint() | (bytes[offset + 1].to_uint() << 8)).to_uint16()
+}
+
+///|
+/// Read a little-endian u64 from a test fixture.
+fn get_test_u64(bytes : Bytes, offset : Int32) -> UInt64 {
+  let mut value = 0UL
+  for index in 0..<8 {
+    value = value | (bytes[offset + index].to_uint64() << (index * 8))
+  }
+  value
+}
+
+///|
+/// CRC-32 over a mutable test buffer range.
+fn test_crc32_range(bytes : Array[Byte], start : Int32, end : Int32) -> UInt32 {
+  let mut crc = 0xFFFFFFFFU
+  for position in start..<end {
+    crc = crc ^ bytes[position].to_uint()
+    for _ in 0..<8 {
+      if (crc & 1U) != 0U {
+        crc = 0xEDB88320U ^ (crc >> 1)
+      } else {
+        crc = crc >> 1
+      }
+    }
+  }
+  crc ^ 0xFFFFFFFFU
+}
+
+///|
+/// Split a database into its header and ordered section payloads.
+fn database_parts(bytes : Bytes) -> (Array[Byte], Array[(Int32, Bytes)]) {
+  let header : Array[Byte] = []
+  for index in 0..<64 {
+    header.push(bytes[index])
+  }
+  let count = get_test_u32(bytes, 60).reinterpret_as_int()
+  let sections : Array[(Int32, Bytes)] = []
+  for index in 0..<count {
+    let entry = 64 + index * 20
+    let kind = get_test_u32(bytes, entry).reinterpret_as_int()
+    let offset = get_test_u64(bytes, entry + 4).to_int()
+    let length = get_test_u64(bytes, entry + 12).to_int()
+    sections.push(
+      (kind, bytes.exact_view(start=offset, end=offset + length).to_owned()),
+    )
+  }
+  (header, sections)
+}
+
+///|
+/// Rebuild a database with valid metadata/full CRCs after a structural mutation.
+fn rebuild_database(
+  header : Array[Byte],
+  sections : Array[(Int32, Bytes)],
+) -> Bytes {
+  let table_end = 64 + sections.length() * 20
+  put_test_u32(header, 60, sections.length().reinterpret_as_uint())
+  let out : Array[Byte] = []
+  for byte in header {
+    out.push(byte)
+  }
+  for _ in 0..<(sections.length() * 20) {
+    out.push(b'\x00')
+  }
+  let mut offset = table_end
+  let mut checksum_offset = -1
+  for index in 0..<sections.length() {
+    let (kind, data) = sections[index]
+    let entry = 64 + index * 20
+    put_test_u32(out, entry, kind.reinterpret_as_uint())
+    put_test_u64(out, entry + 4, offset.to_uint64())
+    put_test_u64(out, entry + 12, data.length().to_uint64())
+    for byte in data {
+      out.push(byte)
+    }
+    if kind == 10 {
+      checksum_offset = offset
+    }
+    offset = offset + data.length()
+  }
+  let metadata = test_crc32_range(out, 0, table_end)
+  put_test_u32(out, checksum_offset, metadata)
+  let full = test_crc32_range(out, 0, checksum_offset)
+  put_test_u32(out, checksum_offset + 4, full)
+  Bytes::from_array(out[:])
+}
+
+///|
+/// Insert an unknown section immediately before CHECKSUM.
+fn insert_before_checksum(bytes : Bytes, kind : Int32, data : Bytes) -> Bytes {
+  let (header, sections) = database_parts(bytes)
+  let inserted : Array[(Int32, Bytes)] = []
+  for pair in sections {
+    if pair.0 == 10 {
+      inserted.push((kind, data))
+    }
+    inserted.push(pair)
+  }
+  rebuild_database(header, inserted)
+}
+
+///|
+/// Patch one header u32 and repair the checksums.
+fn patch_database_header(
+  bytes : Bytes,
+  offset : Int32,
+  value : UInt32,
+) -> Bytes {
+  let (header, sections) = database_parts(bytes)
+  put_test_u32(header, offset, value)
+  rebuild_database(header, sections)
+}
+
+///|
+/// Replace the first dictionary key's Ids blob, preserving its key header.
+fn replace_first_dict_ids(bytes : Bytes, ids : Bytes) -> Bytes {
+  let (header, sections) = database_parts(bytes)
+  let replaced : Array[(Int32, Bytes)] = []
+  for (kind, data) in sections {
+    if kind != 7 {
+      replaced.push((kind, data))
+      continue
+    }
+    let payload_length = get_test_u16(data, 5).to_int()
+    let length_offset = 7 + payload_length
+    let old_ids_length = get_test_u32(data, length_offset).reinterpret_as_int()
+    let old_ids_end = length_offset + 4 + old_ids_length
+    let dict : Array[Byte] = []
+    for index in 0..<(length_offset + 4) {
+      dict.push(data[index])
+    }
+    put_test_u32(dict, length_offset, ids.length().reinterpret_as_uint())
+    for byte in ids {
+      dict.push(byte)
+    }
+    for index in old_ids_end..<data.length() {
+      dict.push(data[index])
+    }
+    replaced.push((kind, Bytes::from_array(dict[:])))
+  }
+  rebuild_database(header, replaced)
+}
+
+///|
+/// Return a decoder error for a database fixture.
+fn database_error(bytes : Bytes, verify~ : Bool = true) -> @index.DbError {
+  try @index.Index::from_bytes(bytes[:], verify~) catch {
+    err => err
+  } noraise {
+    _ => abort("expected the database to be rejected")
+  }
+}
+
+///|
+/// Return an info-decoder error for a database fixture.
+fn database_info_error(bytes : Bytes, verify~ : Bool = true) -> @index.DbError {
+  try @index.DbInfo::from_bytes(bytes[:], verify~) catch {
+    err => err
+  } noraise {
+    _ => abort("expected database info to be rejected")
+  }
+}
+
+///|
 test "database round-trips every part of the index" {
   let original = sample_index()
   let loaded = decoded(encoded(original))
@@ -467,4 +661,244 @@ test "database round-trips duplicate nested-root parent buckets" {
   assert_eq(loaded.ranges().parent_ids(b"/r/sub"[:]).to_sorted_ids(), [
     2, 3, 7, 8, 9, 10,
   ])
+}
+
+///|
+test "checksum must be the last section and end exactly at EOF" {
+  let original = encoded(sample_index())
+  for tail in [b"\x00", b"appended garbage"] {
+    let appended : Array[Byte] = []
+    for byte in original {
+      appended.push(byte)
+    }
+    for byte in tail {
+      appended.push(byte)
+    }
+    let bytes = Bytes::from_array(appended[:])
+    for verify in [false, true] {
+      match database_error(bytes, verify~) {
+        @index.DbError::Corrupt(message) =>
+          assert_true(message.contains("does not end at EOF"))
+        other => abort("expected an EOF error, got \{other.message()}")
+      }
+      match database_info_error(bytes, verify~) {
+        @index.DbError::Corrupt(message) =>
+          assert_true(message.contains("does not end at EOF"))
+        other => abort("expected an info EOF error, got \{other.message()}")
+      }
+    }
+  }
+
+  let (header, sections) = database_parts(original)
+  let checksum = sections[sections.length() - 1]
+  let last_payload = sections[sections.length() - 2]
+  let reordered : Array[(Int32, Bytes)] = []
+  for index in 0..<(sections.length() - 2) {
+    reordered.push(sections[index])
+  }
+  reordered.push(checksum)
+  reordered.push(last_payload)
+  let middle = rebuild_database(header, reordered)
+  match database_error(middle) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("checksum section must be last"))
+    other => abort("expected a checksum-order error, got \{other.message()}")
+  }
+  assert_true(database_info_error(middle) is @index.DbError::Corrupt(_))
+
+  let (header, sections) = database_parts(original)
+  let trailing : Array[(Int32, Bytes)] = []
+  for section in sections {
+    trailing.push(section)
+  }
+  trailing.push((99, b"unknown after checksum"))
+  let after = rebuild_database(header, trailing)
+  match database_error(after) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("checksum section must be last"))
+    other => abort("expected a trailing-section error, got \{other.message()}")
+  }
+  assert_true(database_info_error(after) is @index.DbError::Corrupt(_))
+}
+
+///|
+test "unknown sections before checksum are skipped and covered by full verification" {
+  let original = encoded(sample_index())
+  let extended = insert_before_checksum(original, 99, b"future-section")
+  let loaded = decoded(extended)
+  assert_eq(loaded.entry_count(), 7)
+  let info = @index.DbInfo::from_bytes(extended[:], verify=true) catch {
+    err => abort(err.message())
+  }
+  assert_eq(info.sections.length(), 10)
+  assert_eq(info.sections[8].name, "unknown(99)")
+  assert_eq(info.sections[8].length, 14L)
+
+  let (_, sections) = database_parts(extended)
+  let unknown_index = sections.length() - 2
+  let entry = 64 + unknown_index * 20
+  let unknown_offset = get_test_u64(extended, entry + 4).to_int()
+  let mutated = fuzz_copy(extended)
+  mutated[unknown_offset] = (mutated[unknown_offset].to_int() ^ 1).to_byte()
+  let bytes = Bytes::from_array(mutated[:])
+  match database_error(bytes) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("file checksum mismatch"))
+    other => abort("expected a full-checksum error, got \{other.message()}")
+  }
+  assert_true(database_info_error(bytes) is @index.DbError::Corrupt(_))
+  // Metadata still covers the unchanged table, so a normal load may skip the
+  // unknown payload; full verification is what authenticates its contents.
+  assert_eq(decoded(bytes, verify=false).entry_count(), 7)
+}
+
+///|
+test "hostile header counts are rejected before section decoding" {
+  let original = encoded(sample_index())
+  let cases : Array[(Int32, UInt32)] = [
+    (24, 16_777_217U),
+    (32, 3U),
+    (40, 1_000_001U),
+    (44, 6U),
+    (48, 16_777_217U),
+  ]
+  for (offset, value) in cases {
+    let bytes = patch_database_header(original, offset, value)
+    assert_true(database_error(bytes) is @index.DbError::Corrupt(_))
+    assert_true(database_info_error(bytes) is @index.DbError::Corrupt(_))
+  }
+
+  // Patching section_count cannot use the regular rewriter because the table no
+  // longer describes the payloads. Repair the CRCs directly to prove the count
+  // itself is rejected before a huge table allocation.
+  let raw = fuzz_copy(original)
+  put_test_u32(raw, 60, 33U)
+  let table_end = 64 + 9 * 20
+  let checksum_offset = get_test_u64(original, 64 + 8 * 20 + 4).to_int()
+  put_test_u32(raw, checksum_offset, test_crc32_range(raw, 0, table_end))
+  put_test_u32(
+    raw,
+    checksum_offset + 4,
+    test_crc32_range(raw, 0, checksum_offset),
+  )
+  let bytes = Bytes::from_array(raw[:])
+  assert_true(database_error(bytes) is @index.DbError::Corrupt(_))
+  assert_true(database_info_error(bytes) is @index.DbError::Corrupt(_))
+}
+
+///|
+test "ids outside the store are rejected before expansion" {
+  let original = encoded(sample_index())
+
+  let empty = encoded(
+    @index.Index::build(@index.Builder::new().finish(built_at=0L)),
+  )
+  let huge_empty = Array::make(5, b'\x00')
+  huge_empty[0] = b'\x01'
+  put_test_u32(huge_empty, 1, 100_000_000U)
+  let invalid_empty = replace_first_dict_ids(
+    empty,
+    Bytes::from_array(huge_empty[:]),
+  )
+  match database_error(invalid_empty) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("cardinality exceeds the entry count"))
+    other =>
+      abort("expected an empty-store cardinality error, got \{other.message()}")
+  }
+
+  let sorted = Array::make(13, b'\x00')
+  sorted[0] = b'\x01'
+  put_test_u32(sorted, 1, 8U)
+  for index in 0..<8 {
+    sorted[5 + index] = index.to_byte()
+  }
+  let too_many = replace_first_dict_ids(original, Bytes::from_array(sorted[:]))
+  match database_error(too_many) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("cardinality exceeds the entry count"))
+    other => abort("expected a cardinality error, got \{other.message()}")
+  }
+
+  let bitmap = Array::make(18, b'\x00')
+  put_test_u32(bitmap, 1, 1U)
+  put_test_u32(bitmap, 5, 1U)
+  put_test_u32(bitmap, 9, 1U)
+  put_test_u32(bitmap, 14, 1U)
+  let wrong_block = replace_first_dict_ids(
+    original,
+    Bytes::from_array(bitmap[:]),
+  )
+  match database_error(wrong_block) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("block index is out of range"))
+    other => abort("expected a block error, got \{other.message()}")
+  }
+}
+
+///|
+test "database decoding honors caller-provided operation and memory budgets" {
+  let bytes = encoded(sample_index())
+  let operations = @ids.IdsDecodeBudget::with_limits(
+    max_operations=1L,
+    max_memory_bytes=1_048_576L,
+  )
+  let outcome = try
+    @index.Index::from_bytes(bytes[:], budget=Some(operations))
+  catch {
+    err => Err(err)
+  } noraise {
+    _ => Ok(())
+  }
+  match outcome {
+    Err(@index.DbError::TooLarge(message)) =>
+      assert_true(message.contains("operation budget"))
+    _ => abort("expected the operation budget to reject the database")
+  }
+
+  let memory = @ids.IdsDecodeBudget::with_limits(
+    max_operations=1_000_000L,
+    max_memory_bytes=1L,
+  )
+  let outcome = try
+    @index.Index::from_bytes(bytes[:], budget=Some(memory))
+  catch {
+    err => Err(err)
+  } noraise {
+    _ => Ok(())
+  }
+  match outcome {
+    Err(@index.DbError::TooLarge(message)) =>
+      assert_true(message.contains("memory budget"))
+    _ => abort("expected the memory budget to reject the database")
+  }
+}
+
+///|
+async test "an oversized database is rejected by stat before reading" {
+  let dir = @fs.tmpdir(prefix="moonsearch-oversized-db")
+  let database = "\{dir}/index.msdb"
+  let file = @fs.open(database, mode=WriteOnly, create_mode=CreateOrTruncate) catch {
+    _ => abort("cannot open oversized database fixture")
+  }
+  file.at(2_147_483_648L).write(b"\x00"[:])
+  file.close()
+  assert_eq(@fs.file_size(database), 2_147_483_649L)
+  let outcome = try @index.Index::read_database(database, verify=true) catch {
+    err => Err(err)
+  } noraise {
+    _ => Ok(())
+  }
+  match outcome {
+    Err(@index.DbError::TooLarge(message)) =>
+      assert_true(message.contains("2 GiB byte-buffer limit"))
+    _ => abort("expected the oversized database to be rejected before reading")
+  }
+  let info = try @index.read_database_info(database, verify=true) catch {
+    err => Err(err)
+  } noraise {
+    _ => Ok(())
+  }
+  assert_true(info is Err(@index.DbError::TooLarge(_)))
+  @fs.remove(dir, recursive=true)
 }

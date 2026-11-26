@@ -68,6 +68,28 @@ fn fuzz_decode_unverified(bytes : Array[Byte]) -> Result[@index.Index, Unit] {
 }
 
 ///|
+/// Decode under a deliberately tiny shared budget. This exercises the resource
+/// failure path on every mutant without allowing a corrupt length to allocate a
+/// large intermediate structure first.
+fn fuzz_decode_budgeted(bytes : Array[Byte]) -> Result[@index.Index, Unit] {
+  let budget = @ids.IdsDecodeBudget::with_limits(
+    max_operations=64L,
+    max_memory_bytes=16_384L,
+  )
+  try
+    @index.Index::from_bytes(
+      Bytes::from_array(bytes[:])[:],
+      verify=false,
+      budget=Some(budget),
+    )
+  catch {
+    _ => Err(())
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
 /// Assert that every id in a set belongs to the store.
 fn fuzz_check_ids(ids : @ids.Ids, entry_count : Int32, label : String) -> Unit {
   for id in ids.to_sorted_ids() {
@@ -235,6 +257,10 @@ test "random database mutations are rejected by full verification" {
       Ok(index) => fuzz_probe(index)
       Err(_) => ()
     }
+    match fuzz_decode_budgeted(mutant) {
+      Ok(index) => fuzz_probe(index)
+      Err(_) => ()
+    }
   }
   assert_eq(rejected, 600)
 }
@@ -263,6 +289,10 @@ test "random garbage is rejected without panicking" {
       abort("random garbage passed header verification")
     }
     match fuzz_decode_unverified(bytes) {
+      Ok(index) => fuzz_probe(index)
+      Err(_) => ()
+    }
+    match fuzz_decode_budgeted(bytes) {
       Ok(index) => fuzz_probe(index)
       Err(_) => ()
     }

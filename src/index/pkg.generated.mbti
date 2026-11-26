@@ -141,9 +141,9 @@ pub struct Index {
 pub fn Index::build(@core.Store, eager? : RangeFieldSet, trigram? : Bool) -> Self
 pub fn Index::dict(Self) -> Dict
 pub fn Index::entry_count(Self) -> Int32
-pub fn Index::from_bytes(BytesView, verify? : Bool) -> Self raise DbError
+pub fn Index::from_bytes(BytesView, verify? : Bool, budget? : @ids.IdsDecodeBudget?) -> Self raise DbError
 pub fn Index::ranges(Self) -> Ranges
-pub async fn Index::read_database(StringView, verify? : Bool) -> Self raise DbError
+pub async fn Index::read_database(StringView, verify? : Bool, budget? : @ids.IdsDecodeBudget?) -> Self raise DbError
 pub fn Index::restore(store~ : @core.Store, dict~ : Dict, ranges~ : Ranges, trigram? : TrigramIndex?) -> Self
 pub fn Index::store(Self) -> @core.Store
 pub fn Index::to_bytes(Self) -> Bytes raise DbError

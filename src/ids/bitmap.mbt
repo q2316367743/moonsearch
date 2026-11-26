@@ -100,6 +100,51 @@ pub fn Bitmap::cardinality(self : Bitmap) -> Int32 {
 }
 
 ///|
+/// Highest occupied 65536-id block, or `-1` for an empty bitmap.
+///
+/// This is O(number of blocks) in the worst case for a manually emptied bitmap,
+/// but normal operations trim trailing empty blocks, making it O(1).
+pub fn Bitmap::max_block(self : Bitmap) -> Int32 {
+  let mut block = self.containers.length() - 1
+  while block >= 0 && self.containers[block] is None {
+    block = block - 1
+  }
+  block
+}
+
+///|
+/// Highest id in the bitmap, or `-1` when it is empty.
+///
+/// Database validation uses this before materializing a sorted id array, so an
+/// out-of-range sparse block is rejected without allocating one entry per id.
+pub fn Bitmap::max_id(self : Bitmap) -> Int32 {
+  let block = self.max_block()
+  if block < 0 {
+    return -1
+  }
+  let base = block << BITMAP_BLOCK_SHIFT
+  match self.containers[block] {
+    Some(Container::Array(values)) =>
+      base + values[values.length() - 1].to_int()
+    Some(Container::Bits(words)) => {
+      let mut word_index = BITMAP_WORDS - 1
+      while word_index >= 0 && words[word_index] == 0UL {
+        word_index = word_index - 1
+      }
+      if word_index < 0 {
+        return -1
+      }
+      let mut bit = BITMAP_WORD_BITS - 1
+      while (words[word_index] & (1UL << bit)) == 0UL {
+        bit = bit - 1
+      }
+      base + word_index * BITMAP_WORD_BITS + bit
+    }
+    None => -1
+  }
+}
+
+///|
 /// Whether the bitmap has no ids.
 pub fn Bitmap::is_empty(self : Bitmap) -> Bool {
   self.len == 0

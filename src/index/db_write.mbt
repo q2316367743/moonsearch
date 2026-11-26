@@ -62,14 +62,14 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
   let table_size = DB_HEADER_SIZE + section_count * DB_SECTION_ENTRY_SIZE
   let mut offset = table_size
   for pair in sections {
-    if offset.to_int64() + pair.1.length().to_int64() > 2147483647L {
+    if offset.to_int64() + pair.1.length().to_int64() > DB_MAX_FILE_BYTES {
       raise DbError::TooLarge("the index exceeds the 2 GiB byte-buffer limit")
     }
     pending.push({ kind: pair.0, data: pair.1, offset, })
     offset = offset + pair.1.length()
   }
   let checksum_offset = offset
-  if checksum_offset.to_int64() + 8L > 2147483647L {
+  if checksum_offset.to_int64() + 8L > DB_MAX_FILE_BYTES {
     raise DbError::TooLarge("the checksum does not fit in the byte buffer")
   }
   let prefix = @buffer.Buffer(capacity=table_size)

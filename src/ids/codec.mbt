@@ -15,6 +15,16 @@ const CONTAINER_ARRAY : Int32 = 0
 const CONTAINER_BITS : Int32 = 1
 
 ///|
+/// Maximum number of decoded values and container words charged to one default
+/// decode budget. The database loader shares one budget across every Ids blob and
+/// trigram posting so many individually valid blobs cannot bypass the limit.
+const IDS_DECODE_MAX_OPERATIONS : Int64 = 100_000_000L
+
+///|
+/// Maximum estimated decoder allocation charged to one default budget (512 MiB).
+const IDS_DECODE_MAX_MEMORY_BYTES : Int64 = 536_870_912L
+
+///|
 /// Errors raised while decoding an id set.
 ///
 /// Decoding is total: malformed input yields an error instead of panicking, so
@@ -24,6 +34,8 @@ pub suberror IdsError {
   Truncated
   /// The input is well-sized but violates the format.
   Corrupt(String)
+  /// The input is valid but would exceed the caller's resource budget.
+  LimitExceeded(String)
 }
 
 ///|
@@ -32,7 +44,71 @@ pub fn IdsError::message(self : IdsError) -> String {
   match self {
     Truncated => "id set data is truncated"
     Corrupt(message) => "corrupt id set: \{message}"
+    LimitExceeded(message) => "id set exceeds resource limit: \{message}"
   }
+}
+
+///|
+/// Shared, testable resource budget for untrusted Ids and posting decoders.
+///
+/// Operation units cover decoded values, scanned bitmap words, and container
+/// slots. Memory units are conservative estimates of decoder allocations, not
+/// process RSS. A database load creates one budget and shares it across every
+/// dictionary set and trigram posting.
+pub struct IdsDecodeBudget {
+  priv mut operations : Int64
+  priv mut memory_bytes : Int64
+}
+
+///|
+/// Create the default bounded decode budget.
+pub fn IdsDecodeBudget::new() -> IdsDecodeBudget {
+  IdsDecodeBudget::with_limits(
+    max_operations=IDS_DECODE_MAX_OPERATIONS,
+    max_memory_bytes=IDS_DECODE_MAX_MEMORY_BYTES,
+  )
+}
+
+///|
+/// Create a custom budget, primarily for constrained callers and tests. Negative
+/// limits are clamped to zero.
+pub fn IdsDecodeBudget::with_limits(
+  max_operations~ : Int64,
+  max_memory_bytes~ : Int64,
+) -> IdsDecodeBudget {
+  {
+    operations: if max_operations < 0L {
+      0L
+    } else {
+      max_operations
+    },
+    memory_bytes: if max_memory_bytes < 0L {
+      0L
+    } else {
+      max_memory_bytes
+    },
+  }
+}
+
+///|
+/// Charge estimated work and memory before a decoder allocates or expands data.
+/// Both limits are checked before either counter changes.
+pub fn IdsDecodeBudget::charge(
+  self : IdsDecodeBudget,
+  operations~ : Int64,
+  memory_bytes~ : Int64,
+) -> Unit raise IdsError {
+  if operations < 0L || memory_bytes < 0L {
+    raise IdsError::Corrupt("negative decode budget charge")
+  }
+  if operations > self.operations {
+    raise IdsError::LimitExceeded("operation budget exhausted")
+  }
+  if memory_bytes > self.memory_bytes {
+    raise IdsError::LimitExceeded("memory budget exhausted")
+  }
+  self.operations = self.operations - operations
+  self.memory_bytes = self.memory_bytes - memory_bytes
 }
 
 ///|
@@ -107,45 +183,113 @@ pub fn Ids::to_bytes(self : Ids) -> Bytes {
 /// Deserialize an id set produced by `Ids::to_bytes`.
 ///
 /// The decoder validates the representation tag, block order, container
-/// contents, and the declared cardinality, and rejects trailing bytes. Input
-/// that would decode to a set beyond the sorted threshold is normalized to a
-/// bitmap, so the result is always a canonical `Ids`.
+/// contents, and the declared cardinality, and rejects trailing bytes. Sorted
+/// input beyond the sorted threshold is normalized to a bitmap, and bitmap
+/// container shapes are normalized to their canonical array/bits form.
 pub fn Ids::from_bytes(bytes : BytesView) -> Ids raise IdsError {
+  Ids::from_bytes_with_budget(bytes, IdsDecodeBudget::new())
+}
+
+///|
+/// Deserialize an id set with a shared resource budget and optional store-wide
+/// cardinality bound. When `total` is `Some`, including `Some(0)`, the declared
+/// cardinality and every block/id are checked against it before expansion or
+/// normalization.
+pub fn Ids::from_bytes_with_budget(
+  bytes : BytesView,
+  budget : IdsDecodeBudget,
+  total~ : Int32? = None,
+) -> Ids raise IdsError {
   let reader = Reader::new(bytes)
   let repr = reader.read_byte()
+  let max_cardinality = match total {
+    Some(value) =>
+      if value < 0 {
+        raise IdsError::Corrupt("entry count is negative")
+      } else {
+        value
+      }
+    None => 0x7FFFFFFF
+  }
+  let max_id = match total {
+    Some(value) => if value == 0 { -1 } else { value - 1 }
+    None => 0x7FFFFFFF
+  }
+  let max_block = if max_id < 0 { -1 } else { max_id >> BITMAP_BLOCK_SHIFT }
+  let shape_total = match total {
+    Some(value) => value
+    None => 0
+  }
   match repr.to_int() {
-    REPR_BITMAP => Bitmap(decode_bitmap(reader))
-    REPR_SORTED => decode_sorted(reader)
+    REPR_BITMAP =>
+      Bitmap(decode_bitmap(reader, budget, max_cardinality~, max_block~))
+    REPR_SORTED =>
+      decode_sorted(
+        reader,
+        budget,
+        total=shape_total,
+        max_cardinality~,
+        max_id~,
+      )
     other => raise IdsError::Corrupt("unknown representation tag \{other}")
   }
 }
 
 ///|
 /// Read one bitmap id set.
-fn decode_bitmap(reader : Reader) -> Bitmap raise IdsError {
+fn decode_bitmap(
+  reader : Reader,
+  budget : IdsDecodeBudget,
+  max_cardinality~ : Int32,
+  max_block~ : Int32,
+) -> Bitmap raise IdsError {
   let declared = reader.read_uint()
+  if declared.to_int64() > max_cardinality.to_int64() {
+    raise IdsError::Corrupt("cardinality exceeds the entry count")
+  }
   let block_count = reader.read_uint()
   if block_count.to_int64() > 32768L {
     raise IdsError::Corrupt("too many blocks")
   }
+  if block_count.to_int64() > (max_block + 1).to_int64() {
+    raise IdsError::Corrupt("block count exceeds the entry range")
+  }
+  if block_count.to_int64() * 9L > reader.remaining().to_int64() {
+    raise IdsError::Truncated
+  }
   let containers : Array[Container?] = []
+  let mut allocated_slots = 0
   let mut previous_block = -1
   let mut computed = 0
   for _ in 0..<block_count.reinterpret_as_int() {
     let block_index = reader.read_uint()
-    if block_index.to_int64() > BITMAP_MAX_BLOCK.to_int64() {
+    if block_index.to_int64() > max_block.to_int64() {
       raise IdsError::Corrupt("block index is out of range")
     }
     let block = block_index.reinterpret_as_int()
     if block <= previous_block {
       raise IdsError::Corrupt("block indexes are not ascending")
     }
+    let needed_slots = block + 1
+    if needed_slots > allocated_slots {
+      let added = needed_slots - allocated_slots
+      budget.charge(
+        operations=added.to_int64(),
+        memory_bytes=added.to_int64() * 32L,
+      )
+      allocated_slots = needed_slots
+    }
     while containers.length() <= block {
       containers.push(None)
     }
-    match decode_container(reader) {
+    let remaining_cardinality = declared.reinterpret_as_int() - computed
+    match decode_container(reader, budget, remaining_cardinality~) {
       Some(container) => {
-        computed = computed + container_cardinality(container)
+        let count = container_cardinality(container)
+        if count > remaining_cardinality {
+          raise IdsError::Corrupt("container exceeds the declared cardinality")
+        }
+        computed = computed + count
         containers[block] = Some(container)
       }
       None => raise IdsError::Corrupt("empty block")
@@ -163,20 +307,38 @@ fn decode_bitmap(reader : Reader) -> Bitmap raise IdsError {
 
 ///|
 /// Read one block container.
-fn decode_container(reader : Reader) -> Container? raise IdsError {
+fn decode_container(
+  reader : Reader,
+  budget : IdsDecodeBudget,
+  remaining_cardinality~ : Int32,
+) -> Container? raise IdsError {
   let kind = reader.read_byte()
   let length = reader.read_uint()
   match kind.to_int() {
     CONTAINER_ARRAY => {
-      if length.to_int64() > BITMAP_BLOCK_SIZE.to_int64() {
+      if length.to_int64() > BITMAP_BLOCK_SIZE.to_int64() ||
+        length.to_int64() > remaining_cardinality.to_int64() {
         raise IdsError::Corrupt("array container is larger than a block")
       }
       if length == 0U {
         raise IdsError::Corrupt("empty array container")
       }
+      let count = length.reinterpret_as_int()
+      if count.to_int64() * 2L > reader.remaining().to_int64() {
+        raise IdsError::Truncated
+      }
+      let bits_bytes = if count > CONTAINER_ARRAY_MAX {
+        BITMAP_WORDS.to_int64() * 8L
+      } else {
+        0L
+      }
+      budget.charge(
+        operations=count.to_int64() * 2L + BITMAP_WORDS.to_int64(),
+        memory_bytes=count.to_int64() * 2L + bits_bytes + 16L,
+      )
       let values : Array[UInt16] = []
       let mut previous = -1
-      for _ in 0..<length.reinterpret_as_int() {
+      for _ in 0..<count {
         let value = reader.read_uint16()
         if value.to_int() <= previous {
           raise IdsError::Corrupt("array container is not ascending")
@@ -190,6 +352,14 @@ fn decode_container(reader : Reader) -> Container? raise IdsError {
       if length.to_int64() != BITMAP_WORDS.to_int64() {
         raise IdsError::Corrupt("bits container has the wrong word count")
       }
+      let payload_bytes = BITMAP_WORDS.to_int64() * 8L
+      if reader.remaining().to_int64() < payload_bytes {
+        raise IdsError::Truncated
+      }
+      budget.charge(
+        operations=BITMAP_WORDS.to_int64() * 4L,
+        memory_bytes=payload_bytes * 2L + 16L,
+      )
       let words : Array[UInt64] = []
       for _ in 0..<BITMAP_WORDS {
         words.push(reader.read_uint64())
@@ -202,14 +372,28 @@ fn decode_container(reader : Reader) -> Container? raise IdsError {
 
 ///|
 /// Read one sorted id set.
-fn decode_sorted(reader : Reader) -> Ids raise IdsError {
+fn decode_sorted(
+  reader : Reader,
+  budget : IdsDecodeBudget,
+  total~ : Int32,
+  max_cardinality~ : Int32,
+  max_id~ : Int32,
+) -> Ids raise IdsError {
   let declared = reader.read_uint()
+  if declared.to_int64() > max_cardinality.to_int64() {
+    raise IdsError::Corrupt("cardinality exceeds the entry count")
+  }
   if declared.to_int64() > reader.remaining().to_int64() {
     raise IdsError::Truncated
   }
+  let count = declared.reinterpret_as_int()
+  budget.charge(
+    operations=count.to_int64(),
+    memory_bytes=count.to_int64() * 4L + 16L,
+  )
   let ids : Array[Int32] = []
   let mut previous = -1L
-  for index in 0..<declared.reinterpret_as_int() {
+  for index in 0..<count {
     let delta = reader.read_varint()
     if index > 0 && delta == 0U {
       raise IdsError::Corrupt("sorted ids are not strictly ascending")
@@ -222,13 +406,31 @@ fn decode_sorted(reader : Reader) -> Ids raise IdsError {
     if value > 2147483647L {
       raise IdsError::Corrupt("id is outside the Int32 range")
     }
-    ids.push(value.to_int())
+    let id = value.to_int()
+    if id > max_id {
+      raise IdsError::Corrupt("id is outside the entry count")
+    }
+    ids.push(id)
     previous = value
   }
   if reader.remaining() != 0 {
     raise IdsError::Corrupt("trailing bytes after the sorted set")
   }
-  canonical_sorted(ids, 0)
+  if prefer_bitmap(count, total) {
+    let slots = if count == 0 {
+      0
+    } else {
+      (ids[count - 1] >> BITMAP_BLOCK_SHIFT) + 1
+    }
+    let dense_blocks = count / (CONTAINER_ARRAY_MAX + 1)
+    budget.charge(
+      operations=count.to_int64() * 2L,
+      memory_bytes=slots.to_int64() * 32L +
+        count.to_int64() * 2L +
+        dense_blocks.to_int64() * BITMAP_WORDS.to_int64() * 8L,
+    )
+  }
+  canonical_sorted(ids, total)
 }
 
 ///|
@@ -330,7 +532,7 @@ fn Reader::read_varint(self : Reader) -> UInt32 raise IdsError {
 ///|
 /// Require `count` readable bytes.
 fn Reader::ensure(self : Reader, count : Int32) -> Unit raise IdsError {
-  if count < 0 || self.pos + count > self.view.length() {
+  if count < 0 || count > self.view.length() - self.pos {
     raise IdsError::Truncated
   }
 }

@@ -52,6 +52,7 @@ pub using @ids {
   IDS_DENSITY_DIVISOR,
   type Bitmap,
   type Ids,
+  type IdsDecodeBudget,
   type IdsError,
 }
 

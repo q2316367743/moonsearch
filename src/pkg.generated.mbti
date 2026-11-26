@@ -233,6 +233,8 @@ pub type GlobalId = Int32
 
 pub using @ids {type Ids}
 
+pub using @ids {type IdsDecodeBudget}
+
 pub using @ids {type IdsError}
 
 pub using @index {type Index}

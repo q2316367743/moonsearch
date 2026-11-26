@@ -28,6 +28,11 @@ const DB_VERSION_MINOR : UInt16 = 0
 const DB_HEADER_SIZE : Int32 = 64
 
 ///|
+/// Largest database the byte-buffer based reader accepts (2 GiB - 1 byte).
+/// File paths are stat'ed against this limit before any whole-file allocation.
+const DB_MAX_FILE_BYTES : Int64 = 2147483647L
+
+///|
 /// Size of one section table entry: kind `u32`, offset `u64`, length `u64`.
 const DB_SECTION_ENTRY_SIZE : Int32 = 20
 
@@ -241,7 +246,7 @@ fn DbReader::remaining(self : DbReader) -> Int32 {
 ///|
 /// Require `count` readable bytes.
 fn DbReader::ensure(self : DbReader, count : Int32) -> Unit raise DbError {
-  if count < 0 || self.pos + count > self.view.length() {
+  if count < 0 || count > self.view.length() - self.pos {
     raise DbError::Truncated
   }
 }
@@ -413,6 +418,38 @@ fn checked_count(value : UInt32, what : String) -> Int32 raise DbError {
 }
 
 ///|
+/// Reject impossible or resource-excessive header counts before any section is
+/// decoded. Both the full loader and `info` pass through this check.
+fn validate_header_counts(
+  folder_count~ : Int32,
+  file_count~ : Int32,
+  root_count~ : Int32,
+  dict_count~ : Int32,
+  range_count~ : Int32,
+  trigram_count~ : Int32,
+) -> Unit raise DbError {
+  if folder_count > 2147483647 - file_count {
+    raise DbError::Corrupt("entry count is out of range")
+  }
+  let total = folder_count + file_count
+  if total > DB_MAX_ENTRIES {
+    raise DbError::Corrupt("entry count exceeds the size limit")
+  }
+  if root_count > folder_count {
+    raise DbError::Corrupt("root count exceeds the folder count")
+  }
+  if dict_count > DB_MAX_DICT_KEYS {
+    raise DbError::Corrupt("dictionary key count is out of range")
+  }
+  if range_count > 5 {
+    raise DbError::Corrupt("range field count is out of range")
+  }
+  if trigram_count > DB_MAX_TRIGRAM_KEYS {
+    raise DbError::Corrupt("trigram key count is out of range")
+  }
+}
+
+///|
 /// Find a section by kind, or `None` when the file does not contain it.
 fn find_section(sections : Array[DbSection], kind : Int32) -> DbSection? {
   for section in sections {
@@ -447,8 +484,9 @@ fn section_reader(bytes : BytesView, section : DbSection) -> DbReader {
 /// Validate the header and section table, then return them.
 ///
 /// `verify=false` checks the metadata CRC (header + section table), which is
-/// what a normal load pays. `verify=true` additionally checks the full-file
-/// CRC, which also covers every section payload.
+/// what a normal load pays. `verify=true` additionally checks every byte before
+/// the checksum trailer, including unknown sections and padding. CHECKSUM must
+/// be the final section and must end exactly at EOF in both modes.
 fn parse_envelope(
   bytes : BytesView,
   verify~ : Bool,
@@ -489,6 +527,14 @@ fn parse_envelope(
   if section_count <= 0 || section_count > DB_MAX_SECTIONS {
     raise DbError::Corrupt("section count is out of range")
   }
+  validate_header_counts(
+    folder_count~,
+    file_count~,
+    root_count~,
+    dict_count~,
+    range_count~,
+    trigram_count~,
+  )
   let table_size = section_count * DB_SECTION_ENTRY_SIZE
   if DB_HEADER_SIZE + table_size > file_len {
     raise DbError::Truncated
@@ -499,8 +545,15 @@ fn parse_envelope(
   )
   let sections : Array[DbSection] = []
   let mut previous_end = table_end
-  for _ in 0..<section_count {
+  for index in 0..<section_count {
     let kind = checked_count(table.read_u32(), "section kind")
+    let last = index == section_count - 1
+    if kind == SECTION_CHECKSUM && !last {
+      raise DbError::Corrupt("checksum section must be last")
+    }
+    if last && kind != SECTION_CHECKSUM {
+      raise DbError::Corrupt("checksum section must be last")
+    }
     let offset = table.read_u64()
     let length = table.read_u64()
     if offset.reinterpret_as_int64() < previous_end.to_int64() ||
@@ -530,6 +583,13 @@ fn parse_envelope(
   let checksum = required_section(sections, SECTION_CHECKSUM)
   if checksum.length != 8 {
     raise DbError::Corrupt("checksum section has the wrong size")
+  }
+  if checksum.offset + checksum.length != file_len {
+    raise DbError::Corrupt("checksum section does not end at EOF")
+  }
+  let has_postings = find_section(sections, SECTION_POSTINGS) is Some(_)
+  if has_postings != ((flags & DB_FLAG_TRIGRAM) != 0U) {
+    raise DbError::Corrupt("trigram flag does not match the postings section")
   }
   let checksum_reader = section_reader(bytes, checksum)
   let recorded_meta = checksum_reader.read_u32()

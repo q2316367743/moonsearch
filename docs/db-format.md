@@ -10,7 +10,7 @@
 - 字节序：全部小端；读取器逐字段组合，不依赖宿主对齐
 - 版本：主版本 `3`，次版本 `0`；拒绝只允许合法 UTF-8 根路径的 v2
 - 实现：`src/index/db_format.mbt`（容器）、`db_write.mbt`（编码）、`db_read.mbt`
-  （解码与校验）
+  （解码与校验）、`db.mbt`（文件读取与大小限制）、`src/ids/codec.mbt`（Ids 资源边界）
 
 ## 1. Header（64 字节）
 
@@ -51,7 +51,9 @@ length u64
 - `offset` 必须不小于表中的上一个 section 的结束位置；section 之间不允许重叠。
 - `offset + length` 必须落在文件内，且不溢出。
 - `kind` 不能重复；表项数不超过 32。
-- 未知 `kind` 在次版本升级时跳过，不影响已知 section。
+- CHECKSUM 必须是最后一个 section，且其结束位置必须恰好等于 EOF；CHECKSUM 之后的
+  任何字节或 section 都拒绝加载，`verify=false` 也不例外。
+- 未知 `kind` 只能出现在 CHECKSUM 之前；次版本升级时跳过，不影响已知 section。
 - 写入顺序固定为 ROOTS、NAMES、FOLDERS、FILES、ORDER、DICT、RANGES、
   POSTINGS（可选）、CHECKSUM。
 
@@ -85,8 +87,8 @@ count       u32            必须等于 header.root_count
 ```
 
 路径按 Unix 原始字节保存和恢复，读取器不做 UTF-8 解码；非法 UTF-8 根路径不会折叠为
-替换字符串。排除规则属于配置而不是索引状态，S12 不持久化，因此 `exclude_count` 为 0 且
-没有 EXCLUDES section。
+替换字符串。排除规则属于配置而不是索引状态，当前版本不持久化，因此 `exclude_count` 为 0
+且没有 EXCLUDES section。
 
 ## 4. NAMES
 
@@ -190,6 +192,8 @@ id）。写入顺序固定：五个基本键、按字节序的扩展名、按 `T
 
 - 五个基本键必须各出现一次；分类下标覆盖全部内置分类；根下标覆盖全部根。
 - 扩展名严格递增；分类/根下标不重复。
+- Ids 解码先检查声明基数 `<= total`、block 范围与容器数量，再分配或展开；随后只检查
+  集合基数和最大 block/id，不把 bitmap 复制成排序数组来做范围验证。
 - 所有 id 落在 `0 .. total-1`。
 - `all` 基数等于 `total`，`files`/`folders` 基数等于对应数组长度。
 - `hidden` 与 `visible` 不相交且并集等于全集。
@@ -227,6 +231,7 @@ short_names u32            长度 < 3 的名字数
 - key 严格递增且 <= `0xFFFFFF`。
 - posting id 严格递增且 `< total`；解码时用 `Int64` 累加，超过 `Int32` 上限即拒绝。
 - 每条 posting 至少一个字节；声明长度不能超过剩余字节数，避免为损坏输入预分配大数组。
+- posting 数组与 DICT 的 Ids 解码共享同一次加载的资源预算。
 - `--no-trigram` 写入的数据库没有 POSTINGS，flags bit0 为 0，`trigram_count` 为 0。
   加载后的 `Index::trigram()` 为 `None`，编译层把名字 term 退化为全量扫描。
 
@@ -237,9 +242,15 @@ metadata_crc u32   覆盖 [0, section_table_end)
 full_crc     u32   覆盖 [0, checksum_section.offset)
 ```
 
-- 每次加载都校验 `metadata_crc`：header + section table（含各 section 的偏移/长度）。
+- 每次加载都校验 `metadata_crc`：仅覆盖 header + section table（含各 section 的偏移/长度）。
+  当前 v3.0 的默认 metadata CRC **不覆盖** ROOTS、EXCLUDES 或其他 section 载荷；普通加载
+  只认证元数据布局，载荷完整性必须使用 `verify=true`。
 - `info --verify` 与库调用 `Index::read_database(path, verify=true)` 额外校验
-  `full_crc`：所有 section 载荷。
+  `full_crc`：覆盖 `[0, checksum_section.offset)` 的全部字节，包括已知/未知 section、gap
+  与填充。8 字节 CHECKSUM trailer 自身不参与 CRC；它的两个记录值通过比较校验。
+- CHECKSUM 必须位于 EOF 前最后 8 字节。附加尾部、把 CHECKSUM 放在中间或在其后追加
+  section 都会在 CRC 计算前被结构校验拒绝，因此 `info --verify` 不会把未覆盖尾部报告为
+  `verified`。
 - 两者都是 CRC-32（IEEE，反射，多项式 `0xEDB88320`）。选择 CRC 而不是 SHA-256 是
   为了在 100 MB 级文件上把校验成本压到一次内存扫描；它足以发现截断、撕裂写与随机
   翻转，不用于对抗性完整性证明。
@@ -262,22 +273,39 @@ full_crc     u32   覆盖 [0, checksum_section.offset)
 
 ## 13. 加载校验与资源上限
 
-读取器是顺序、带边界检查的 `DbReader`；所有长度先验证再分配或切片。主要上限：
+读取器是顺序、带边界检查的 `DbReader`；所有长度先验证再分配或切片，剩余长度判断使用
+减法，避免 `pos + count` 溢出。文件路径先打开并检查大小，只读取已检查的字节数，再探测
+一个额外字节以拒绝读取期间增长的文件。主要上限：
 
 | 项目 | 上限 |
 | --- | --- |
 | header section 数 | 32 |
-| 单文件字节数 | 2 GiB（`Bytes`/`Buffer` 的 `Int32` 长度） |
+| 单文件字节数 | 2,147,483,647（2 GiB - 1，读取前检查） |
 | 名字总字节 | 1 GiB |
 | 单个名字 | 65535 字节 |
 | trigram 键数 | 16,777,216 |
+| POSTINGS 总条目数 | 2,147,483,647 |
 | DICT 键数 | 1,000,000 |
 | 范围字段数 | 5 |
 | 条目总数 | 16,777,216 |
-| 条目总数（`Int32` 理论上限） | 2,147,483,647 |
+| 根记录数 | `<= folder_count` |
+| 单个 Ids 基数 | `<= total`（空库也必须为 0） |
+| bitmap block 数 / 最大 block | 32,768 / 32,767 |
+| array container 长度 | 65,536 |
+| bits container 字数 | 1,024 |
+| 每次加载 Ids + POSTINGS 操作预算 | 100,000,000 |
+| 每次加载 Ids + POSTINGS 估算内存预算 | 512 MiB |
 
-任一失败路径返回 `DbError`（`Truncated` / `Corrupt` / `UnsupportedVersion` /
-`Io`），不会 `panic`。测试覆盖每个截断长度、每个单字节翻转（`verify=true`）以及
+`IdsDecodeBudget` 的操作单位覆盖解码值、扫描的 bitmap 字与 container 槽，内存单位是
+解码分配的保守估算，不是进程 RSS。一次数据库加载创建一个预算并共享给全部 DICT Ids 与
+POSTINGS，多个单独合法的集合不能绕过总上限。调用方可通过
+`Index::read_database(..., budget=Some(...))`、`Index::from_bytes(..., budget=Some(...))`
+或 `Ids::from_bytes_with_budget` 提供更严格的预算；预算耗尽返回 `DbError::TooLarge` /
+`IdsError::LimitExceeded`。
+
+任一失败路径返回 `DbError`（`Truncated` / `Corrupt` / `UnsupportedVersion` / `Io` /
+`TooLarge`），不会 `panic`。测试覆盖每个截断长度、每个单字节翻转（`verify=true`）、
+CHECKSUM 顺序与 EOF、未知 section、恶意 header/Ids 长度、共享预算、稀疏超大文件以及
 随机垃圾输入。
 
 ## 14. 版本演进
@@ -287,4 +315,6 @@ full_crc     u32   覆盖 [0, checksum_section.offset)
 - **次版本**：只增加 section 或字段时递增；读取器跳过未知 section，按已知字段加载。
 - S05 规范 id 重排改变新写入记录的排列与 id 赋值，但不改变 section 布局；ORDER 仍可
   恢复旧 v3 文件的查询顺序，因此保持 v3.0。
+- S07 只加强读取器校验、EOF/CHECKSUM 顺序约束和资源预算，不改变二进制布局或 CRC 覆盖
+  范围，因此仍保持 v3.0；文档明确了 metadata CRC 的现有边界。
 - 每次格式变更必须同步更新本文件与 `src/index/db_test.mbt` 的布局断言。

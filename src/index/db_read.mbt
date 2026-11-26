@@ -5,18 +5,18 @@
 /// metadata one always, the full one when `verify` is set), and every reference
 /// before installing it: name indexes, parent ids, order ids, dictionary ids,
 /// range ids, and posting ids all have to stay inside the store-wide id space.
+/// Ids and posting decoding share a bounded, caller-overridable resource budget.
 /// Any violation becomes a `DbError`; nothing panics.
 pub fn Index::from_bytes(
   bytes : BytesView,
   verify~ : Bool = false,
+  budget~ : @ids.IdsDecodeBudget? = None,
 ) -> Index raise DbError {
   let envelope = parse_envelope(bytes, verify~)
-  if envelope.folder_count > 2147483647 - envelope.file_count {
-    raise DbError::Corrupt("entry count is out of range")
-  }
   let total = envelope.folder_count + envelope.file_count
-  if total > DB_MAX_ENTRIES {
-    raise DbError::Corrupt("entry count exceeds the size limit")
+  let decode_budget = match budget {
+    Some(value) => value
+    None => @ids.IdsDecodeBudget::new()
   }
   let roots = parse_roots(bytes, envelope)
   let names = parse_names(bytes, envelope, total)
@@ -31,9 +31,9 @@ pub fn Index::from_bytes(
     order~,
   )
   validate_canonical_order(store)
-  let dict = parse_dict(bytes, envelope, total)
+  let dict = parse_dict(bytes, envelope, total, decode_budget)
   let ranges = parse_ranges(bytes, envelope, store, total)
-  let trigram = parse_postings(bytes, envelope, total)
+  let trigram = parse_postings(bytes, envelope, total, decode_budget)
   Index::restore(store~, dict~, ranges~, trigram~)
 }
 
@@ -62,8 +62,7 @@ pub fn DbInfo::from_bytes(
   }
   let names_reader = section_reader(bytes, names_section)
   let name_count = checked_count(names_reader.read_u32(), "name")
-  if envelope.folder_count > 2147483647 - envelope.file_count ||
-    name_count > envelope.folder_count + envelope.file_count {
+  if name_count > envelope.folder_count + envelope.file_count {
     raise DbError::Corrupt("name count exceeds the entry count")
   }
   let sections : Array[DbSectionInfo] = []
@@ -105,6 +104,9 @@ fn parse_roots(
   let count = checked_count(reader.read_u32(), "root")
   if count != envelope.root_count {
     raise DbError::Corrupt("root count does not match the header")
+  }
+  if count.to_int64() * 29L > reader.remaining().to_int64() {
+    raise DbError::Truncated
   }
   let roots : Array[@core.RootInfo] = []
   for _ in 0..<count {
@@ -151,6 +153,9 @@ fn parse_names(
   let count = checked_count(reader.read_u32(), "name")
   if count > total {
     raise DbError::Corrupt("name count exceeds the entry count")
+  }
+  if count.to_int64() * 4L > reader.remaining().to_int64() {
+    raise DbError::Truncated
   }
   let pool = @core.NamePool::new()
   let refs : Array[@core.NameRef] = []
@@ -372,12 +377,36 @@ fn validate_canonical_order(store : @core.Store) -> Unit raise DbError {
 }
 
 ///|
-/// Validate that an id set stays inside the store-wide id space.
+/// Validate an id set against the store-wide id space without expanding a
+/// bitmap into a sorted array. Cardinality and the maximum occupied block are
+/// checked first; the maximum id then rejects sparse out-of-range tails.
 fn validate_ids(ids : @ids.Ids, total : Int32) -> Unit raise DbError {
-  for id in ids.to_sorted_ids() {
-    if id < 0 || id >= total {
-      raise DbError::Corrupt("dictionary id is out of range")
-    }
+  if ids.cardinality() > total {
+    raise DbError::Corrupt("dictionary id set exceeds the entry count")
+  }
+  let max_block = if total > 0 {
+    (total - 1) >> @ids.BITMAP_BLOCK_SHIFT
+  } else {
+    -1
+  }
+  if ids.max_block() > max_block {
+    raise DbError::Corrupt("dictionary id block is out of range")
+  }
+  if ids.max_id() >= total {
+    raise DbError::Corrupt("dictionary id is out of range")
+  }
+}
+
+///|
+/// Charge a shared decoder budget and translate exhaustion into `DbError`.
+fn charge_decode_budget(
+  budget : @ids.IdsDecodeBudget,
+  operations~ : Int64,
+  memory_bytes~ : Int64,
+) -> Unit raise DbError {
+  budget.charge(operations~, memory_bytes~) catch {
+    @ids.IdsError::LimitExceeded(message) => raise DbError::TooLarge(message)
+    err => raise DbError::Corrupt(err.message())
   }
 }
 
@@ -387,6 +416,7 @@ fn parse_dict(
   bytes : BytesView,
   envelope : DbEnvelope,
   total : Int32,
+  budget : @ids.IdsDecodeBudget,
 ) -> Dict raise DbError {
   let section = required_section(envelope.sections, SECTION_DICT)
   let reader = section_reader(bytes, section)
@@ -396,6 +426,9 @@ fn parse_dict(
   }
   if key_count > DB_MAX_DICT_KEYS {
     raise DbError::Corrupt("dictionary key count is out of range")
+  }
+  if key_count.to_int64() * 12L > reader.remaining().to_int64() {
+    raise DbError::Truncated
   }
   let category_count = @util.TypeCategory::all().length()
   let categories : Array[@ids.Ids] = Array::makei(category_count, fn(_) {
@@ -425,7 +458,12 @@ fn parse_dict(
     let payload = reader.read_bytes(payload_length)
     let ids_length = checked_count(reader.read_u32(), "id set size")
     let ids_bytes = reader.read_bytes(ids_length)
-    let ids = @ids.Ids::from_bytes(ids_bytes) catch {
+    let ids = @ids.Ids::from_bytes_with_budget(
+      ids_bytes,
+      budget,
+      total=Some(total),
+    ) catch {
+      @ids.IdsError::LimitExceeded(message) => raise DbError::TooLarge(message)
       err => raise DbError::Corrupt(err.message())
     }
     validate_ids(ids, total)
@@ -567,6 +605,9 @@ fn parse_ranges(
   if field_count > 5 {
     raise DbError::Corrupt("range field count is out of range")
   }
+  if field_count.to_int64() * 5L > reader.remaining().to_int64() {
+    raise DbError::Truncated
+  }
   let mut size_index : RangeIndex? = None
   let mut mtime_index : RangeIndex? = None
   let mut depth_index : RangeIndex? = None
@@ -667,6 +708,7 @@ fn parse_postings(
   bytes : BytesView,
   envelope : DbEnvelope,
   total : Int32,
+  budget : @ids.IdsDecodeBudget,
 ) -> TrigramIndex? raise DbError {
   let has_trigram = (envelope.flags & DB_FLAG_TRIGRAM) != 0U
   if !has_trigram {
@@ -684,13 +726,22 @@ fn parse_postings(
   if key_count > DB_MAX_TRIGRAM_KEYS {
     raise DbError::Corrupt("trigram key count is out of range")
   }
+  if key_count.to_int64() * 9L > reader.remaining().to_int64() {
+    raise DbError::Truncated
+  }
   let short_names = checked_count(reader.read_u32(), "short name")
   if short_names > total {
     raise DbError::Corrupt("short name count exceeds the entry count")
   }
+  charge_decode_budget(
+    budget,
+    operations=key_count.to_int64(),
+    memory_bytes=key_count.to_int64() * 40L,
+  )
   let keys : Array[UInt32] = []
   let postings : Array[TrigramPosting] = []
   let mut previous_key = -1L
+  let mut posting_count = 0L
   for _ in 0..<key_count {
     let key = reader.read_u32()
     if key > DB_MAX_TRIGRAM_KEY {
@@ -707,6 +758,15 @@ fn parse_postings(
     if reader.remaining() < length {
       raise DbError::Truncated
     }
+    posting_count = posting_count + length.to_int64()
+    if posting_count > 2147483647L {
+      raise DbError::Corrupt("posting count exceeds the Int32 range")
+    }
+    charge_decode_budget(
+      budget,
+      operations=length.to_int64() * 2L,
+      memory_bytes=length.to_int64() * 4L,
+    )
     let ids : Array[Int32] = []
     let mut previous = -1
     for position in 0..<length {

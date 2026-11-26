@@ -68,13 +68,15 @@ pub fn DbInfo::entry_count(self : DbInfo) -> Int32 {
 /// Read a database file and decode the whole index.
 ///
 /// `verify=true` checks the payload checksum in addition to the metadata
-/// checksum, which costs one pass over the file.
+/// checksum, which costs one pass over the file. `budget` can tighten the default
+/// Ids/posting decode limits for constrained callers.
 pub async fn Index::read_database(
   path : StringView,
   verify~ : Bool = false,
+  budget~ : @ids.IdsDecodeBudget? = None,
 ) -> Index raise DbError {
   let bytes = read_database_bytes(path)
-  Index::from_bytes(bytes[:], verify~)
+  Index::from_bytes(bytes[:], verify~, budget~)
 }
 
 ///|
@@ -113,8 +115,45 @@ async fn read_database_bytes(path : StringView) -> Bytes raise DbError {
   if !exists {
     raise DbError::NotFound("\{path}")
   }
-  @fs.read_binary(path) catch {
-    err => raise DbError::Io("cannot read database \{path}: \{err}")
+  let file = @fs.open(path, mode=ReadOnly) catch {
+    err => raise DbError::Io("cannot open database \{path}: \{err}")
+  }
+  errdefer file.close()
+  let size = file.size() catch {
+    err => raise DbError::Io("cannot stat database \{path}: \{err}")
+  }
+  ensure_database_size(size, path)
+  // Read only the size that was checked, then peek one extra byte. A file that
+  // grows after the stat is rejected instead of being allocated in full.
+  let bytes = file.read_exactly(size.to_int()) catch {
+    _ => raise DbError::Truncated
+  }
+  let has_extra = try {
+    ignore(file.peek_exactly(1))
+    true
+  } catch {
+    @io.ReaderError::UnexpectedEof => false
+    _ => raise DbError::Io("cannot read database \{path}")
+  }
+  if has_extra {
+    raise DbError::TooLarge(
+      "database \{path} grew beyond the 2 GiB byte-buffer limit",
+    )
+  }
+  file.close()
+  bytes
+}
+
+///|
+/// Enforce the byte-buffer limit before reading a database into memory.
+fn ensure_database_size(size : Int64, path : StringView) -> Unit raise DbError {
+  if size < 0L {
+    raise DbError::Io("cannot determine the size of database \{path}")
+  }
+  if size > DB_MAX_FILE_BYTES {
+    raise DbError::TooLarge(
+      "database \{path} exceeds the 2 GiB byte-buffer limit",
+    )
   }
 }
 

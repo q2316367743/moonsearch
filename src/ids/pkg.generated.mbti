@@ -26,6 +26,7 @@ pub const IDS_SORTED_MAX : Int32 = 4096
 pub suberror IdsError {
   Truncated
   Corrupt(String)
+  LimitExceeded(String)
 }
 pub fn IdsError::message(Self) -> String
 
@@ -41,6 +42,8 @@ pub fn Bitmap::difference(Self, Self) -> Self
 pub fn Bitmap::from_ids(Array[Int32]) -> Self
 pub fn Bitmap::intersect(Self, Self) -> Self
 pub fn Bitmap::is_empty(Self) -> Bool
+pub fn Bitmap::max_block(Self) -> Int32
+pub fn Bitmap::max_id(Self) -> Int32
 pub fn Bitmap::new() -> Self
 pub fn Bitmap::remove(Self, Int32) -> Unit
 pub fn Bitmap::to_sorted_ids(Self) -> Array[Int32]
@@ -65,17 +68,27 @@ pub fn Ids::filter_into(Self, (Int32) -> Bool, Array[Int32]) -> Unit
 pub fn Ids::filter_with_total(Self, (Int32) -> Bool, total? : Int32) -> Self
 pub fn Ids::from_bitmap(Bitmap) -> Self
 pub fn Ids::from_bytes(BytesView) -> Self raise IdsError
+pub fn Ids::from_bytes_with_budget(BytesView, IdsDecodeBudget, total? : Int32?) -> Self raise IdsError
 pub fn Ids::from_sorted(Array[Int32], total? : Int32) -> Self
 pub fn Ids::from_sorted_canonical(Array[Int32], total? : Int32) -> Self
 pub fn Ids::intersect(Self, Self) -> Self
 pub fn Ids::intersect_with_total(Self, Self, total? : Int32) -> Self
 pub fn Ids::is_empty(Self) -> Bool
+pub fn Ids::max_block(Self) -> Int32
+pub fn Ids::max_id(Self) -> Int32
 pub fn Ids::normalize(Self, Int32) -> Self
 pub fn Ids::to_bitmap(Self) -> Bitmap
 pub fn Ids::to_bytes(Self) -> Bytes
 pub fn Ids::to_sorted_ids(Self) -> Array[Int32]
 pub fn Ids::union(Self, Self) -> Self
 pub fn Ids::union_with_total(Self, Self, total? : Int32) -> Self
+
+pub struct IdsDecodeBudget {
+  // private fields
+}
+pub fn IdsDecodeBudget::charge(Self, operations~ : Int64, memory_bytes~ : Int64) -> Unit raise IdsError
+pub fn IdsDecodeBudget::new() -> Self
+pub fn IdsDecodeBudget::with_limits(max_operations~ : Int64, max_memory_bytes~ : Int64) -> Self
 
 // Type aliases
 

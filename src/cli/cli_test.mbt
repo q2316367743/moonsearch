@@ -587,6 +587,38 @@ async test "a corrupt database is rejected without crashing" {
 }
 
 ///|
+async test "info verify does not report an appended database tail as verified" {
+  @fs.mkdir("_build/test-db", recursive=true, allow_existing=true)
+  let dir = make_fixture("moonsearch-db-tail")
+  let database = test_database("tail")
+  ignore(@cli.run(["index", "-D", database, dir]))
+  let original = @fs.read_binary(database)
+  let appended : Array[Byte] = []
+  for byte in original {
+    appended.push(byte)
+  }
+  appended.push(b'\x00')
+  @fs.write_binary(database, Bytes::from_array(appended[:])[:])
+  let verified = @cli.run(["info", "-D", database, "--verify"])
+  let metadata = @cli.run(["info", "-D", database])
+  @fs.remove(dir, recursive=true)
+  assert_eq(verified.exit_code(), 2)
+  assert_eq(metadata.exit_code(), 2)
+  match verified {
+    @cli.Failure(text) => {
+      assert_true(text.contains("checksum section does not end at EOF"))
+      assert_false(text.contains("checksum: verified"))
+    }
+    _ => abort("expected appended bytes to fail full verification")
+  }
+  match metadata {
+    @cli.Failure(text) =>
+      assert_true(text.contains("checksum section does not end at EOF"))
+    _ => abort("expected appended bytes to fail the structural check")
+  }
+}
+
+///|
 async test "a database without trigram degrades name queries to a scan" {
   let dir = make_fixture("moonsearch-no-trigram-db")
   let real = real_dir(dir)
