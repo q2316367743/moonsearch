@@ -41,8 +41,9 @@ argv
 ```
 
 `index`/`update` 完成扫描后构建同一个 `@index.Index`，再用
-`Index::write_database` 做原子替换：临时文件 + `sync` + `rename`。`info` 只读
-header 与 section table；`--verify` 额外校验全文件 CRC。默认数据库路径为
+`Index::write_database` 做原子替换：临时文件 + `sync` + `rename`。`info` 默认只读
+header 与 section table；`--verify` 额外校验全文件 CRC，并从 Store 重算全部派生索引。
+`update` 在 CLI/配置未提供排除规则时复用数据库 `EXCLUDES` 快照。默认数据库路径为
 `$XDG_DATA_HOME/moonsearch/index.msdb`，未设置时为
 `$HOME/.local/share/moonsearch/index.msdb`；Windows 上 `HOME` 未设置时回退到
 `%LOCALAPPDATA%\moonsearch\index.msdb`，再回退到
@@ -77,7 +78,7 @@ header 与 section table；`--verify` 额外校验全文件 CRC。默认数据�
   `database: <path> (<bytes> bytes)`。`--explain` 输出查询文本与当前引擎的计划。
 - `info` 输出 `database`、`format`、`built`、根/文件夹/文件/名字计数、文件大小、
   trigram 键数与各 section 字节数；`--verify` 会把 `checksum` 从 `metadata` 改为
-  `verified`。
+  `verified`，但只有 full CRC 与 Store 语义重算都通过才输出该状态。
 
 ## 输出字节与退出码
 

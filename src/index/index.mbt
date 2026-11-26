@@ -14,6 +14,9 @@ pub struct Index {
   priv dict : Dict
   priv ranges : Ranges
   priv trigram : TrigramIndex?
+  /// Scan-time rules retained so `update` can reproduce the original filter
+  /// when neither CLI nor configuration supplies a replacement.
+  priv excludes : Array[ExcludeRule]
 }
 
 ///|
@@ -28,11 +31,12 @@ pub fn Index::build(
   store : @core.Store,
   eager~ : RangeFieldSet = RangeFieldSet::all(),
   trigram~ : Bool = true,
+  excludes~ : Array[ExcludeRule] = [],
 ) -> Index {
   let ranges = Ranges::build(store, eager~)
   let dict = Dict::build(store)
   let postings = if trigram { Some(TrigramIndex::build(store)) } else { None }
-  { store, dict, ranges, trigram: postings, }
+  { store, dict, ranges, trigram: postings, excludes, }
 }
 
 ///|
@@ -47,8 +51,9 @@ pub fn Index::restore(
   dict~ : Dict,
   ranges~ : Ranges,
   trigram~ : TrigramIndex? = None,
+  excludes~ : Array[ExcludeRule] = [],
 ) -> Index {
-  { store, dict, ranges, trigram, }
+  { store, dict, ranges, trigram, excludes, }
 }
 
 ///|
@@ -73,6 +78,15 @@ pub fn Index::ranges(self : Index) -> Ranges {
 /// The trigram inverted index, or `None` when it was disabled.
 pub fn Index::trigram(self : Index) -> TrigramIndex? {
   self.trigram
+}
+
+///|
+/// Exclude rules used by the scan that produced this index.
+///
+/// The rules are configuration snapshots, not query predicates. `update` uses
+/// them only when no CLI or configuration-file rules replace them.
+pub fn Index::excludes(self : Index) -> ArrayView[ExcludeRule] {
+  self.excludes
 }
 
 ///|

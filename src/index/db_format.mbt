@@ -11,7 +11,7 @@ const DB_VERSION_MAJOR : UInt16 = 3
 /// Minor format version. A reader accepts any minor version at or above zero
 /// and skips section kinds it does not know, so a newer writer can add
 /// sections without breaking older readers.
-const DB_VERSION_MINOR : UInt16 = 0
+const DB_VERSION_MINOR : UInt16 = 1
 
 ///|
 /// Fixed header size in bytes.
@@ -37,8 +37,9 @@ const DB_MAX_FILE_BYTES : Int64 = 2147483647L
 const DB_SECTION_ENTRY_SIZE : Int32 = 20
 
 ///|
-/// Upper bound on the section count. The current writer emits nine sections;
-/// the spare room allows future additions without a huge table allocation.
+/// Upper bound on the section count. The current writer emits ten sections
+/// with trigram postings (nine without); the spare room allows future additions
+/// without a huge table allocation.
 const DB_MAX_SECTIONS : Int32 = 32
 
 ///|
@@ -54,8 +55,7 @@ const DB_NO_PARENT : UInt32 = 0xFFFFFFFF
 const SECTION_ROOTS : Int32 = 1
 
 ///|
-/// Section kind reserved for exclude rules. S12 does not persist them: they are
-/// configuration, not derived index state.
+/// Section kind of the scan-time exclude rules reused by `update`.
 const SECTION_EXCLUDES : Int32 = 2
 
 ///|
@@ -89,6 +89,33 @@ const SECTION_POSTINGS : Int32 = 9
 ///|
 /// Section kind of the checksum trailer.
 const SECTION_CHECKSUM : Int32 = 10
+
+///|
+/// On-disk exclude kind tags.
+const EXCLUDE_FIXED : Int32 = 0
+
+///|
+const EXCLUDE_GLOB : Int32 = 1
+
+///|
+const EXCLUDE_REGEX : Int32 = 2
+
+///|
+/// On-disk exclude scope tags.
+const EXCLUDE_FULL_PATH : Int32 = 0
+
+///|
+const EXCLUDE_BASENAME : Int32 = 1
+
+///|
+/// On-disk exclude target tags.
+const EXCLUDE_BOTH : Int32 = 0
+
+///|
+const EXCLUDE_FILES : Int32 = 1
+
+///|
+const EXCLUDE_FOLDERS : Int32 = 2
 
 ///|
 /// Dictionary key kind: one extension bucket.
@@ -173,6 +200,17 @@ const DB_MAX_ENTRIES : Int32 = 16777216
 const DB_MAX_DICT_KEYS : Int32 = 1000000
 
 ///|
+/// Maximum number of persisted exclude rules. Each rule needs at least eight
+/// bytes, so this also bounds a corrupt header before section decoding.
+const DB_MAX_EXCLUDES : Int32 = 1000000
+
+///|
+/// Maximum UTF-8 bytes in one persisted exclude pattern (1 MiB). The scanner
+/// accepts ordinary configuration-sized patterns; the cap keeps a hostile
+/// database from requesting an arbitrary decode allocation.
+const DB_MAX_EXCLUDE_PATTERN_BYTES : Int32 = 1048576
+
+///|
 /// Size of one folder record.
 const DB_FOLDER_RECORD_SIZE : Int32 = 34
 
@@ -215,6 +253,7 @@ priv struct DbEnvelope {
   folder_count : Int32
   file_count : Int32
   root_count : Int32
+  exclude_count : Int32
   dict_count : Int32
   range_count : Int32
   trigram_count : Int32
@@ -424,6 +463,7 @@ fn validate_header_counts(
   folder_count~ : Int32,
   file_count~ : Int32,
   root_count~ : Int32,
+  exclude_count~ : Int32,
   dict_count~ : Int32,
   range_count~ : Int32,
   trigram_count~ : Int32,
@@ -437,6 +477,9 @@ fn validate_header_counts(
   }
   if root_count > folder_count {
     raise DbError::Corrupt("root count exceeds the folder count")
+  }
+  if exclude_count > DB_MAX_EXCLUDES {
+    raise DbError::Corrupt("exclude rule count is out of range")
   }
   if dict_count > DB_MAX_DICT_KEYS {
     raise DbError::Corrupt("dictionary key count is out of range")
@@ -515,7 +558,7 @@ fn parse_envelope(
   let folder_count = checked_count(header.read_u32(), "folder")
   let file_count = checked_count(header.read_u32(), "file")
   let root_count = checked_count(header.read_u32(), "root")
-  ignore(header.read_u32())
+  let exclude_count = checked_count(header.read_u32(), "exclude")
   let dict_count = checked_count(header.read_u32(), "dictionary")
   let range_count = checked_count(header.read_u32(), "range")
   let trigram_count = checked_count(header.read_u32(), "trigram")
@@ -531,6 +574,7 @@ fn parse_envelope(
     folder_count~,
     file_count~,
     root_count~,
+    exclude_count~,
     dict_count~,
     range_count~,
     trigram_count~,
@@ -580,6 +624,10 @@ fn parse_envelope(
   if (flags & DB_FLAG_TRIGRAM) == 0U && trigram_count != 0 {
     raise DbError::Corrupt("trigram count is set without the trigram flag")
   }
+  if minor >= DB_VERSION_MINOR.to_int() &&
+    find_section(sections, SECTION_EXCLUDES) is None {
+    raise DbError::Corrupt("missing excludes section")
+  }
   let checksum = required_section(sections, SECTION_CHECKSUM)
   if checksum.length != 8 {
     raise DbError::Corrupt("checksum section has the wrong size")
@@ -611,6 +659,7 @@ fn parse_envelope(
     folder_count,
     file_count,
     root_count,
+    exclude_count,
     dict_count,
     range_count,
     trigram_count,

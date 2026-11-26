@@ -270,7 +270,7 @@ async test "info help is stable" {
       #|  --explain                  Print the execution plan to stderr
       #|  -D, --database <database>  Path to the index database [env: MOONSEARCH_DATABASE]
       #|  --config <config>          Path to the configuration file [env: MOONSEARCH_CONFIG]
-      #|  --verify                   Verify every section checksum before reporting
+      #|  --verify                   Verify checksums and index semantics before reporting
     ),
   )
 }
@@ -477,7 +477,7 @@ async test "a written database drives search, count, and info without the roots"
   @fs.remove(dir, recursive=true)
   match info {
     @cli.Success(text) => {
-      assert_true(bytes_contains(text, "format: MSDB 3.0"))
+      assert_true(bytes_contains(text, "format: MSDB 3.1"))
       assert_true(bytes_contains(text, "folders: 2"))
       assert_true(bytes_contains(text, "files: 3"))
       assert_true(bytes_contains(text, "checksum: verified"))

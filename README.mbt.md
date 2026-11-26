@@ -155,7 +155,8 @@ moonsearch update ~/Documents                 # 重新扫描并原子替换
 
 `index` 与 `update` 都执行扫描、构建和原子写入。`index` 按命令行 > 配置选择根目录；`update`
 在没有显式根和配置根时再回退到现有数据库的 `ROOTS`。因此保存 `roots` 后 `index` 和 `update`
-都可以不带根参数。写入使用临时文件、`sync` 与 `rename`，失败时保留原数据库。
+都可以不带根参数。排除规则也会写入数据库；`update` 在 CLI 或配置未提供规则时复用旧
+快照。写入使用临时文件、`sync` 与 `rename`，失败时保留原数据库。
 
 | 选项 | 说明 |
 | --- | --- |

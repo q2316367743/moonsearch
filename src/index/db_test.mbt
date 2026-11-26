@@ -192,6 +192,15 @@ fn put_test_u64(bytes : Array[Byte], offset : Int32, value : UInt64) -> Unit {
 }
 
 ///|
+/// Little-endian i64 used by the range semantic-tamper fixture.
+fn put_test_i64(bytes : Array[Byte], offset : Int32, value : Int64) -> Unit {
+  let raw = value.reinterpret_as_uint64()
+  for index in 0..<8 {
+    bytes[offset + index] = ((raw >> (index * 8)) & 0xFFUL).to_byte()
+  }
+}
+
+///|
 /// Read a little-endian u32 from a test fixture.
 fn get_test_u32(bytes : Bytes, offset : Int32) -> UInt32 {
   let mut value = 0U
@@ -320,8 +329,27 @@ fn patch_database_header(
 }
 
 ///|
-/// Replace the first dictionary key's Ids blob, preserving its key header.
-fn replace_first_dict_ids(bytes : Bytes, ids : Bytes) -> Bytes {
+/// Replace one section payload and repair both checksums.
+fn replace_section(
+  bytes : Bytes,
+  wanted_kind : Int32,
+  payload : Bytes,
+) -> Bytes {
+  let (header, sections) = database_parts(bytes)
+  let replaced : Array[(Int32, Bytes)] = []
+  for (kind, data) in sections {
+    if kind == wanted_kind {
+      replaced.push((kind, payload))
+    } else {
+      replaced.push((kind, data))
+    }
+  }
+  rebuild_database(header, replaced)
+}
+
+///|
+/// Replace one dictionary key's Ids blob, preserving every other key.
+fn replace_dict_ids(bytes : Bytes, key_index : Int32, ids : Bytes) -> Bytes {
   let (header, sections) = database_parts(bytes)
   let replaced : Array[(Int32, Bytes)] = []
   for (kind, data) in sections {
@@ -329,8 +357,15 @@ fn replace_first_dict_ids(bytes : Bytes, ids : Bytes) -> Bytes {
       replaced.push((kind, data))
       continue
     }
-    let payload_length = get_test_u16(data, 5).to_int()
-    let length_offset = 7 + payload_length
+    let mut offset = 4
+    for _ in 0..<key_index {
+      let payload_length = get_test_u16(data, offset + 1).to_int()
+      let length_offset = offset + 3 + payload_length
+      let old_ids_length = get_test_u32(data, length_offset).reinterpret_as_int()
+      offset = length_offset + 4 + old_ids_length
+    }
+    let payload_length = get_test_u16(data, offset + 1).to_int()
+    let length_offset = offset + 3 + payload_length
     let old_ids_length = get_test_u32(data, length_offset).reinterpret_as_int()
     let old_ids_end = length_offset + 4 + old_ids_length
     let dict : Array[Byte] = []
@@ -350,12 +385,110 @@ fn replace_first_dict_ids(bytes : Bytes, ids : Bytes) -> Bytes {
 }
 
 ///|
+/// Replace the first dictionary key's Ids blob, preserving its key header.
+fn replace_first_dict_ids(bytes : Bytes, ids : Bytes) -> Bytes {
+  replace_dict_ids(bytes, 0, ids)
+}
+
+///|
+/// Read one unsigned LEB128 value from a posting fixture.
+fn get_test_varint(bytes : Bytes, offset : Int32) -> (UInt32, Int32) {
+  let mut value = 0U
+  let mut shift = 0
+  let mut position = offset
+  while true {
+    let byte = bytes[position].to_uint()
+    value = value | ((byte & 0x7FU) << shift)
+    position = position + 1
+    if (byte & 0x80U) == 0U {
+      return (value, position - offset)
+    }
+    shift = shift + 7
+  }
+  abort("unreachable")
+}
+
+///|
+/// Write one unsigned LEB128 value to a posting fixture.
+fn put_test_varint(out : Array[Byte], value : UInt32) -> Unit {
+  let mut rest = value
+  while rest >= 0x80U {
+    out.push(((rest & 0x7FU) | 0x80U).to_byte())
+    rest = rest >> 7
+  }
+  out.push(rest.to_byte())
+}
+
+///|
+/// Replace the first trigram posting while preserving its key and all later
+/// postings. The replacement remains structurally valid but may name an entry
+/// whose name does not contain the trigram.
+fn replace_first_posting_ids(bytes : Bytes, ids : Array[Int32]) -> Bytes {
+  let (header, sections) = database_parts(bytes)
+  let replaced : Array[(Int32, Bytes)] = []
+  for (kind, data) in sections {
+    if kind != 9 {
+      replaced.push((kind, data))
+      continue
+    }
+    let old_length = get_test_u32(data, 12).reinterpret_as_int()
+    let mut position = 16
+    for _ in 0..<old_length {
+      let (_, used) = get_test_varint(data, position)
+      position = position + used
+    }
+    let postings : Array[Byte] = []
+    for index in 0..<16 {
+      postings.push(data[index])
+    }
+    put_test_u32(postings, 12, ids.length().reinterpret_as_uint())
+    let mut previous = 0
+    for index in 0..<ids.length() {
+      let id = ids[index]
+      let delta = if index == 0 { id } else { id - previous }
+      put_test_varint(postings, delta.reinterpret_as_uint())
+      previous = id
+    }
+    for index in position..<data.length() {
+      postings.push(data[index])
+    }
+    replaced.push((kind, Bytes::from_array(postings[:])))
+  }
+  rebuild_database(header, replaced)
+}
+
+///|
 /// Return a decoder error for a database fixture.
 fn database_error(bytes : Bytes, verify~ : Bool = true) -> @index.DbError {
   try @index.Index::from_bytes(bytes[:], verify~) catch {
     err => err
   } noraise {
     _ => abort("expected the database to be rejected")
+  }
+}
+
+///|
+/// A semantic mutation must remain structurally loadable without full
+/// verification, then fail once derived structures are recomputed from Store.
+fn assert_semantic_tamper(bytes : Bytes, message : String) -> Unit {
+  ignore(decoded(bytes, verify=false))
+  match database_error(bytes, verify=true) {
+    @index.DbError::Corrupt(actual) =>
+      if !actual.contains(message) {
+        abort("expected semantic corruption '\{message}', got '\{actual}'")
+      }
+    other =>
+      abort("expected semantic corruption '\{message}', got \{other.message()}")
+  }
+  match database_info_error(bytes, verify=true) {
+    @index.DbError::Corrupt(actual) =>
+      if !actual.contains(message) {
+        abort("expected verified info to reject '\{message}', got '\{actual}'")
+      }
+    other =>
+      abort(
+        "expected verified info to reject '\{message}', got \{other.message()}",
+      )
   }
 }
 
@@ -378,6 +511,75 @@ test "database round-trips every part of the index" {
   assert_range_sets_equal(original.ranges(), loaded.ranges())
   assert_true(original.trigram() is Some(_))
   assert_trigrams_equal(original.trigram().unwrap(), loaded.trigram().unwrap())
+}
+
+///|
+test "database round-trips every exclude rule field and behavior" {
+  let rules : Array[@index.ExcludeRule] = [
+    @index.ExcludeRule::new(
+      kind=@index.Fixed,
+      pattern="/data/sub",
+      scope=@index.FullPath,
+      target=@index.Folders,
+    ),
+    @index.ExcludeRule::new(
+      kind=@index.Glob,
+      pattern="*.tmp",
+      scope=@index.Basename,
+      target=@index.Files,
+    ),
+    @index.ExcludeRule::new(
+      kind=@index.Regex,
+      pattern="^/data/.*",
+      scope=@index.FullPath,
+      target=@index.Both,
+      active=false,
+    ),
+    @index.ExcludeRule::new(
+      kind=@index.Fixed,
+      pattern=".env",
+      scope=@index.Basename,
+      target=@index.Both,
+    ),
+  ]
+  let original = @index.Index::build(sample_index().store(), excludes=rules)
+  let bytes = encoded(original)
+  assert_eq(get_test_u32(bytes, 36), 4U)
+  let loaded = decoded(bytes)
+  assert_eq(loaded.excludes().length(), 4)
+  for position in 0..<rules.length() {
+    let actual = loaded.excludes()[position]
+    let expected = rules[position]
+    assert_eq(actual.pattern(), expected.pattern())
+    assert_eq(actual.is_active(), expected.is_active())
+    assert_true(
+      (actual.kind() is @index.Fixed && expected.kind() is @index.Fixed) ||
+      (actual.kind() is @index.Glob && expected.kind() is @index.Glob) ||
+      (actual.kind() is @index.Regex && expected.kind() is @index.Regex),
+    )
+    assert_true(
+      (actual.scope() is @index.FullPath && expected.scope() is @index.FullPath) ||
+      (actual.scope() is @index.Basename && expected.scope() is @index.Basename),
+    )
+    assert_true(
+      (actual.target() is @index.Folders && expected.target() is @index.Folders) ||
+      (actual.target() is @index.Files && expected.target() is @index.Files) ||
+      (actual.target() is @index.Both && expected.target() is @index.Both),
+    )
+  }
+  assert_true(loaded.excludes()[0].matches(b"/data/sub"[:], b"sub"[:], true))
+  assert_false(loaded.excludes()[0].matches(b"/data/sub"[:], b"sub"[:], false))
+  assert_true(
+    loaded.excludes()[1].matches(b"/data/x.tmp"[:], b"x.tmp"[:], false),
+  )
+  assert_false(
+    loaded.excludes()[1].matches(b"/data/x.tmp"[:], b"x.tmp"[:], true),
+  )
+  assert_false(
+    loaded.excludes()[2].matches(b"/data/a.txt"[:], b"a.txt"[:], false),
+  )
+  assert_true(loaded.excludes()[3].matches(b"/data/.env"[:], b".env"[:], false))
+  assert_eq(loaded.to_bytes() catch { err => abort(err.message()) }, bytes)
 }
 
 ///|
@@ -464,6 +666,83 @@ test "database round-trips an empty index" {
 }
 
 ///|
+test "exclude section validates tags, UTF-8, regexes, counts, and boundaries" {
+  let rule = @index.ExcludeRule::parse("glob:*.tmp")
+  let original = encoded(
+    @index.Index::build(sample_index().store(), excludes=[rule]),
+  )
+  let (_, sections) = database_parts(original)
+  let payload = sections[1].1
+
+  let bad_kind = fuzz_copy(payload)
+  bad_kind[4] = b'\x63'
+  assert_true(
+    database_error(replace_section(original, 2, Bytes::from_array(bad_kind[:])))
+    is @index.DbError::Corrupt(_),
+  )
+  let bad_active = fuzz_copy(payload)
+  bad_active[7] = b'\x02'
+  assert_true(
+    database_error(
+      replace_section(original, 2, Bytes::from_array(bad_active[:])),
+    )
+    is @index.DbError::Corrupt(_),
+  )
+  let bad_utf8 = fuzz_copy(payload)
+  bad_utf8[12] = b'\xff'
+  assert_true(
+    database_error(replace_section(original, 2, Bytes::from_array(bad_utf8[:])))
+    is @index.DbError::Corrupt(_),
+  )
+  let trailing = fuzz_copy(payload)
+  trailing.push(b'\x00')
+  assert_true(
+    database_error(replace_section(original, 2, Bytes::from_array(trailing[:])))
+    is @index.DbError::Corrupt(_),
+  )
+  assert_true(
+    database_error(patch_database_header(original, 36, 2U))
+    is @index.DbError::Corrupt(_),
+  )
+
+  let invalid_regex : Array[Byte] = [
+    b'\x01', b'\x00', b'\x00', b'\x00', b'\x02', b'\x00', b'\x00', b'\x01', b'\x01',
+    b'\x00', b'\x00', b'\x00', b'[',
+  ]
+  assert_true(
+    database_error(
+      replace_section(original, 2, Bytes::from_array(invalid_regex[:])),
+    )
+    is @index.DbError::Corrupt(_),
+  )
+}
+
+///|
+test "v3.1 requires excludes while legacy v3.0 loads with an empty snapshot" {
+  let original = encoded(sample_index())
+  let (header, sections) = database_parts(original)
+  let legacy_sections : Array[(Int32, Bytes)] = []
+  for pair in sections {
+    if pair.0 != 2 {
+      legacy_sections.push(pair)
+    }
+  }
+  put_test_u32(header, 36, 0U)
+  let missing = rebuild_database(header, legacy_sections)
+  match database_error(missing) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("missing excludes section"))
+    other => abort("expected a missing EXCLUDES error, got \{other.message()}")
+  }
+  header[6] = b'\x00'
+  header[7] = b'\x00'
+  let legacy = rebuild_database(header, legacy_sections)
+  let loaded = decoded(legacy)
+  assert_eq(loaded.excludes().length(), 0)
+  assert_eq(loaded.entry_count(), 7)
+}
+
+///|
 test "database records a missing trigram index" {
   let original = @index.Index::build(
     @index.Builder::new().finish(built_at=1L),
@@ -495,8 +774,10 @@ test "header follows the documented layout" {
   assert_eq(bytes.exact_view(start=0, end=4), b"MSDB"[:])
   assert_eq(bytes[4], b'\x03')
   assert_eq(bytes[5], b'\x00')
+  assert_eq(bytes[6], b'\x01')
   assert_eq(bytes[8], b'\x01')
-  assert_eq(bytes[60].to_int() | (bytes[61].to_int() << 8), 9)
+  assert_eq(get_test_u32(bytes, 36), 0U)
+  assert_eq(bytes[60].to_int() | (bytes[61].to_int() << 8), 10)
   assert_eq(
     bytes[52].to_int() |
     (bytes[53].to_int() << 8) |
@@ -512,6 +793,8 @@ test "the UTF-8-only v2 database format is rejected" {
   let old = Bytes::makei(bytes.length(), fn(index) {
     if index == 4 {
       b'\x02'
+    } else if index == 6 {
+      b'\x00'
     } else {
       bytes[index]
     }
@@ -539,7 +822,7 @@ test "a database without trigram has one fewer section" {
   let bytes = encoded(
     @index.Index::build(sample_index().store(), trigram=false),
   )
-  assert_eq(bytes[60], b'\x08')
+  assert_eq(bytes[60], b'\x09')
 }
 
 ///|
@@ -602,7 +885,7 @@ test "database info reads the header without loading the store" {
     err => abort(err.message())
   }
   assert_eq(info.format_major, 3)
-  assert_eq(info.format_minor, 0)
+  assert_eq(info.format_minor, 1)
   assert_eq(info.folder_count, 2)
   assert_eq(info.file_count, 5)
   assert_eq(info.entry_count(), 7)
@@ -610,7 +893,7 @@ test "database info reads the header without loading the store" {
   assert_eq(info.name_count, 6)
   assert_eq(info.file_size, bytes.length().to_int64())
   assert_true(info.trigram_count > 0)
-  assert_eq(info.sections.length(), 9)
+  assert_eq(info.sections.length(), 10)
 }
 
 ///|
@@ -661,6 +944,149 @@ test "database round-trips duplicate nested-root parent buckets" {
   assert_eq(loaded.ranges().parent_ids(b"/r/sub"[:]).to_sorted_ids(), [
     2, 3, 7, 8, 9, 10,
   ])
+}
+
+///|
+test "full verification rejects self-consistent dictionary semantic tampering" {
+  let original = sample_index()
+  let bytes = encoded(original)
+  let total = original.entry_count()
+
+  let wrong_files = @ids.Ids::from_sorted([0, 2, 3, 4, 5], total~).to_bytes()
+  assert_semantic_tamper(
+    replace_dict_ids(bytes, 1, wrong_files),
+    "dictionary files set",
+  )
+  let wrong_folders = @ids.Ids::from_sorted([0, 6], total~).to_bytes()
+  assert_semantic_tamper(
+    replace_dict_ids(bytes, 2, wrong_folders),
+    "dictionary folders set",
+  )
+
+  let hidden_id = original.dict().hidden().to_sorted_ids()[0]
+  let visible_id = original.dict().visible().to_sorted_ids()[0]
+  let wrong_hidden = @ids.Ids::from_sorted([visible_id], total~).to_bytes()
+  let visible_ids : Array[Int32] = []
+  for id in original.dict().all().to_sorted_ids() {
+    if id != visible_id {
+      visible_ids.push(id)
+    }
+  }
+  let wrong_visible = @ids.Ids::from_sorted(visible_ids, total~).to_bytes()
+  let swapped = replace_dict_ids(bytes, 3, wrong_hidden)
+  let swapped = replace_dict_ids(swapped, 4, wrong_visible)
+  assert_semantic_tamper(swapped, "dictionary hidden set")
+  assert_true(hidden_id >= 0)
+
+  let dict = original.dict()
+  let mut txt_position = -1
+  let mut pdf_position = -1
+  for position in 0..<dict.extension_count() {
+    let extension = dict.extensions()[position].extension()
+    if @util.eq_bytes(extension, b"txt"[:], false) {
+      txt_position = position
+    }
+    if @util.eq_bytes(extension, b"pdf"[:], false) {
+      pdf_position = position
+    }
+  }
+  assert_true(txt_position >= 0 && pdf_position >= 0)
+  let txt_ids = dict.extensions()[txt_position].ids().to_sorted_ids()
+  let moved = txt_ids[txt_ids.length() - 1]
+  let wrong_txt = txt_ids
+  ignore(wrong_txt.pop())
+  let wrong_pdf = dict.extensions()[pdf_position].ids().to_sorted_ids()
+  wrong_pdf.push(moved)
+  let extensions = replace_dict_ids(
+    bytes,
+    5 + txt_position,
+    @ids.Ids::from_sorted(wrong_txt, total~).to_bytes(),
+  )
+  let extensions = replace_dict_ids(
+    extensions,
+    5 + pdf_position,
+    @ids.Ids::from_sorted(wrong_pdf, total~).to_bytes(),
+  )
+  assert_semantic_tamper(extensions, "dictionary extension set")
+
+  let category_position = 5 +
+    dict.extension_count() +
+    @util.TypeCategory::Doc.index()
+  assert_semantic_tamper(
+    replace_dict_ids(bytes, category_position, @ids.Ids::empty().to_bytes()),
+    "dictionary doc category",
+  )
+  let root_position = 5 + dict.extension_count() + dict.type_category_count()
+  assert_semantic_tamper(
+    replace_dict_ids(bytes, root_position, @ids.Ids::empty().to_bytes()),
+    "dictionary root set",
+  )
+}
+
+///|
+test "full verification rejects range values that no longer match Store" {
+  let bytes = encoded(sample_index())
+  let (_, sections) = database_parts(bytes)
+  let mut payload = b""[:]
+  for (kind, data) in sections {
+    if kind == 8 {
+      payload = data
+    }
+  }
+  let ranges = fuzz_copy(payload.to_owned())
+  // RANGES starts with count, tag, length, then the first i64 value. Moving the
+  // first zero-sized folder to -1 preserves structural ordering.
+  put_test_i64(ranges, 9, -1L)
+  assert_semantic_tamper(
+    replace_section(bytes, 8, Bytes::from_array(ranges[:])),
+    "size range values",
+  )
+}
+
+///|
+test "full verification rejects a trigram posting that names a nonmatching entry" {
+  let original = sample_index()
+  let trigram = original.trigram().unwrap()
+  let key = trigram.key_at(0).unwrap()
+  let posting = trigram.posting_at(0).unwrap().ids()[:].to_owned()
+  let mut false_id = -1
+  for id in 0..<original.entry_count() {
+    let entry = original.store().entry_at(id).unwrap()
+    if !posting.contains(id) &&
+      !name_contains_trigram(original.store().entry_name(entry), key) {
+      false_id = id
+      break
+    }
+  }
+  assert_true(false_id >= 0)
+  // Swap rather than append so total coverage counters stay structurally
+  // plausible and validation reaches the per-name posting comparison.
+  ignore(posting.pop())
+  posting.push(false_id)
+  posting.sort()
+  assert_semantic_tamper(
+    replace_first_posting_ids(encoded(original), posting),
+    "trigram postings",
+  )
+}
+
+///|
+/// Whether a raw name contains one ASCII-folded trigram key.
+fn name_contains_trigram(name : BytesView, key : UInt32) -> Bool {
+  if name.length() < 3 {
+    return false
+  }
+  let first = ((key >> 16) & 0xFFU).to_byte()
+  let second = ((key >> 8) & 0xFFU).to_byte()
+  let third = (key & 0xFFU).to_byte()
+  for position in 0..<(name.length() - 2) {
+    if @util.ascii_lower(name[position]) == first &&
+      @util.ascii_lower(name[position + 1]) == second &&
+      @util.ascii_lower(name[position + 2]) == third {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -730,9 +1156,9 @@ test "unknown sections before checksum are skipped and covered by full verificat
   let info = @index.DbInfo::from_bytes(extended[:], verify=true) catch {
     err => abort(err.message())
   }
-  assert_eq(info.sections.length(), 10)
-  assert_eq(info.sections[8].name, "unknown(99)")
-  assert_eq(info.sections[8].length, 14L)
+  assert_eq(info.sections.length(), 11)
+  assert_eq(info.sections[9].name, "unknown(99)")
+  assert_eq(info.sections[9].length, 14L)
 
   let (_, sections) = database_parts(extended)
   let unknown_index = sections.length() - 2
@@ -758,6 +1184,7 @@ test "hostile header counts are rejected before section decoding" {
   let cases : Array[(Int32, UInt32)] = [
     (24, 16_777_217U),
     (32, 3U),
+    (36, 1_000_001U),
     (40, 1_000_001U),
     (44, 6U),
     (48, 16_777_217U),
@@ -773,8 +1200,12 @@ test "hostile header counts are rejected before section decoding" {
   // itself is rejected before a huge table allocation.
   let raw = fuzz_copy(original)
   put_test_u32(raw, 60, 33U)
-  let table_end = 64 + 9 * 20
-  let checksum_offset = get_test_u64(original, 64 + 8 * 20 + 4).to_int()
+  let section_count = get_test_u32(original, 60).reinterpret_as_int()
+  let table_end = 64 + section_count * 20
+  let checksum_offset = get_test_u64(
+    original,
+    64 + (section_count - 1) * 20 + 4,
+  ).to_int()
   put_test_u32(raw, checksum_offset, test_crc32_range(raw, 0, table_end))
   put_test_u32(
     raw,
@@ -872,6 +1303,61 @@ test "database decoding honors caller-provided operation and memory budgets" {
       assert_true(message.contains("memory budget"))
     _ => abort("expected the memory budget to reject the database")
   }
+}
+
+///|
+/// Build one of two distinct databases for the concurrent replacement test.
+fn atomic_fixture(seed : Int64) -> @index.Index raise @index.IndexError {
+  let builder = @index.Builder::new()
+  let root = builder.add_root(b"/atomic", false, seed)
+  ignore(builder.add_file(root, b"value.txt", seed, seed + 1L))
+  builder.set_child_counts(root, 1U, 0U)
+  builder.add_folder_size(root, seed)
+  builder.set_root_stats(0, 1U, 0U, seed)
+  @index.Index::build(builder.finish(built_at=seed))
+}
+
+///|
+async test "concurrent readers see only complete old or new databases" {
+  let dir = @fs.tmpdir(prefix="moonsearch-atomic-readers")
+  let database = "\{dir}/index.msdb"
+  let old = atomic_fixture(1L)
+  let new = atomic_fixture(2L)
+  let old_bytes = encoded(old)
+  let new_bytes = encoded(new)
+  old.write_database(database) catch {
+    err => abort(err.message())
+  }
+  @async.with_task_group() <| group => {
+    let readers = Array::makei(4, fn(_) {
+      group.spawn(() => {
+        for _ in 0..<32 {
+          let loaded = @index.Index::read_database(database, verify=true) catch {
+            err => abort(err.message())
+          }
+          let bytes = loaded.to_bytes() catch { err => abort(err.message()) }
+          assert_true(bytes == old_bytes || bytes == new_bytes)
+        }
+      })
+    })
+    let writer = group.spawn(() => {
+      for step in 0..<32 {
+        let index = if step % 2 == 0 { new } else { old }
+        index.write_database(database) catch {
+          err => abort(err.message())
+        }
+      }
+    })
+    writer.wait()
+    for reader in readers {
+      reader.wait()
+    }
+  }
+  let names = @fs.readdir(dir, sort=true)
+  for name in names {
+    assert_false(name.contains(".tmp."))
+  }
+  @fs.remove(dir, recursive=true)
 }
 
 ///|

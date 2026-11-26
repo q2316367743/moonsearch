@@ -12,6 +12,18 @@ pub fn Index::from_bytes(
   verify~ : Bool = false,
   budget~ : @ids.IdsDecodeBudget? = None,
 ) -> Index raise DbError {
+  decode_index(bytes, verify~, budget~).0
+}
+
+///|
+/// Decode once and retain the validated envelope for `DbInfo::from_bytes`.
+/// Sharing this path lets `info --verify` perform deep semantic validation
+/// without checking the full-file CRC or parsing the section table twice.
+fn decode_index(
+  bytes : BytesView,
+  verify~ : Bool,
+  budget~ : @ids.IdsDecodeBudget?,
+) -> (Index, DbEnvelope) raise DbError {
   let envelope = parse_envelope(bytes, verify~)
   let total = envelope.folder_count + envelope.file_count
   let decode_budget = match budget {
@@ -19,6 +31,7 @@ pub fn Index::from_bytes(
     None => @ids.IdsDecodeBudget::new()
   }
   let roots = parse_roots(bytes, envelope)
+  let excludes = parse_excludes(bytes, envelope)
   let names = parse_names(bytes, envelope, total)
   let (folders, files) = parse_entries(bytes, envelope, names)
   let order = parse_order(bytes, envelope, total)
@@ -34,16 +47,26 @@ pub fn Index::from_bytes(
   let dict = parse_dict(bytes, envelope, total, decode_budget)
   let ranges = parse_ranges(bytes, envelope, store, total)
   let trigram = parse_postings(bytes, envelope, total, decode_budget)
-  Index::restore(store~, dict~, ranges~, trigram~)
+  let index = Index::restore(store~, dict~, ranges~, trigram~, excludes~)
+  if verify {
+    validate_semantics(index)
+  }
+  (index, envelope)
 }
 
 ///|
-/// Read header-level information without inflating the index.
+/// Read header-level information. The default stays lightweight; `verify=true`
+/// fully decodes the index and recomputes every derived structure before the
+/// command is allowed to report the database as verified.
 pub fn DbInfo::from_bytes(
   bytes : BytesView,
   verify~ : Bool = false,
 ) -> DbInfo raise DbError {
-  let envelope = parse_envelope(bytes, verify~)
+  let envelope = if verify {
+    decode_index(bytes, verify=true, budget=None).1
+  } else {
+    parse_envelope(bytes, verify=false)
+  }
   for
     kind in [
       SECTION_ROOTS,
@@ -55,6 +78,24 @@ pub fn DbInfo::from_bytes(
       SECTION_RANGES,
     ] {
     ignore(required_section(envelope.sections, kind))
+  }
+  match find_section(envelope.sections, SECTION_EXCLUDES) {
+    Some(section) => {
+      if section.length < 4 {
+        raise DbError::Truncated
+      }
+      let reader = section_reader(bytes, section)
+      let count = checked_count(reader.read_u32(), "exclude")
+      if count != envelope.exclude_count {
+        raise DbError::Corrupt("exclude rule count does not match the header")
+      }
+    }
+    None =>
+      if envelope.exclude_count != 0 {
+        raise DbError::Corrupt(
+          "exclude count is set without an excludes section",
+        )
+      }
   }
   let names_section = required_section(envelope.sections, SECTION_NAMES)
   if names_section.length < 4 {
@@ -139,6 +180,81 @@ fn parse_roots(
   }
   reader.expect_end()
   roots
+}
+
+///|
+/// Parse the persisted exclude rules, accepting the empty implicit rule set of
+/// legacy v3.0 files that predate this section.
+fn parse_excludes(
+  bytes : BytesView,
+  envelope : DbEnvelope,
+) -> Array[ExcludeRule] raise DbError {
+  match find_section(envelope.sections, SECTION_EXCLUDES) {
+    None =>
+      if envelope.exclude_count != 0 {
+        raise DbError::Corrupt(
+          "exclude count is set without an excludes section",
+        )
+      } else {
+        []
+      }
+    Some(section) => {
+      let reader = section_reader(bytes, section)
+      let count = checked_count(reader.read_u32(), "exclude")
+      if count != envelope.exclude_count {
+        raise DbError::Corrupt("exclude rule count does not match the header")
+      }
+      if count > DB_MAX_EXCLUDES {
+        raise DbError::Corrupt("exclude rule count is out of range")
+      }
+      if count.to_int64() * 8L > reader.remaining().to_int64() {
+        raise DbError::Truncated
+      }
+      let rules : Array[ExcludeRule] = []
+      for _ in 0..<count {
+        let kind = match reader.read_byte().to_int() {
+          EXCLUDE_FIXED => Fixed
+          EXCLUDE_GLOB => Glob
+          EXCLUDE_REGEX => Regex
+          other => raise DbError::Corrupt("unknown exclude kind \{other}")
+        }
+        let scope = match reader.read_byte().to_int() {
+          EXCLUDE_FULL_PATH => FullPath
+          EXCLUDE_BASENAME => Basename
+          other => raise DbError::Corrupt("unknown exclude scope \{other}")
+        }
+        let target = match reader.read_byte().to_int() {
+          EXCLUDE_BOTH => Both
+          EXCLUDE_FILES => Files
+          EXCLUDE_FOLDERS => Folders
+          other => raise DbError::Corrupt("unknown exclude target \{other}")
+        }
+        let active = match reader.read_byte() {
+          b'\x00' => false
+          b'\x01' => true
+          _ => raise DbError::Corrupt("exclude active flag is out of range")
+        }
+        let pattern_length = checked_count(
+          reader.read_u32(),
+          "exclude pattern length",
+        )
+        if pattern_length > DB_MAX_EXCLUDE_PATTERN_BYTES {
+          raise DbError::Corrupt("exclude pattern is too long")
+        }
+        let pattern_bytes = reader.read_bytes(pattern_length)
+        let pattern = @utf8.decode(pattern_bytes) catch {
+          _ => raise DbError::Corrupt("exclude pattern is not valid UTF-8")
+        }
+        let rule = ExcludeRule::new(kind~, pattern~, scope~, target~, active~) catch {
+          err =>
+            raise DbError::Corrupt("invalid exclude rule: \{err.message()}")
+        }
+        rules.push(rule)
+      }
+      reader.expect_end()
+      rules
+    }
+  }
 }
 
 ///|
@@ -794,4 +910,211 @@ fn parse_postings(
   }
   reader.expect_end()
   Some(TrigramIndex::restore(total~, keys~, postings~, short_names~))
+}
+
+///|
+/// Recompute every derived structure from the restored store and compare it
+/// with the persisted values.
+///
+/// This is deliberately behind `verify=true`: normal loading pays only the
+/// structural checks needed to keep every accessor in bounds, while full
+/// verification proves that the candidate sources still mean the same thing as
+/// the entries they came from.
+fn validate_semantics(index : Index) -> Unit raise DbError {
+  let store = index.store()
+  for root in store.roots() {
+    if !@util.eq_bytes(store.folder_path(root.folder), root.path, false) {
+      raise DbError::Corrupt("root path does not match its folder entry")
+    }
+  }
+  for id in 0..<store.folder_count() {
+    let entry = store.folder(id).unwrap()
+    validate_hidden_flag(
+      store.entry_name(@core.EntryRef::new(@core.Folder, id)),
+      entry,
+    )
+  }
+  for id in 0..<store.file_count() {
+    let entry = store.file(id).unwrap()
+    validate_hidden_flag(
+      store.entry_name(@core.EntryRef::new(@core.File, id)),
+      entry,
+    )
+  }
+  validate_dictionary_semantics(index.dict(), Dict::build(store))
+  let mut eager = RangeFieldSet::empty()
+  for field in RangeField::all() {
+    if index.ranges().is_loaded(field) {
+      eager = eager.union(RangeFieldSet::single(field))
+    }
+  }
+  validate_range_semantics(index.ranges(), Ranges::build(store, eager~))
+  match index.trigram() {
+    Some(actual) =>
+      validate_trigram_semantics(actual, TrigramIndex::build(store))
+    None => ()
+  }
+}
+
+///|
+/// The scanner derives the hidden flag from the raw basename. A database that
+/// changes both the flag and the DICT buckets must still fail full verification.
+fn validate_hidden_flag(
+  name : BytesView,
+  entry : @core.Entry,
+) -> Unit raise DbError {
+  let expected = !name.is_empty() && name[0] == b'.'
+  if entry.is_hidden() != expected {
+    raise DbError::Corrupt("entry hidden flag does not match its name")
+  }
+}
+
+///|
+/// Compare two id sets without relying on their physical container shape.
+fn validate_id_set(
+  actual : @ids.Ids,
+  expected : @ids.Ids,
+  label : String,
+) -> Unit raise DbError {
+  if actual.cardinality() != expected.cardinality() {
+    raise DbError::Corrupt("\{label} cardinality does not match the store")
+  }
+  for id in expected.to_sorted_ids() {
+    if !actual.contains(id) {
+      raise DbError::Corrupt("\{label} does not match the store")
+    }
+  }
+}
+
+///|
+/// Validate all dictionary buckets against entry kinds, flags, names, and parent
+/// chains. Structural loading checks only id bounds and basic set algebra; this
+/// pass catches a self-consistent but semantically wrong bucket.
+fn validate_dictionary_semantics(
+  actual : Dict,
+  expected : Dict,
+) -> Unit raise DbError {
+  validate_id_set(actual.all(), expected.all(), "dictionary all set")
+  validate_id_set(
+    actual.files_all(),
+    expected.files_all(),
+    "dictionary files set",
+  )
+  validate_id_set(
+    actual.folders_all(),
+    expected.folders_all(),
+    "dictionary folders set",
+  )
+  validate_id_set(actual.hidden(), expected.hidden(), "dictionary hidden set")
+  validate_id_set(
+    actual.visible(),
+    expected.visible(),
+    "dictionary visible set",
+  )
+  if actual.extension_count() != expected.extension_count() {
+    raise DbError::Corrupt(
+      "dictionary extension coverage does not match the store",
+    )
+  }
+  for position in 0..<expected.extension_count() {
+    let actual_entry = actual.extensions()[position]
+    let expected_entry = expected.extensions()[position]
+    if !@util.eq_bytes(
+        actual_entry.extension(),
+        expected_entry.extension(),
+        false,
+      ) {
+      raise DbError::Corrupt(
+        "dictionary extension key does not match the store",
+      )
+    }
+    validate_id_set(
+      actual_entry.ids(),
+      expected_entry.ids(),
+      "dictionary extension set",
+    )
+  }
+  if actual.type_category_count() != expected.type_category_count() {
+    raise DbError::Corrupt(
+      "dictionary category coverage does not match the store",
+    )
+  }
+  for category in @util.TypeCategory::all() {
+    validate_id_set(
+      actual.type_category(category),
+      expected.type_category(category),
+      "dictionary \{category.name()} category",
+    )
+  }
+  if actual.root_count() != expected.root_count() {
+    raise DbError::Corrupt("dictionary root coverage does not match the store")
+  }
+  for position in 0..<expected.root_count() {
+    validate_id_set(
+      actual.root(position).unwrap(),
+      expected.root(position).unwrap(),
+      "dictionary root set",
+    )
+  }
+}
+
+///|
+/// Validate each persisted range field against a fresh build from the Store.
+/// Missing fields remain legitimately lazy until S09; a present field must cover
+/// exactly the same `(value, id)` pairs as its source entries.
+fn validate_range_semantics(
+  actual : Ranges,
+  expected : Ranges,
+) -> Unit raise DbError {
+  for field in RangeField::all() {
+    if !actual.is_loaded(field) {
+      continue
+    }
+    let actual_index = actual.field(field)
+    let expected_index = expected.field(field)
+    if actual_index.len() != expected_index.len() {
+      raise DbError::Corrupt(
+        "\{field.name()} range coverage does not match the store",
+      )
+    }
+    for position in 0..<expected_index.len() {
+      if actual_index.value_at(position) != expected_index.value_at(position) ||
+        actual_index.id_at(position) != expected_index.id_at(position) {
+        raise DbError::Corrupt(
+          "\{field.name()} range values do not match the store",
+        )
+      }
+    }
+  }
+}
+
+///|
+/// Validate every trigram key and posting against the names in the Store.
+/// Comparing with a fresh index proves both directions: no posting contains an
+/// id whose name lacks the trigram, and no real occurrence is missing.
+fn validate_trigram_semantics(
+  actual : TrigramIndex,
+  expected : TrigramIndex,
+) -> Unit raise DbError {
+  if actual.entry_count() != expected.entry_count() ||
+    actual.key_count() != expected.key_count() ||
+    actual.posting_count() != expected.posting_count() ||
+    actual.short_name_count() != expected.short_name_count() {
+    raise DbError::Corrupt("trigram coverage does not match the store")
+  }
+  for position in 0..<expected.key_count() {
+    if actual.key_at(position) != expected.key_at(position) {
+      raise DbError::Corrupt("trigram keys do not match the store")
+    }
+    let actual_ids = actual.posting_at(position).unwrap().ids()
+    let expected_ids = expected.posting_at(position).unwrap().ids()
+    if actual_ids.length() != expected_ids.length() {
+      raise DbError::Corrupt("trigram postings do not match entry names")
+    }
+    for offset in 0..<expected_ids.length() {
+      if actual_ids[offset] != expected_ids[offset] {
+        raise DbError::Corrupt("trigram postings do not match entry names")
+      }
+    }
+  }
 }

@@ -148,6 +148,36 @@ async fn stored_roots(
 }
 
 ///|
+/// Exclude rules persisted by the database `update` reuses when neither CLI nor
+/// configuration supplies rules. Explicit roots do not clear this snapshot;
+/// callers can replace it with `--exclude` or configured `excludes`.
+async fn stored_excludes(
+  invocation : Invocation,
+) -> Result[Array[@index.ExcludeRule], String] {
+  let database = match database_path(invocation) {
+    Ok(path) => path
+    Err(message) => return Err(message)
+  }
+  let exists = @fs.exists(database) catch { _ => false }
+  if !exists {
+    return Ok([])
+  }
+  let index = try @index.Index::read_database(database) catch {
+    err =>
+      return Err(
+        "error: cannot read excludes from \{database}: \{err.message()}",
+      )
+  } noraise {
+    value => value
+  }
+  let rules : Array[@index.ExcludeRule] = []
+  for rule in index.excludes() {
+    rules.push(rule)
+  }
+  Ok(rules)
+}
+
+///|
 /// Build the scan configuration from CLI, environment-backed options, config,
 /// and defaults, in that order.
 async fn scan_config_of(
@@ -217,24 +247,31 @@ async fn scan_config_of(
     Ok(target) => target
     Err(message) => return Err(message)
   }
-  let excludes : Array[@index.ExcludeRule] = []
+  let mut excludes : Array[@index.ExcludeRule] = []
   let cli_excludes = option_values(matches, "exclude")
   if cli_excludes.is_empty() {
-    for rule in invocation.config.excludes {
-      let parsed = try
-        @index.ExcludeRule::new(
-          kind=rule.kind,
-          pattern=rule.pattern,
-          scope=rule.scope,
-          target=rule.target,
-          active=rule.active,
-        )
-      catch {
-        err => return Err("error: \{err.message()}")
-      } noraise {
-        value => value
+    if invocation.config.excludes.is_empty() && invocation.command is Update {
+      match stored_excludes(invocation) {
+        Ok(rules) => excludes = rules
+        Err(message) => return Err(message)
       }
-      excludes.push(parsed)
+    } else {
+      for rule in invocation.config.excludes {
+        let parsed = try
+          @index.ExcludeRule::new(
+            kind=rule.kind,
+            pattern=rule.pattern,
+            scope=rule.scope,
+            target=rule.target,
+            active=rule.active,
+          )
+        catch {
+          err => return Err("error: \{err.message()}")
+        } noraise {
+          value => value
+        }
+        excludes.push(parsed)
+      }
     }
   } else {
     for spec in cli_excludes {
@@ -432,6 +469,7 @@ async fn run_index(invocation : Invocation) -> CliResult {
         eager=fast_fields,
         trigram=!flag_set(invocation.matches, "no-trigram") &&
           invocation.config.trigram.unwrap_or(true),
+        excludes=config.excludes,
       )
       let written : Result[Unit, String] = Ok(
         @index.Index::write_database(index, database),

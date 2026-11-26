@@ -25,6 +25,7 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
   let (names, name_index) = collect_names(store)
   let names_bytes = names_section(names)
   let roots = roots_section(store)
+  let excludes = excludes_section(self.excludes)
   let folders = folders_section(store, name_index)
   let files = files_section(store, name_index)
   let order = order_section(store, total)
@@ -47,6 +48,7 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
   }
   let sections : Array[(Int32, Bytes)] = [
     (SECTION_ROOTS, roots),
+    (SECTION_EXCLUDES, excludes),
     (SECTION_NAMES, names_bytes),
     (SECTION_FOLDERS, folders),
     (SECTION_FILES, files),
@@ -78,6 +80,7 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
     folder_count~,
     file_count~,
     root_count=store.roots().length(),
+    exclude_count=self.excludes.length(),
     dict_count~,
     range_count~,
     trigram_count~,
@@ -116,6 +119,7 @@ fn write_header(
   folder_count~ : Int32,
   file_count~ : Int32,
   root_count~ : Int32,
+  exclude_count~ : Int32,
   dict_count~ : Int32,
   range_count~ : Int32,
   trigram_count~ : Int32,
@@ -134,7 +138,7 @@ fn write_header(
   buffer.write_uint_le(folder_count.reinterpret_as_uint())
   buffer.write_uint_le(file_count.reinterpret_as_uint())
   buffer.write_uint_le(root_count.reinterpret_as_uint())
-  buffer.write_uint_le(0U)
+  buffer.write_uint_le(exclude_count.reinterpret_as_uint())
   buffer.write_uint_le(dict_count.reinterpret_as_uint())
   buffer.write_uint_le(range_count.reinterpret_as_uint())
   buffer.write_uint_le(trigram_count.reinterpret_as_uint())
@@ -208,6 +212,62 @@ fn roots_section(store : @core.Store) -> Bytes {
     buffer.write_int64_le(root.size)
   }
   buffer.to_bytes()
+}
+
+///|
+/// Serialize the scan-time exclude rules in their original order.
+///
+/// Each record stores the semantic tags plus the UTF-8 pattern text. Regex
+/// rules are recompiled by the loader, so the persisted form never depends on a
+/// compiled regex representation.
+fn excludes_section(rules : Array[ExcludeRule]) -> Bytes raise DbError {
+  if rules.length() > DB_MAX_EXCLUDES {
+    raise DbError::TooLarge("the exclude rule count exceeds the format limit")
+  }
+  let buffer = @buffer.Buffer()
+  buffer.write_uint_le(rules.length().reinterpret_as_uint())
+  for rule in rules {
+    let pattern = @utf8.encode(rule.pattern)
+    if pattern.length() > DB_MAX_EXCLUDE_PATTERN_BYTES {
+      raise DbError::TooLarge("an exclude pattern exceeds the format limit")
+    }
+    buffer.write_byte(exclude_kind_tag(rule.kind()).to_byte())
+    buffer.write_byte(exclude_scope_tag(rule.scope()).to_byte())
+    buffer.write_byte(exclude_target_tag(rule.target()).to_byte())
+    buffer.write_byte(if rule.is_active() { 1 } else { 0 })
+    buffer.write_uint_le(pattern.length().reinterpret_as_uint())
+    buffer.write_bytes(pattern[:])
+  }
+  buffer.to_bytes()
+}
+
+///|
+/// Stable on-disk tag of an exclude pattern kind.
+fn exclude_kind_tag(kind : ExcludeKind) -> Int32 {
+  match kind {
+    Fixed => EXCLUDE_FIXED
+    Glob => EXCLUDE_GLOB
+    Regex => EXCLUDE_REGEX
+  }
+}
+
+///|
+/// Stable on-disk tag of an exclude match scope.
+fn exclude_scope_tag(scope : ExcludeScope) -> Int32 {
+  match scope {
+    FullPath => EXCLUDE_FULL_PATH
+    Basename => EXCLUDE_BASENAME
+  }
+}
+
+///|
+/// Stable on-disk tag of an exclude entry target.
+fn exclude_target_tag(target : ExcludeTarget) -> Int32 {
+  match target {
+    Both => EXCLUDE_BOTH
+    Files => EXCLUDE_FILES
+    Folders => EXCLUDE_FOLDERS
+  }
 }
 
 ///|

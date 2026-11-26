@@ -67,9 +67,9 @@ pub fn DbInfo::entry_count(self : DbInfo) -> Int32 {
 ///|
 /// Read a database file and decode the whole index.
 ///
-/// `verify=true` checks the payload checksum in addition to the metadata
-/// checksum, which costs one pass over the file. `budget` can tighten the default
-/// Ids/posting decode limits for constrained callers.
+/// `verify=true` checks the payload checksum and recomputes every derived
+/// structure from the restored Store to reject semantic corruption. `budget`
+/// can tighten the default Ids/posting decode limits for constrained callers.
 pub async fn Index::read_database(
   path : StringView,
   verify~ : Bool = false,
@@ -80,10 +80,11 @@ pub async fn Index::read_database(
 }
 
 ///|
-/// Read only the header and section table.
+/// Read the header and section table, or fully verify the index on request.
 ///
-/// This is what `info` uses: it answers questions about a multi-hundred-megabyte
-/// index without allocating the store or rebuilding any structure.
+/// Plain `info` answers questions about a multi-hundred-megabyte index without
+/// allocating the store. `verify=true` additionally decodes the whole index and
+/// recomputes its derived structures before reporting success.
 pub async fn read_database_info(
   path : StringView,
   verify~ : Bool = false,
@@ -185,45 +186,87 @@ fn database_parent(path : StringView) -> String? {
 }
 
 ///|
+/// Test-only failure stages for the atomic writer. Whitebox tests pass these
+/// through the private byte writer so production callers cannot enable them.
+const DB_WRITE_FAULT_WRITE : Int32 = 1
+
+///|
+const DB_WRITE_FAULT_SYNC : Int32 = 2
+
+///|
+const DB_WRITE_FAULT_RENAME : Int32 = 3
+
+///|
 /// Write bytes to a same-directory temporary file, sync it, and rename it into
 /// place while holding the writer lock.
 async fn write_database_bytes(
   path : StringView,
   bytes : Bytes,
+  fault~ : Int32 = 0,
 ) -> Unit raise DbError {
   ensure_database_dir(path)
   let lock_path = "\{path}.lock"
   let lock = @fs.open(lock_path, mode=WriteOnly, create_mode=OpenOrCreate) catch {
     err => raise DbError::Io("cannot open the index lock \{lock_path}: \{err}")
   }
+  defer lock.close()
   let acquired = lock.try_lock(Exclusive) catch {
-    err => {
-      lock.close()
-      raise DbError::Io("cannot lock \{lock_path}: \{err}")
-    }
+    err => raise DbError::Io("cannot lock \{lock_path}: \{err}")
   }
   if !acquired {
-    lock.close()
     raise DbError::Locked("\{path}")
   }
   let temporary = "\{path}.tmp.\{@env.now()}"
-  let written = try {
-    @fs.write_binary(
-      temporary,
-      bytes[:],
-      create_mode=CreateOrTruncate,
-      sync=Full,
-    )
-    @fs.rename(temporary, path, replace=true)
+  let written : Result[Unit, DbError] = try {
+    let file = @fs.open(temporary, mode=WriteOnly, create_mode=CreateOrTruncate) catch {
+      err =>
+        raise DbError::Io(
+          "cannot create temporary database \{temporary}: \{err}",
+        )
+    }
+    defer file.close()
+    if fault == DB_WRITE_FAULT_WRITE {
+      let partial = bytes.length() / 2
+      file.write(bytes.exact_view(start=0, end=partial)) catch {
+        _ => raise DbError::Io("cannot write temporary database \{temporary}")
+      }
+      raise DbError::Io("injected temporary database write failure")
+    }
+    file.write(bytes[:]) catch {
+      _ => raise DbError::Io("cannot write temporary database \{temporary}")
+    }
+    if fault == DB_WRITE_FAULT_SYNC {
+      raise DbError::Io("injected temporary database sync failure")
+    }
+    file.sync() catch {
+      err =>
+        raise DbError::Io("cannot sync temporary database \{temporary}: \{err}")
+    }
+    Ok(())
   } catch {
+    err => Err(err)
+  }
+  match written {
+    Err(err) => {
+      @fs.remove(temporary, allow_missing=true) catch {
+        _ => ()
+      }
+      raise err
+    }
+    Ok(_) => ()
+  }
+  if fault == DB_WRITE_FAULT_RENAME {
+    @fs.remove(temporary, allow_missing=true) catch {
+      _ => ()
+    }
+    raise DbError::Io("injected database rename failure")
+  }
+  @fs.rename(temporary, path, replace=true) catch {
     err => {
       @fs.remove(temporary, allow_missing=true) catch {
         _ => ()
       }
-      lock.close()
-      raise DbError::Io("cannot write database \{path}: \{err}")
+      raise DbError::Io("cannot replace database \{path}: \{err}")
     }
   }
-  ignore(written)
-  lock.close()
 }

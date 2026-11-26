@@ -8,7 +8,7 @@
 - 默认路径：`$XDG_DATA_HOME/moonsearch/index.msdb`，否则
   `$HOME/.local/share/moonsearch/index.msdb`
 - 字节序：全部小端；读取器逐字段组合，不依赖宿主对齐
-- 版本：主版本 `3`，次版本 `0`；拒绝只允许合法 UTF-8 根路径的 v2
+- 版本：主版本 `3`，次版本 `1`；拒绝只允许合法 UTF-8 根路径的 v2
 - 实现：`src/index/db_format.mbt`（容器）、`db_write.mbt`（编码）、`db_read.mbt`
   （解码与校验）、`db.mbt`（文件读取与大小限制）、`src/ids/codec.mbt`（Ids 资源边界）
 
@@ -26,7 +26,7 @@
 | 24 | 4 | folder_count | 文件夹条目数 |
 | 28 | 4 | file_count | 文件条目数 |
 | 32 | 4 | root_count | 根记录数 |
-| 36 | 4 | exclude_count | 保留；当前恒为 0 |
+| 36 | 4 | exclude_count | EXCLUDES 中的规则数 |
 | 40 | 4 | dict_count | DICT 键数 |
 | 44 | 4 | range_count | RANGES 字段数 |
 | 48 | 4 | trigram_count | 不同 trigram 键数 |
@@ -54,7 +54,7 @@ length u64
 - CHECKSUM 必须是最后一个 section，且其结束位置必须恰好等于 EOF；CHECKSUM 之后的
   任何字节或 section 都拒绝加载，`verify=false` 也不例外。
 - 未知 `kind` 只能出现在 CHECKSUM 之前；次版本升级时跳过，不影响已知 section。
-- 写入顺序固定为 ROOTS、NAMES、FOLDERS、FILES、ORDER、DICT、RANGES、
+- 写入顺序固定为 ROOTS、EXCLUDES、NAMES、FOLDERS、FILES、ORDER、DICT、RANGES、
   POSTINGS（可选）、CHECKSUM。
 
 `kind` 取值：
@@ -62,7 +62,7 @@ length u64
 | 值 | 名称 | 内容 |
 | --- | --- | --- |
 | 1 | ROOTS | 根路径与扫描统计 |
-| 2 | EXCLUDES | 保留；当前不写入 |
+| 2 | EXCLUDES | 扫描时使用的排除规则快照 |
 | 3 | NAMES | 前缀压缩名字表 |
 | 4 | FOLDERS | 文件夹固定记录 |
 | 5 | FILES | 文件固定记录 |
@@ -87,10 +87,31 @@ count       u32            必须等于 header.root_count
 ```
 
 路径按 Unix 原始字节保存和恢复，读取器不做 UTF-8 解码；非法 UTF-8 根路径不会折叠为
-替换字符串。排除规则属于配置而不是索引状态，当前版本不持久化，因此 `exclude_count` 为 0
-且没有 EXCLUDES section。
+替换字符串。排除规则保存在独立的 EXCLUDES section 中；`Index` 持有规则快照，
+`update` 在没有 CLI 或配置文件替换规则时复用它。
 
-## 4. NAMES
+## 4. EXCLUDES
+
+```text
+count       u32            必须等于 header.exclude_count
+每条记录:
+  kind       u8             0=fixed 1=glob 2=regex
+  scope      u8             0=full_path 1=basename
+  target     u8             0=both 1=files 2=folders
+  active     u8             0=disabled 1=enabled
+  pattern_len u32           UTF-8 字节数
+  pattern    bytes          规则文本
+```
+
+- v3.1 始终写入该 section；空规则集也写一个 `count=0` 的 4 字节 section。
+- 旧 v3.0 文件可以没有 EXCLUDES，此时 `exclude_count` 必须为 0，加载为空规则集。
+- tag 和 `active` 的未知值、无效 UTF-8、非法 regex、count 不匹配和 section 尾随字节都
+  拒绝加载。regex 在加载时重新编译，不持久化编译后的内部表示。
+- 规则按扫描配置顺序保存；`update` 的优先级为 CLI `--exclude` > 配置文件 `excludes` >
+  数据库快照。CLI 或配置规则列表非空时整体替换旧快照。
+- 每条 pattern 上限 1 MiB，规则总数上限 1,000,000。
+
+## 5. NAMES
 
 ```text
 count       u32            不同名字数，必须 <= folder_count + file_count
@@ -107,7 +128,7 @@ count       u32            不同名字数，必须 <= folder_count + file_count
   一次，加载时一次性重建池。
 - 名字总字节数上限 1 GiB，单条上限 65535 字节。
 
-## 5. FOLDERS
+## 6. FOLDERS
 
 `folder_count` 条固定 34 字节记录，无 section 内计数（数量来自 header）：
 
@@ -127,7 +148,7 @@ num_folders  u32   直接子文件夹数
 到相同字节。加载后必须通过父链环检测：任何父链都必须在有限步内到达根，否则拒绝整个
 文件。这样 `Store::folder_path` 的向上遍历不会因损坏输入而死循环。
 
-## 6. FILES
+## 7. FILES
 
 `file_count` 条固定 26 字节记录：
 
@@ -142,7 +163,7 @@ mtime        i64
 文件数组同样按 `(name, path)` 自然序物理排列，`parent` 使用回填后的规范文件夹 id。
 Dict、Ranges 与 POSTINGS 都在重排完成后构建，因此其中的全局 id 不需要加载时转换。
 
-## 7. ORDER
+## 8. ORDER
 
 `folder_count + file_count` 个 `u32`，按构建时的跨类型规范顺序（`(name, path)` 自然序）
 存放全局 id。FOLDERS 与 FILES 各自已经规范排序，ORDER 是两者的线性归并结果，不再承担
@@ -159,7 +180,7 @@ GlobalId = folder id                        0 .. folder_count - 1
 版本仍为 v3.0；旧 v3 文件可通过 ORDER 保持查询顺序，新写入文件同时保证条目数组的物理
 规范顺序。
 
-## 8. DICT
+## 9. DICT
 
 ```text
 key_count   u32            必须等于 header.dict_count
@@ -198,7 +219,7 @@ id）。写入顺序固定：五个基本键、按字节序的扩展名、按 `T
 - `all` 基数等于 `total`，`files`/`folders` 基数等于对应数组长度。
 - `hidden` 与 `visible` 不相交且并集等于全集。
 
-## 9. RANGES
+## 10. RANGES
 
 ```text
 field_count u32            必须等于 header.range_count，<= 5
@@ -215,7 +236,7 @@ field_count u32            必须等于 header.range_count，<= 5
 - 只写已经物化的字段。未写出的字段在加载后保持惰性，第一次查询时从恢复的 `Store`
   构建，因此 `--fast-fields size,mtime` 的磁盘成本与内存成本一致。
 
-## 10. POSTINGS
+## 11. POSTINGS
 
 仅当 header flags 的 bit0 置位时存在：
 
@@ -235,7 +256,7 @@ short_names u32            长度 < 3 的名字数
 - `--no-trigram` 写入的数据库没有 POSTINGS，flags bit0 为 0，`trigram_count` 为 0。
   加载后的 `Index::trigram()` 为 `None`，编译层把名字 term 退化为全量扫描。
 
-## 11. CHECKSUM
+## 12. CHECKSUM
 
 ```text
 metadata_crc u32   覆盖 [0, section_table_end)
@@ -243,7 +264,7 @@ full_crc     u32   覆盖 [0, checksum_section.offset)
 ```
 
 - 每次加载都校验 `metadata_crc`：仅覆盖 header + section table（含各 section 的偏移/长度）。
-  当前 v3.0 的默认 metadata CRC **不覆盖** ROOTS、EXCLUDES 或其他 section 载荷；普通加载
+  当前 v3.1 的默认 metadata CRC **不覆盖** ROOTS、EXCLUDES 或其他 section 载荷；普通加载
   只认证元数据布局，载荷完整性必须使用 `verify=true`。
 - `info --verify` 与库调用 `Index::read_database(path, verify=true)` 额外校验
   `full_crc`：覆盖 `[0, checksum_section.offset)` 的全部字节，包括已知/未知 section、gap
@@ -256,22 +277,27 @@ full_crc     u32   覆盖 [0, checksum_section.offset)
   翻转，不用于对抗性完整性证明。
 - 任一 CRC 不符返回 `DbError::Corrupt`，不返回部分索引。
 
-## 12. 原子写入与锁
+## 13. 原子写入与锁
 
 ```text
-1. 创建父目录（递归、允许已存在）
-2. 打开 <path>.lock，取独占锁（try_lock）
-3. 写 <path>.tmp.<Unix 纳秒>，sync=Full
-4. rename(tmp, path, replace=true)
-5. 关闭锁文件
+1. Index::to_bytes 先在内存中完成序列化与校验
+2. 创建父目录（递归、允许已存在）
+3. 打开 <path>.lock，取独占锁（try_lock）
+4. 创建并打开 <path>.tmp.<timestamp>
+5. 写入全部字节，File::sync()，关闭临时文件
+6. rename(tmp, path, replace=true)
+7. 关闭锁文件
 ```
 
-- 失败时删除临时文件，旧数据库保持不变。
-- 读取方不加锁：POSIX rename 保证读者看到旧的完整文件或新的完整文件。
+- 任一阶段失败都删除临时文件，旧数据库保持不变；随后关闭锁文件，失败不会泄漏锁。
+- 读取方不加锁：POSIX rename 保证读者看到旧的完整文件或新的完整文件。并发测试交替
+  替换两份不同数据库，多个读者只能读到其中一份完整内容。
 - 另一个写进程持锁时返回 `DbError::Locked`，CLI 以退出码 2 报告。
-- 文件名中的 pid 由单调时间戳替代；同一进程的并发写仍由锁串行化。
+- 私有写字节入口提供 write/sync/rename 三阶段故障注入；白盒测试分别写入部分字节后
+  失败、sync 前失败和 rename 前失败，验证旧文件字节不变、临时文件清空且后续写仍成功。
+- 临时文件名使用时间戳；同一进程的并发写仍由锁串行化。
 
-## 13. 加载校验与资源上限
+## 14. 加载校验与资源上限
 
 读取器是顺序、带边界检查的 `DbReader`；所有长度先验证再分配或切片，剩余长度判断使用
 减法，避免 `pos + count` 溢出。文件路径先打开并检查大小，只读取已检查的字节数，再探测
@@ -286,6 +312,8 @@ full_crc     u32   覆盖 [0, checksum_section.offset)
 | trigram 键数 | 16,777,216 |
 | POSTINGS 总条目数 | 2,147,483,647 |
 | DICT 键数 | 1,000,000 |
+| EXCLUDES 规则数 | 1,000,000 |
+| 单条 exclude pattern | 1 MiB |
 | 范围字段数 | 5 |
 | 条目总数 | 16,777,216 |
 | 根记录数 | `<= folder_count` |
@@ -303,12 +331,26 @@ POSTINGS，多个单独合法的集合不能绕过总上限。调用方可通过
 或 `Ids::from_bytes_with_budget` 提供更严格的预算；预算耗尽返回 `DbError::TooLarge` /
 `IdsError::LimitExceeded`。
 
+普通加载（`verify=false`）只执行结构、引用和资源边界校验，不重算派生索引。
+`verify=true` 在 full CRC 之后从恢复的 Store 重新构建并逐项比较：
+
+- files/folders/hidden/visible 集合与条目类型、hidden flags 一致；
+- 每个 extension、category、root 集合与名字及父链一致；
+- 每个已持久化 RANGES 字段的覆盖范围、值和 id 与 Store 一致；未写出的字段仍保持惰性；
+- POSTINGS 的每个 key、短名计数和 posting id 集合与名字中的 ASCII-fold trigram 完全一致；
+- ROOTS.path 与根文件夹重建路径一致。
+
+因此，重算 CHECKSUM 后构造的“结构合法但语义错误”数据库会被 `verify=true` 拒绝。
+`DbInfo::from_bytes` 和 CLI `info` 默认仍只读元数据；加 `--verify` 时会完整解码并执行
+上述语义校验，成本高于普通 `info`。
+
 任一失败路径返回 `DbError`（`Truncated` / `Corrupt` / `UnsupportedVersion` / `Io` /
 `TooLarge`），不会 `panic`。测试覆盖每个截断长度、每个单字节翻转（`verify=true`）、
-CHECKSUM 顺序与 EOF、未知 section、恶意 header/Ids 长度、共享预算、稀疏超大文件以及
-随机垃圾输入。
+CHECKSUM 顺序与 EOF、未知 section、恶意 header/Ids 长度、共享预算、稀疏超大文件、
+随机垃圾输入、重算 CRC 后的 Dict/RANGES/POSTINGS 语义篡改，以及固定长度与 CRC-32
+组成的确定性 golden fingerprint。
 
-## 14. 版本演进
+## 15. 版本演进
 
 - **主版本**：section 语义不兼容时递增；读取器拒绝其他主版本。v3 将 ROOTS
   从“必须合法 UTF-8”改为“Unix 原始字节”，因此拒绝 v2，避免旧读取器误拒新库或折叠路径。
@@ -317,4 +359,7 @@ CHECKSUM 顺序与 EOF、未知 section、恶意 header/Ids 长度、共享预�
   恢复旧 v3 文件的查询顺序，因此保持 v3.0。
 - S07 只加强读取器校验、EOF/CHECKSUM 顺序约束和资源预算，不改变二进制布局或 CRC 覆盖
   范围，因此仍保持 v3.0；文档明确了 metadata CRC 的现有边界。
+- S08 新增 EXCLUDES section 并启用 header.exclude_count，次版本升为 v3.1；旧 v3.0
+  没有该 section 时按空规则集加载。读取器新增 `verify=true` 的 Store 派生语义校验，写路径
+  增加故障注入与并发替换测试，但 CRC 覆盖范围和原子替换布局不变。
 - 每次格式变更必须同步更新本文件与 `src/index/db_test.mbt` 的布局断言。

@@ -21,6 +21,10 @@ import {
   "q2316367743/moonsearch/src/testkit",
 } for "test"
 
+import {
+  "moonbitlang/core/async",
+} for "wbtest"
+
 options(
   "allow-experimental-packages": [
     "moonbitlang/core/async",

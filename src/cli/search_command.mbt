@@ -251,7 +251,9 @@ fn source_is_live(source : QuerySource) -> Bool {
 
 ///|
 /// Scan the configured roots into a store.
-async fn scan_store(invocation : Invocation) -> Result[@core.Store, String] {
+async fn scan_store(
+  invocation : Invocation,
+) -> Result[(@core.Store, Array[@index.ExcludeRule]), String] {
   let config = match scan_config_of(invocation) {
     Ok(config) => config
     Err(message) => return Err(message)
@@ -262,7 +264,7 @@ async fn scan_store(invocation : Invocation) -> Result[@core.Store, String] {
     err => Err("error: \{err.message()}")
   }
   match outcome {
-    Ok(report) => Ok(report.store)
+    Ok(report) => Ok((report.store, config.excludes))
     Err(message) => Err(message)
   }
 }
@@ -278,8 +280,8 @@ async fn scan_store(invocation : Invocation) -> Result[@core.Store, String] {
 async fn query_source(invocation : Invocation) -> Result[QuerySource, String] {
   let matches = invocation.matches
   if flag_set(matches, "live") {
-    let store = match scan_store(invocation) {
-      Ok(store) => store
+    let (store, _) = match scan_store(invocation) {
+      Ok(result) => result
       Err(message) => return Err(message)
     }
     return Ok(Live(store))
@@ -301,11 +303,11 @@ async fn query_source(invocation : Invocation) -> Result[QuerySource, String] {
     }
   }
   if flag_set(matches, "auto-index") {
-    let store = match scan_store(invocation) {
-      Ok(store) => store
+    let (store, excludes) = match scan_store(invocation) {
+      Ok(result) => result
       Err(message) => return Err(message)
     }
-    let index = live_index(invocation, store)
+    let index = live_index(invocation, store, excludes~)
     let written : Result[Unit, String] = Ok(
       @index.Index::write_database(index, database),
     ) catch {
@@ -334,7 +336,11 @@ fn elapsed_ms(started : UInt64) -> Int64 {
 /// materialize on first use inside the query compiler. The trigram postings are
 /// built because a name term is the common case; `--no-trigram` belongs to the
 /// index command, which is where an index shape is chosen.
-fn live_index(invocation : Invocation, store : @core.Store) -> @index.Index {
+fn live_index(
+  invocation : Invocation,
+  store : @core.Store,
+  excludes~ : Array[@index.ExcludeRule] = [],
+) -> @index.Index {
   let eager = match invocation.config.fast_fields {
     Some(fields) => @index.RangeFieldSet::of(fields)
     None =>
@@ -347,6 +353,7 @@ fn live_index(invocation : Invocation, store : @core.Store) -> @index.Index {
     store,
     eager~,
     trigram=invocation.config.trigram.unwrap_or(true),
+    excludes~,
   )
 }
 

@@ -288,7 +288,7 @@ fn info_command() -> @argparse.Command {
     flags=[
       @argparse.FlagArg(
         "verify",
-        about="Verify every section checksum before reporting",
+        about="Verify checksums and index semantics before reporting",
       ),
     ],
   )

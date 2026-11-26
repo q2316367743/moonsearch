@@ -173,6 +173,79 @@ async test "update falls back to persisted roots and explicit roots win" {
 }
 
 ///|
+async test "update reuses persisted excludes and explicit rules replace them" {
+  let dir = config_tree("moonsearch-update-excludes")
+  let database_dir = @fs.tmpdir(prefix="moonsearch-update-excludes-db")
+  let database = "\{database_dir}/index.msdb"
+  let indexed = @cli.run([
+    "index", "--no-config", "-D", database, "--exclude", "glob:*.tmp", "--exclude-scope",
+    "basename", "--exclude-target", "files", dir,
+  ])
+  assert_true(config_stdout(indexed).length() > 0)
+  let persisted = @index.Index::read_database(database) catch {
+    err => abort(err.message())
+  }
+  assert_eq(persisted.excludes().length(), 1)
+  assert_eq(persisted.excludes()[0].pattern(), "*.tmp")
+
+  @fs.write_text("\{dir}/new.tmp", "new")
+  let updated = @cli.run(["update", "--no-config", "-D", database])
+  assert_true(config_stdout(updated).length() > 0)
+  assert_eq(
+    config_records(
+      @cli.run(["count", "--no-config", "-D", database, "ext:tmp"]),
+    ),
+    b"0",
+  )
+  assert_eq(
+    @cli.run(["search", "--no-config", "-D", database, "note.txt"]).exit_code(),
+    0,
+  )
+
+  let overridden = @cli.run([
+    "update", "--no-config", "-D", database, "--exclude", "glob:*.txt", "--exclude-scope",
+    "basename", "--exclude-target", "files",
+  ])
+  assert_true(config_stdout(overridden).length() > 0)
+  assert_eq(
+    config_records(
+      @cli.run(["count", "--no-config", "-D", database, "ext:tmp"]),
+    ),
+    b"2",
+  )
+  let replaced = @index.Index::read_database(database) catch {
+    err => abort(err.message())
+  }
+  assert_eq(replaced.excludes()[0].pattern(), "*.txt")
+
+  let home = @fs.tmpdir(prefix="moonsearch-update-excludes-config")
+  let config_path = write_config(
+    home,
+    "{\"database\":\{config_json_string(database)},\"excludes\":[{\"pattern\":\"*.epub\",\"kind\":\"glob\",\"scope\":\"basename\",\"target\":\"files\"}]}",
+  )
+  let configured = @cli.run(
+    ["update", "--config", config_path],
+    env=config_env(home),
+  )
+  assert_true(config_stdout(configured).length() > 0)
+  assert_eq(
+    config_records(
+      @cli.run(["count", "--no-config", "-D", database, "ext:epub"]),
+    ),
+    b"0",
+  )
+  assert_eq(
+    config_records(
+      @cli.run(["count", "--no-config", "-D", database, "ext:tmp"]),
+    ),
+    b"2",
+  )
+  @fs.remove(dir, recursive=true)
+  @fs.remove(database_dir, recursive=true)
+  @fs.remove(home, recursive=true)
+}
+
+///|
 async test "no-config skips invalid defaults and explicit missing files" {
   let home = @fs.tmpdir(prefix="moonsearch-no-config")
   let dir = config_tree("moonsearch-no-config-source")

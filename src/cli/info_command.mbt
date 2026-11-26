@@ -1,9 +1,9 @@
 ///|
 /// Run `info`: report the persisted header without loading the index.
 ///
-/// The command deliberately reads only the header and section table, so it stays
-/// fast on a large database. `--verify` additionally checks the payload
-/// checksum, which is the full-file integrity test.
+/// The default path reads only the header and section table, so it stays fast
+/// on a large database. `--verify` additionally checks the full-file CRC and
+/// recomputes every derived structure to prove semantic consistency.
 async fn run_info(invocation : Invocation) -> CliResult {
   let database = match database_path(invocation) {
     Ok(path) => path

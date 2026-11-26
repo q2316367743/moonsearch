@@ -293,7 +293,7 @@ pub fn Index::build(store, eager? = all, trigram? = true) -> Index
   `Index`，不再分别传 store、dict、ranges、trigram 四个部件。S12 也以它为序列化与
   恢复的单位。
 
-## 持久化 `MSDB v3`（S12）
+## 持久化 `MSDB v3.1`（S08）
 
 `src/index` 的 `db*.mbt` 把完成的 `Index` 写成一个自校验文件，再从文件恢复同一个
 对象；恢复路径不重新扫描、不重建字典、不重排 trigram。字段级布局见
@@ -304,7 +304,7 @@ pub fn Index::build(store, eager? = all, trigram? = true) -> Index
 ```text
 Index::to_bytes:
   1. 收集并去重全部条目名字，按字节序排序
-  2. 生成 ROOTS / NAMES / FOLDERS / FILES / ORDER
+  2. 生成 ROOTS / EXCLUDES / NAMES / FOLDERS / FILES / ORDER
   3. 生成 DICT（5 个基本键 + 扩展名 + 分类 + 根）
   4. 生成 RANGES（只写已物化字段）
   5. 生成 POSTINGS（trigram 存在时）
@@ -330,6 +330,7 @@ Index::to_bytes:
 Index::from_bytes:
   parse_envelope      magic / 版本 / endian / 计数 / section table / CRC
   parse_roots         原始路径字节、folder id
+  parse_excludes      kind/scope/target/active、UTF-8 pattern、重编译 regex
   parse_names         front coding、严格递增、单条与总量上限、重建 NamePool
   parse_entries       父 id、name_index、flags、size、mtime、子项计数
   validate_parent_chains  父链环检测
@@ -338,6 +339,7 @@ Index::from_bytes:
   parse_ranges        (value,id) 升序、id 不重复且在范围内
   parse_postings      key 严格递增、delta 累加不溢出、posting 升序且在范围内
   Index::restore      组装，不触发任何构建
+  validate_semantics  仅 verify=true：从 Store 重算 Dict/RANGES/POSTINGS 并比对
 ```
 
 - 每次读取先校验 header + section table 的 `metadata_crc`；`verify=true` 再校验覆盖
@@ -346,14 +348,19 @@ Index::from_bytes:
   `DbError`，不会触发数组越界或 `panic`。
 - 父链环检测保证 `folder_path` 的向上遍历终止；`ORDER` 排列校验保证查询不会拿到
   越界 id。
-- `DbInfo::from_bytes` 只解析 header、section table 和 NAMES 计数，供 `info` 在不加载
-  存库的情况下报告版本、条目数、根数、文件大小与各 section 大小。
+- `DbInfo::from_bytes` 默认只解析 header、section table 和 NAMES 计数，供 `info` 在不
+  加载存库的情况下报告版本、条目数、根数、文件大小与各 section 大小；`verify=true`
+  会完整解码并执行 `validate_semantics`。
+- EXCLUDES 保存扫描规则快照并由 `Index::excludes()` 暴露；CLI `update` 在 CLI/配置未提供
+  规则时复用它。旧 v3.0 缺 section 时加载为空集。
 
 ### 文件事务
 
 - 写进程在 `<path>.lock` 上取独占锁；`try_lock` 失败返回 `DbError::Locked`。
 - 数据写入同目录的 `<path>.tmp.<timestamp>`，`sync=Full` 后 `rename` 覆盖旧文件。
 - 任一失败删除临时文件，旧数据库保持可用；读取方不加锁，依赖 `rename` 的原子性。
+- 白盒故障注入覆盖部分写失败、sync 失败和 rename 失败；并发任务测试验证替换期间读者
+  只会看到完整旧库或新库。
 - 默认数据库路径由 CLI 解析：`-D/--database`、`MOONSEARCH_DATABASE`、XDG 数据目录。
 
 ### 恢复构造器
