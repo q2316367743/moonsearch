@@ -167,7 +167,7 @@ persisted:
 ```mooncram q2316367743/moonsearch
 $ moonx q2316367743/moonsearch/cmd/moonsearch info -D _build/cram/index.msdb --verify
 database: _build/cram/index.msdb
-format: MSDB 3.1
+format: MSDB 3.2
 built: [0-9]+ (regex)
 roots: 1
 folders: 2
@@ -176,7 +176,7 @@ names: 5
 size: [0-9]+ bytes (regex)
 trigram: [0-9]+ keys (regex)
 checksum: verified
-sections: [a-z]+=[0-9]+( [a-z]+=[0-9]+)* (regex)
+sections: [a-z\-]+=[0-9]+( [a-z\-]+=[0-9]+)* (regex)
 
 $ moonx q2316367743/moonsearch/cmd/moonsearch search -D _build/cram/index.msdb a.txt
 */fixture/a.txt (glob)

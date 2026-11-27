@@ -207,6 +207,7 @@ async test "search help is stable" {
       #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
       #|  --engine <engine>            Execution engine: scan or bitmap [default: scan]
       #|  --root <root>                Root directory for a live scan; may be repeated
+      #|  --fast-fields <fast-fields>  Range fields loaded eagerly: size,mtime [default: size,mtime]
       #|  --sort <sort>                Result order: name, path, size, mtime, ext, or type [default: name]
       #|  -n, --limit <limit>          Maximum number of results; 0 means unlimited [default: 0]
       #|  --format <format>            Custom output template for each match
@@ -228,25 +229,26 @@ async test "count help is stable" {
       #|  query...  Search query; bare terms are joined with single spaces
       #|
       #|Options:
-      #|  -h, --help                 Show help information.
-      #|  -V, --version              Show version information.
-      #|  --no-config                Do not read the configuration file
-      #|  -v, --verbose              Print detailed progress information
-      #|  -q, --quiet                Only print results and errors
-      #|  --stats                    Print timings and index sizes to stderr
-      #|  --explain                  Print the execution plan to stderr
-      #|  -D, --database <database>  Path to the index database [env: MOONSEARCH_DATABASE]
-      #|  --config <config>          Path to the configuration file [env: MOONSEARCH_CONFIG]
-      #|  -c, --case-sensitive       Match the query case-sensitively
-      #|  -e, --exact                Match whole names instead of substrings
-      #|  -p, --search-path          Match against full paths instead of names
-      #|  -r, --regex                Treat the whole query as a regular expression
-      #|  --live                     Scan the configured roots instead of reading the index
-      #|  --auto-index               Build the index first when the database is missing
-      #|  --compat                   Reproduce upstream query error recovery
-      #|  --type <type>              Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>          Execution engine: scan or bitmap [default: scan]
-      #|  --root <root>              Root directory for a live scan; may be repeated
+      #|  -h, --help                   Show help information.
+      #|  -V, --version                Show version information.
+      #|  --no-config                  Do not read the configuration file
+      #|  -v, --verbose                Print detailed progress information
+      #|  -q, --quiet                  Only print results and errors
+      #|  --stats                      Print timings and index sizes to stderr
+      #|  --explain                    Print the execution plan to stderr
+      #|  -D, --database <database>    Path to the index database [env: MOONSEARCH_DATABASE]
+      #|  --config <config>            Path to the configuration file [env: MOONSEARCH_CONFIG]
+      #|  -c, --case-sensitive         Match the query case-sensitively
+      #|  -e, --exact                  Match whole names instead of substrings
+      #|  -p, --search-path            Match against full paths instead of names
+      #|  -r, --regex                  Treat the whole query as a regular expression
+      #|  --live                       Scan the configured roots instead of reading the index
+      #|  --auto-index                 Build the index first when the database is missing
+      #|  --compat                     Reproduce upstream query error recovery
+      #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
+      #|  --engine <engine>            Execution engine: scan or bitmap [default: scan]
+      #|  --root <root>                Root directory for a live scan; may be repeated
+      #|  --fast-fields <fast-fields>  Range fields loaded eagerly: size,mtime [default: size,mtime]
     ),
   )
 }
@@ -477,7 +479,7 @@ async test "a written database drives search, count, and info without the roots"
   @fs.remove(dir, recursive=true)
   match info {
     @cli.Success(text) => {
-      assert_true(bytes_contains(text, "format: MSDB 3.1"))
+      assert_true(bytes_contains(text, "format: MSDB 3.2"))
       assert_true(bytes_contains(text, "folders: 2"))
       assert_true(bytes_contains(text, "files: 3"))
       assert_true(bytes_contains(text, "checksum: verified"))
@@ -507,7 +509,7 @@ async test "a written database drives search, count, and info without the roots"
 }
 
 ///|
-async test "a persisted index keeps unbuilt range fields lazy" {
+async test "persisted core ranges and parent paths work after the roots are deleted" {
   let dir = make_fixture("moonsearch-lazy-fields")
   let real = real_dir(dir)
   let database = test_database("lazy-fields")
@@ -515,10 +517,42 @@ async test "a persisted index keeps unbuilt range fields lazy" {
   let depth = @cli.run([
     "search", "-D", database, "--engine", "bitmap", "--type", "folder", "depth:0",
   ])
+  let children = @cli.run([
+    "search", "-D", database, "--engine", "bitmap", "--type", "folder", "childcount:3",
+  ])
+  let parent = @cli.run([
+    "search",
+    "-D",
+    database,
+    "--engine",
+    "bitmap",
+    "parent:\{real}/sub",
+  ])
+  let child_files = @cli.run([
+    "search", "-D", database, "--engine", "bitmap", "--explain", "childfilecount:2",
+  ])
   @fs.remove(dir, recursive=true)
   match depth {
     @cli.Success(text) => assert_eq(trim_final_lf(text), @utf8.encode(real))
-    _ => abort("expected the root to match depth:0 from the persisted store")
+    _ =>
+      abort("expected the root to match depth:0 from the persisted range slice")
+  }
+  match children {
+    @cli.Success(text) => assert_eq(trim_final_lf(text), @utf8.encode(real))
+    _ => abort("expected childcount to use the persisted range slice")
+  }
+  match parent {
+    @cli.Success(text) =>
+      assert_eq(trim_final_lf(text), @utf8.encode("\{real}/sub/b.pdf"))
+    _ => abort("expected parent paths to come from the persisted table")
+  }
+  match child_files {
+    @cli.SuccessWith(text, diagnostics) => {
+      assert_eq(trim_final_lf(text), @utf8.encode(real))
+      assert_true(diagnostics.contains("reason=childfilecount"))
+    }
+    _ =>
+      abort("expected an unpersisted optional child count to degrade to scan")
   }
 }
 
@@ -958,11 +992,14 @@ async test "stats and verbose write diagnostics to stderr" {
       assert_true(diagnostics.contains("names:"))
       assert_true(diagnostics.contains("dict: "))
       assert_true(diagnostics.contains("categories"))
-      // The default fast fields are built eagerly; the others stay lazy.
+      // The five core fields are always built; optional child counts are not.
       assert_true(diagnostics.contains("ranges: size="))
       assert_true(diagnostics.contains("mtime="))
-      assert_false(diagnostics.contains("depth="))
-      assert_false(diagnostics.contains("parent="))
+      assert_true(diagnostics.contains("depth="))
+      assert_true(diagnostics.contains("childcount="))
+      assert_true(diagnostics.contains("parent="))
+      assert_false(diagnostics.contains("childfilecount="))
+      assert_false(diagnostics.contains("childfoldercount="))
       // The trigram postings are built unless --no-trigram is passed.
       assert_true(diagnostics.contains("trigram: "))
       assert_true(diagnostics.contains("keys, "))
@@ -1018,27 +1055,37 @@ async test "--no-trigram disables the posting build" {
 }
 
 ///|
-async test "fast-fields selects the range indexes built eagerly" {
+async test "fast-fields adds optional ranges while the core stays complete" {
   let dir = make_tree_fixture()
+  let database = test_database("fast-fields")
   let result = @cli.run([
-    "index",
-    "-D",
-    test_database("fast-fields"),
-    "--stats",
-    "--fast-fields",
-    "size,depth,parent",
-    dir,
+    "index", "-D", database, "--stats", "--fast-fields", "size,childfilecount", dir,
+  ])
+  let selected = @cli.run([
+    "search", "-D", database, "--engine", "bitmap", "--explain", "childfilecount:>=0",
   ])
   @fs.remove(dir, recursive=true)
   match result {
     @cli.SuccessWith(_, diagnostics) => {
       assert_true(diagnostics.contains("ranges: size="))
+      assert_true(diagnostics.contains("mtime="))
       assert_true(diagnostics.contains("depth="))
+      assert_true(diagnostics.contains("childcount="))
       assert_true(diagnostics.contains("parent="))
-      // mtime was not selected, so it is neither built nor reported.
-      assert_false(diagnostics.contains("mtime="))
+      assert_true(diagnostics.contains("childfilecount="))
+      assert_false(diagnostics.contains("childfoldercount="))
     }
     _ => abort("expected stats with range indexes")
+  }
+  match selected {
+    @cli.SuccessWith(_, diagnostics) => {
+      assert_true(diagnostics.contains("(const#"))
+      assert_false(diagnostics.contains("reason=childfilecount"))
+    }
+    _ =>
+      abort(
+        "expected the persisted optional child count to use its range index",
+      )
   }
 }
 

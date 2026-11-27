@@ -3,11 +3,14 @@
 ///
 /// Every range field is eager so the compile-shape tests never depend on lazy
 /// materialization, and `trigram=false` models a `--no-trigram` build.
-fn plan_index(trigram~ : Bool = true) -> @index.Index {
+fn plan_index(
+  trigram~ : Bool = true,
+  eager~ : @index.RangeFieldSet = @index.RangeFieldSet::all(),
+) -> @index.Index {
   let store = test_store() catch {
     err => abort("plan fixture failed: \{err.message()}")
   }
-  @index.Index::build(store, eager=@index.RangeFieldSet::all(), trigram~)
+  @index.Index::build(store, eager~, trigram~)
 }
 
 ///|
@@ -139,6 +142,16 @@ test "indexed fields compile to the dictionary and range sets" {
     "childcount:0",
   )
   assert_plan_const(
+    plan_of(index, "childfilecount:2"),
+    ranges.child_file_count().equal(2L),
+    "childfilecount:2",
+  )
+  assert_plan_const(
+    plan_of(index, "childfoldercount:3"),
+    ranges.child_folder_count().equal(3L),
+    "childfoldercount:3",
+  )
+  assert_plan_const(
     plan_of(index, "empty:"),
     ranges.child_count().equal(0L),
     "empty:",
@@ -211,13 +224,14 @@ test "name terms choose trigram or scan by capability" {
   assert_plan_scan(plan_of(index, "*.pdf"), "glob", "*.pdf")
   assert_plan_scan(plan_of(index, "regex:\"^photo\""), "regex", "regex")
   assert_plan_scan(plan_of(index, "path:docs"), "path", "path:docs")
+  let core_index = plan_index(eager=@index.RangeFieldSet::core())
   assert_plan_scan(
-    plan_of(index, "childfilecount:2"),
+    plan_of(core_index, "childfilecount:2"),
     "childfilecount",
     "childfilecount:2",
   )
   assert_plan_scan(
-    plan_of(index, "childfoldercount:3"),
+    plan_of(core_index, "childfoldercount:3"),
     "childfoldercount",
     "childfoldercount:3",
   )
@@ -425,8 +439,9 @@ test "explain renders estimates, labels, and degradation reasons" {
     plan_of(index, "path:docs").describe(total),
     "(scan#9 reason=path (substring \"docs\" nocase path))",
   )
+  let core_index = plan_index(eager=@index.RangeFieldSet::core())
   assert_eq(
-    plan_of(index, "childfilecount:2").describe(total),
+    plan_of(core_index, "childfilecount:2").describe(total),
     "(scan#9 reason=childfilecount (childfilecount = 2))",
   )
   assert_eq(

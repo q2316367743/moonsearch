@@ -357,8 +357,12 @@ fn diff_nested_root_store(
 
 ///|
 /// Build an index over a fixture, failing the test on an internal error.
-fn diff_index(store : @core.Store, trigram~ : Bool = true) -> @index.Index {
-  @index.Index::build(store, eager=@index.RangeFieldSet::all(), trigram~)
+fn diff_index(
+  store : @core.Store,
+  trigram~ : Bool = true,
+  eager~ : @index.RangeFieldSet = @index.RangeFieldSet::all(),
+) -> @index.Index {
+  @index.Index::build(store, eager~, trigram~)
 }
 
 ///|
@@ -534,6 +538,7 @@ test "the explain corpus reaches every plan node and degradation reason" {
   }
   let indexes : Array[(@index.Index, String)] = [
     (diff_index(store), "indexed"),
+    (diff_index(store, eager=@index.RangeFieldSet::core()), "core-only"),
     (diff_index(stop_store), "stop-gram"),
     (diff_index(store, trigram=false), "no-trigram"),
   ]

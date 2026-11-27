@@ -11,7 +11,7 @@ const DB_VERSION_MAJOR : UInt16 = 3
 /// Minor format version. A reader accepts any minor version at or above zero
 /// and skips section kinds it does not know, so a newer writer can add
 /// sections without breaking older readers.
-const DB_VERSION_MINOR : UInt16 = 1
+const DB_VERSION_MINOR : UInt16 = 2
 
 ///|
 /// Fixed header size in bytes.
@@ -37,8 +37,8 @@ const DB_MAX_FILE_BYTES : Int64 = 2147483647L
 const DB_SECTION_ENTRY_SIZE : Int32 = 20
 
 ///|
-/// Upper bound on the section count. The current writer emits ten sections
-/// with trigram postings (nine without); the spare room allows future additions
+/// Upper bound on the section count. The current writer emits eleven sections
+/// with trigram postings (ten without); the spare room allows future additions
 /// without a huge table allocation.
 const DB_MAX_SECTIONS : Int32 = 32
 
@@ -89,6 +89,10 @@ const SECTION_POSTINGS : Int32 = 9
 ///|
 /// Section kind of the checksum trailer.
 const SECTION_CHECKSUM : Int32 = 10
+
+///|
+/// Section kind of the sorted folder-path-to-id translation table.
+const SECTION_PARENT_PATHS : Int32 = 11
 
 ///|
 /// On-disk exclude kind tags.
@@ -170,6 +174,18 @@ const RANGE_CHILD_COUNT : Int32 = 4
 const RANGE_PARENT : Int32 = 5
 
 ///|
+/// On-disk tag of the optional `RangeField::ChildFileCount`.
+const RANGE_CHILD_FILE_COUNT : Int32 = 6
+
+///|
+/// On-disk tag of the optional `RangeField::ChildFolderCount`.
+const RANGE_CHILD_FOLDER_COUNT : Int32 = 7
+
+///|
+/// Maximum number of range fields in a v3.2 database.
+const DB_MAX_RANGE_FIELDS : Int32 = 7
+
+///|
 /// Largest trigram key: three bytes packed into 24 bits.
 const DB_MAX_TRIGRAM_KEY : UInt32 = 0xFFFFFF
 
@@ -231,6 +247,7 @@ fn section_name(kind : Int32) -> String {
     SECTION_DICT => "dict"
     SECTION_RANGES => "ranges"
     SECTION_POSTINGS => "postings"
+    SECTION_PARENT_PATHS => "parent-paths"
     SECTION_CHECKSUM => "checksum"
     other => "unknown(\{other})"
   }
@@ -484,7 +501,7 @@ fn validate_header_counts(
   if dict_count > DB_MAX_DICT_KEYS {
     raise DbError::Corrupt("dictionary key count is out of range")
   }
-  if range_count > 5 {
+  if range_count > DB_MAX_RANGE_FIELDS {
     raise DbError::Corrupt("range field count is out of range")
   }
   if trigram_count > DB_MAX_TRIGRAM_KEYS {
@@ -627,6 +644,13 @@ fn parse_envelope(
   if minor >= DB_VERSION_MINOR.to_int() &&
     find_section(sections, SECTION_EXCLUDES) is None {
     raise DbError::Corrupt("missing excludes section")
+  }
+  if minor >= DB_VERSION_MINOR.to_int() &&
+    find_section(sections, SECTION_PARENT_PATHS) is None {
+    raise DbError::Corrupt("missing parent-paths section")
+  }
+  if minor >= DB_VERSION_MINOR.to_int() && range_count < 5 {
+    raise DbError::Corrupt("database is missing a core range field")
   }
   let checksum = required_section(sections, SECTION_CHECKSUM)
   if checksum.length != 8 {

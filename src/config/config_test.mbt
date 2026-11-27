@@ -49,7 +49,7 @@ test "configuration parses every supported section" {
     #|  },
     #|  "search": {"sort": "size", "limit": 7, "folders_first": true, "type": "file"},
     #|  "engine": "bitmap",
-    #|  "fast_fields": ["size", "depth"],
+    #|  "fast_fields": ["size", "depth", "childfilecount"],
     #|  "trigram": false,
     #|  "one_file_system": false,
     #|  "allow_nested_roots": true,
@@ -73,11 +73,9 @@ test "configuration parses every supported section" {
   assert_true(config.search.folders_first)
   assert_true(config.search.kind is @query.FilesOnly)
   assert_eq(config.engine, Some("bitmap"))
-  assert_true(
-    @index.RangeFieldSet::of(config.fast_fields.unwrap()).contains(
-      @index.RangeField::Depth,
-    ),
-  )
+  let fast_fields = @index.RangeFieldSet::of(config.fast_fields.unwrap())
+  assert_true(fast_fields.contains(@index.RangeField::Depth))
+  assert_true(fast_fields.contains(@index.RangeField::ChildFileCount))
   assert_eq(config.trigram, Some(false))
   assert_eq(config.one_file_system, Some(false))
   assert_eq(config.allow_nested_roots, Some(true))

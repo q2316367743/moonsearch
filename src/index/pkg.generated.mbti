@@ -142,9 +142,9 @@ pub fn Index::build(@core.Store, eager? : RangeFieldSet, trigram? : Bool, exclud
 pub fn Index::dict(Self) -> Dict
 pub fn Index::entry_count(Self) -> Int32
 pub fn Index::excludes(Self) -> ArrayView[ExcludeRule]
-pub fn Index::from_bytes(BytesView, verify? : Bool, budget? : @ids.IdsDecodeBudget?) -> Self raise DbError
+pub fn Index::from_bytes(BytesView, verify? : Bool, budget? : @ids.IdsDecodeBudget?, eager? : RangeFieldSet) -> Self raise DbError
 pub fn Index::ranges(Self) -> Ranges
-pub async fn Index::read_database(StringView, verify? : Bool, budget? : @ids.IdsDecodeBudget?) -> Self raise DbError
+pub async fn Index::read_database(StringView, verify? : Bool, budget? : @ids.IdsDecodeBudget?, eager? : RangeFieldSet) -> Self raise DbError
 pub fn Index::restore(store~ : @core.Store, dict~ : Dict, ranges~ : Ranges, trigram? : TrigramIndex?, excludes? : Array[ExcludeRule]) -> Self
 pub fn Index::store(Self) -> @core.Store
 pub fn Index::to_bytes(Self) -> Bytes raise DbError
@@ -157,9 +157,13 @@ pub(all) enum RangeField {
   Depth
   ChildCount
   Parent
+  ChildFileCount
+  ChildFolderCount
 }
 pub fn RangeField::all() -> Array[Self]
+pub fn RangeField::core() -> Array[Self]
 pub fn RangeField::from_name(StringView) -> Self?
+pub fn RangeField::is_core(Self) -> Bool
 pub fn RangeField::name(Self) -> String
 
 pub struct RangeFieldSet {
@@ -167,6 +171,8 @@ pub struct RangeFieldSet {
 }
 pub fn RangeFieldSet::all() -> Self
 pub fn RangeFieldSet::contains(Self, RangeField) -> Bool
+pub fn RangeFieldSet::core() -> Self
+pub fn RangeFieldSet::default() -> Self
 pub fn RangeFieldSet::describe(Self) -> String
 pub fn RangeFieldSet::empty() -> Self
 pub fn RangeFieldSet::is_empty(Self) -> Bool
@@ -203,16 +209,19 @@ pub struct Ranges {
 }
 pub fn Ranges::build(@core.Store, eager? : RangeFieldSet) -> Self
 pub fn Ranges::child_count(Self) -> RangeIndex
+pub fn Ranges::child_file_count(Self) -> RangeIndex
+pub fn Ranges::child_folder_count(Self) -> RangeIndex
 pub fn Ranges::depth(Self) -> RangeIndex
 pub fn Ranges::eager_fields(Self) -> RangeFieldSet
 pub fn Ranges::entry_count(Self) -> Int32
 pub fn Ranges::field(Self, RangeField) -> RangeIndex
+pub fn Ranges::is_available(Self, RangeField) -> Bool
 pub fn Ranges::is_loaded(Self, RangeField) -> Bool
 pub fn Ranges::mtime(Self) -> RangeIndex
 pub fn Ranges::parent(Self) -> RangeIndex
 pub fn Ranges::parent_ids(Self, BytesView) -> @ids.Ids
 pub fn Ranges::parent_of(Self, BytesView) -> Int32?
-pub fn Ranges::restore(@core.Store, size_index? : RangeIndex?, mtime_index? : RangeIndex?, depth_index? : RangeIndex?, child_count_index? : RangeIndex?, parent_index? : RangeIndex?) -> Self
+pub fn Ranges::restore(@core.Store, size_index? : RangeIndex?, mtime_index? : RangeIndex?, depth_index? : RangeIndex?, child_count_index? : RangeIndex?, parent_index? : RangeIndex?, child_file_count_index? : RangeIndex?, child_folder_count_index? : RangeIndex?) -> Self
 pub fn Ranges::size(Self) -> RangeIndex
 
 pub(all) struct RootSpec {

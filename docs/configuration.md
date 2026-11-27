@@ -117,7 +117,10 @@ $XDG_CONFIG_HOME/moonsearch/config.json
 
 `engine` 既可以写成上面的对象，也可以直接写成 `"scan"` 或 `"bitmap"` 来设置查询引擎。
 对象中的 `name` 可选。顶层 `fast_fields` 和 `trigram` 存在时覆盖对象中的同名字段。
-`fast_fields` 接受 `size`、`mtime`、`depth`、`childcount`、`parent`。
+`fast_fields` 接受 `size`、`mtime`、`depth`、`childcount`、`parent`、
+`childfilecount`、`childfoldercount`。五个核心字段总是构建并持久化；该列表只额外选择
+两个可选 child-count 字段，并控制加载数据库时立即解码哪些字段。未选择的可选字段在查询时
+退化为 scan。
 
 ## 自定义宏
 

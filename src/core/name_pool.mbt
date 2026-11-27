@@ -109,7 +109,7 @@ pub fn NamePool::add(
   if offset + length.to_uint64() > 4294967295UL {
     raise PoolFull
   }
-  self.tail.write_bytes(name)
+  self.tail.write_bytesview(name)
   self.name_count = self.name_count + 1
   if self.tail.length() >= self.chunk_size {
     self.seal_tail()
@@ -164,7 +164,7 @@ pub fn NamePool::to_bytes(self : NamePool) -> Bytes {
   }
   let buffer = @buffer.Buffer(capacity=self.sealed_len.to_int())
   for chunk in self.chunks {
-    buffer.write_bytes(chunk.exact_view())
+    buffer.write_bytesview(chunk.exact_view())
   }
   buffer.to_bytes()
 }

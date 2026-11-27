@@ -74,9 +74,10 @@ pub async fn Index::read_database(
   path : StringView,
   verify~ : Bool = false,
   budget~ : @ids.IdsDecodeBudget? = None,
+  eager~ : RangeFieldSet = RangeFieldSet::all(),
 ) -> Index raise DbError {
   let bytes = read_database_bytes(path)
-  Index::from_bytes(bytes[:], verify~, budget~)
+  Index::from_bytes(bytes[:], verify~, budget~, eager~)
 }
 
 ///|

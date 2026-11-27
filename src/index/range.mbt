@@ -15,6 +15,10 @@ pub(all) enum RangeField {
   ChildCount
   /// Parent folder id, a high-cardinality equality field.
   Parent
+  /// Direct child file count, folders only; optional range field.
+  ChildFileCount
+  /// Direct child folder count, folders only; optional range field.
+  ChildFolderCount
 }
 
 ///|
@@ -26,13 +30,30 @@ pub fn RangeField::name(self : RangeField) -> String {
     Depth => "depth"
     ChildCount => "childcount"
     Parent => "parent"
+    ChildFileCount => "childfilecount"
+    ChildFolderCount => "childfoldercount"
   }
 }
 
 ///|
-/// Every range field, in build order.
+/// Every range field, in build and persistence order.
 pub fn RangeField::all() -> Array[RangeField] {
+  [Size, MTime, Depth, ChildCount, Parent, ChildFileCount, ChildFolderCount]
+}
+
+///|
+/// The five fields every persisted index always contains.
+pub fn RangeField::core() -> Array[RangeField] {
   [Size, MTime, Depth, ChildCount, Parent]
+}
+
+///|
+/// Whether the field is part of the default persisted core.
+pub fn RangeField::is_core(self : RangeField) -> Bool {
+  match self {
+    Size | MTime | Depth | ChildCount | Parent => true
+    ChildFileCount | ChildFolderCount => false
+  }
 }
 
 ///|
@@ -52,6 +73,10 @@ pub fn RangeField::from_name(name : StringView) -> RangeField? {
     Some(ChildCount)
   } else if @util.eq_bytes(folded[:], b"parent"[:], false) {
     Some(Parent)
+  } else if @util.eq_bytes(folded[:], b"childfilecount"[:], false) {
+    Some(ChildFileCount)
+  } else if @util.eq_bytes(folded[:], b"childfoldercount"[:], false) {
+    Some(ChildFolderCount)
   } else {
     None
   }
@@ -66,15 +91,31 @@ fn range_field_bit(field : RangeField) -> UInt32 {
     Depth => 0x04U
     ChildCount => 0x08U
     Parent => 0x10U
+    ChildFileCount => 0x20U
+    ChildFolderCount => 0x40U
+  }
+}
+
+///|
+/// Stable dense position of a range field, used for persisted payload slots.
+fn range_field_position(field : RangeField) -> Int32 {
+  match field {
+    Size => 0
+    MTime => 1
+    Depth => 2
+    ChildCount => 3
+    Parent => 4
+    ChildFileCount => 5
+    ChildFolderCount => 6
   }
 }
 
 ///|
 /// A small set of `RangeField` values.
 ///
-/// `--fast-fields` selects the fields that are built eagerly. The remaining
-/// fields are still available: they are built from the store on first use, so
-/// startup work and memory follow the fields a workload actually queries.
+/// `--fast-fields` selects the fields decoded eagerly from a database. The five
+/// core fields are always persisted; the two optional child-count fields are
+/// built only when selected. Unselected persisted fields decode on first use.
 pub struct RangeFieldSet {
   priv bits : UInt32
 }
@@ -88,7 +129,19 @@ pub fn RangeFieldSet::empty() -> RangeFieldSet {
 ///|
 /// Every field. This is the library default; the CLI default is `size,mtime`.
 pub fn RangeFieldSet::all() -> RangeFieldSet {
+  { bits: 0x7FU, }
+}
+
+///|
+/// The five fields always built and persisted.
+pub fn RangeFieldSet::core() -> RangeFieldSet {
   { bits: 0x1FU, }
+}
+
+///|
+/// The CLI default selection for eager decoding.
+pub fn RangeFieldSet::default() -> RangeFieldSet {
+  { bits: 0x03U, }
 }
 
 ///|
@@ -170,14 +223,14 @@ pub fn RangeFieldSet::parse(text : StringView) -> Result[RangeFieldSet, String] 
     let name = part.trim()
     if name.is_empty() {
       return Err(
-        "empty range field; expected size, mtime, depth, childcount, or parent",
+        "empty range field; expected size, mtime, depth, childcount, parent, childfilecount, or childfoldercount",
       )
     }
     match RangeField::from_name(name) {
       Some(field) => set = set.union(RangeFieldSet::single(field))
       None =>
         return Err(
-          "unknown range field '\{name}'; expected size, mtime, depth, childcount, or parent",
+          "unknown range field '\{name}'; expected size, mtime, depth, childcount, parent, childfilecount, or childfoldercount",
         )
     }
   }
@@ -431,6 +484,37 @@ priv struct ParentPaths {
 }
 
 ///|
+/// Install a path table already validated by the database loader.
+fn ParentPaths::restore(
+  paths~ : Array[Bytes],
+  ids~ : Array[Int32],
+) -> ParentPaths {
+  { paths, ids, }
+}
+
+///|
+/// Encode the sorted path-to-folder table for the PARENT_PATHS section.
+fn ParentPaths::to_bytes(self : ParentPaths) -> Bytes raise DbError {
+  let buffer = @buffer.Buffer()
+  buffer.write_uint_le(self.paths.length().reinterpret_as_uint())
+  let mut total_bytes = 0L
+  for position in 0..<self.paths.length() {
+    let path = self.paths[position]
+    if path.length() == 0 || path.length() > @core.MAX_NAME_LEN {
+      raise DbError::Corrupt("parent path length is out of range")
+    }
+    total_bytes = total_bytes + path.length().to_int64()
+    if total_bytes > DB_MAX_NAME_BYTES {
+      raise DbError::TooLarge("parent paths exceed the size limit")
+    }
+    buffer.write_uint_le(path.length().reinterpret_as_uint())
+    buffer.write_bytesview(path[:])
+    buffer.write_uint_le(self.ids[position].reinterpret_as_uint())
+  }
+  buffer.to_bytes()
+}
+
+///|
 /// Build the path-to-folder table.
 ///
 /// A path is not necessarily unique: with `--allow-nested-roots` the nested
@@ -508,15 +592,14 @@ fn ParentPaths::lookup(self : ParentPaths, path : BytesView) -> Int32? {
 }
 
 ///|
-/// The five default range indexes of one store.
+/// The range indexes of one store.
 ///
-/// Construction builds the fields selected by `eager` and leaves the rest
-/// unbuilt. A field is materialized on first access and cached, so a query that
-/// never uses `depth:` does not pay for it, while repeated queries do not
-/// rebuild it.
-///
-/// The builder owns a `Store` value (which shares its arrays; it does not copy
-/// them) so lazy fields can be derived without another scan.
+/// A freshly built index materializes the fields selected by `eager`; core
+/// fields omitted there can still be derived from the store on first use. A
+/// database-restored index never takes that fallback: selected fields are
+/// decoded immediately and every other persisted field owns its encoded slice
+/// until first use. Optional child-count fields that were not persisted remain
+/// unavailable and the query compiler degrades them to a scan.
 pub struct Ranges {
   priv store : @core.Store
   priv total : Int32
@@ -526,15 +609,20 @@ pub struct Ranges {
   priv mut depth_index : RangeIndex?
   priv mut child_count_index : RangeIndex?
   priv mut parent_index : RangeIndex?
+  priv mut child_file_count_index : RangeIndex?
+  priv mut child_folder_count_index : RangeIndex?
   priv mut parent_paths : ParentPaths?
+  priv persisted_ranges : Array[Bytes?]?
+  priv mut store_builds : Int32
+  priv mut db_decodes : Int32
 }
 
 ///|
 /// Build the range indexes for a finished store.
 ///
 /// `eager` defaults to every field, which is what tests and library callers
-/// want. The CLI passes `--fast-fields` (default `size,mtime`): the other
-/// fields stay unbuilt until a query needs them.
+/// want. `Index::build` unions it with the five core fields before calling this
+/// constructor; omitted optional fields remain unavailable.
 pub fn Ranges::build(
   store : @core.Store,
   eager~ : RangeFieldSet = RangeFieldSet::all(),
@@ -565,6 +653,16 @@ pub fn Ranges::build(
   } else {
     None
   }
+  let child_file_count_index = if eager.contains(ChildFileCount) {
+    Some(build_child_file_count(store, total))
+  } else {
+    None
+  }
+  let child_folder_count_index = if eager.contains(ChildFolderCount) {
+    Some(build_child_folder_count(store, total))
+  } else {
+    None
+  }
   let parent_paths = if parent_index is Some(_) {
     Some(build_parent_paths(store))
   } else {
@@ -579,7 +677,12 @@ pub fn Ranges::build(
     depth_index,
     child_count_index,
     parent_index,
+    child_file_count_index,
+    child_folder_count_index,
     parent_paths,
+    persisted_ranges: None,
+    store_builds: 0,
+    db_decodes: 0,
   }
 }
 
@@ -716,6 +819,32 @@ fn build_child_count(store : @core.Store, total : Int32) -> RangeIndex {
 }
 
 ///|
+/// Build the optional direct-child-file-count index, folders only.
+fn build_child_file_count(store : @core.Store, total : Int32) -> RangeIndex {
+  let entries : Array[(Int64, Int32)] = []
+  for id in 0..<store.folder_count() {
+    match store.folder(id) {
+      Some(folder) => entries.push((folder.num_files().to_int64(), id))
+      None => ()
+    }
+  }
+  RangeIndex::build(entries, total~)
+}
+
+///|
+/// Build the optional direct-child-folder-count index, folders only.
+fn build_child_folder_count(store : @core.Store, total : Int32) -> RangeIndex {
+  let entries : Array[(Int64, Int32)] = []
+  for id in 0..<store.folder_count() {
+    match store.folder(id) {
+      Some(folder) => entries.push((folder.num_folders().to_int64(), id))
+      None => ()
+    }
+  }
+  RangeIndex::build(entries, total~)
+}
+
+///|
 /// Build the parent index with a counting sort instead of a comparison sort.
 ///
 /// The value of an entry is its parent folder id, so the key space is exactly
@@ -788,12 +917,11 @@ fn build_parent(store : @core.Store, total : Int32) -> RangeIndex {
 }
 
 ///|
-/// Restore the range indexes a database persisted.
+/// Restore range indexes that were already decoded.
 ///
-/// Only the fields present in the file are installed; the rest stay lazy, so a
-/// query that needs one of them builds it from the restored store exactly as it
-/// would after a scan. This is what keeps `--fast-fields` meaningful across a
-/// save/load cycle: the saved index costs no more than the one that was written.
+/// This compatibility constructor keeps store-side lazy materialization for
+/// library callers and legacy databases. New MSDB v3.2 files use
+/// `restore_persisted` below, which retains encoded slices instead.
 pub fn Ranges::restore(
   store : @core.Store,
   size_index~ : RangeIndex? = None,
@@ -801,6 +929,8 @@ pub fn Ranges::restore(
   depth_index~ : RangeIndex? = None,
   child_count_index~ : RangeIndex? = None,
   parent_index~ : RangeIndex? = None,
+  child_file_count_index~ : RangeIndex? = None,
+  child_folder_count_index~ : RangeIndex? = None,
 ) -> Ranges {
   let mut eager = 0U
   if size_index is Some(_) {
@@ -818,6 +948,12 @@ pub fn Ranges::restore(
   if parent_index is Some(_) {
     eager = eager | range_field_bit(Parent)
   }
+  if child_file_count_index is Some(_) {
+    eager = eager | range_field_bit(ChildFileCount)
+  }
+  if child_folder_count_index is Some(_) {
+    eager = eager | range_field_bit(ChildFolderCount)
+  }
   {
     store,
     total: store.entry_count(),
@@ -827,7 +963,120 @@ pub fn Ranges::restore(
     depth_index,
     child_count_index,
     parent_index,
+    child_file_count_index,
+    child_folder_count_index,
     parent_paths: None,
+    persisted_ranges: None,
+    store_builds: 0,
+    db_decodes: 0,
+  }
+}
+
+///|
+/// Install a v3.2 range set. `persisted_ranges` owns only fields that were not
+/// decoded eagerly; every lazy access below decodes those bytes and never calls
+/// a store-side builder. `decoded_fields` is diagnostic state for whitebox tests.
+fn Ranges::restore_persisted(
+  store : @core.Store,
+  eager~ : RangeFieldSet,
+  size_index~ : RangeIndex?,
+  mtime_index~ : RangeIndex?,
+  depth_index~ : RangeIndex?,
+  child_count_index~ : RangeIndex?,
+  parent_index~ : RangeIndex?,
+  child_file_count_index~ : RangeIndex?,
+  child_folder_count_index~ : RangeIndex?,
+  parent_paths~ : ParentPaths,
+  persisted_ranges~ : Array[Bytes?],
+  decoded_fields~ : Int32,
+) -> Ranges {
+  {
+    store,
+    total: store.entry_count(),
+    eager,
+    size_index,
+    mtime_index,
+    depth_index,
+    child_count_index,
+    parent_index,
+    child_file_count_index,
+    child_folder_count_index,
+    parent_paths: Some(parent_paths),
+    persisted_ranges: Some(persisted_ranges),
+    store_builds: 0,
+    db_decodes: decoded_fields,
+  }
+}
+
+///|
+/// Encoded payload of a persisted field that has not been decoded yet.
+fn Ranges::persisted_range(self : Ranges, field : RangeField) -> Bytes? {
+  match self.persisted_ranges {
+    Some(payloads) => payloads[range_field_position(field)]
+    None => None
+  }
+}
+
+///|
+/// Decode one already validated range payload. Structural validation happens
+/// when the section is loaded; this path only allocates the two arrays.
+fn decode_range_payload(
+  payload : BytesView,
+  total : Int32,
+) -> RangeIndex raise DbError {
+  let reader = DbReader::new(payload)
+  ignore(reader.read_byte())
+  let length = checked_count(reader.read_u32(), "range length")
+  let values : Array[Int64] = []
+  for _ in 0..<length {
+    values.push(reader.read_i64())
+  }
+  let ids : Array[Int32] = []
+  for _ in 0..<length {
+    ids.push(checked_count(reader.read_u32(), "range id"))
+  }
+  reader.expect_end()
+  RangeIndex::restore(values~, ids~, total~)
+}
+
+///|
+/// Materialize a missing field from the correct source. `None` means the field
+/// was not persisted and store-side construction is forbidden for it.
+fn Ranges::missing_field(self : Ranges, field : RangeField) -> RangeIndex? {
+  match self.persisted_ranges {
+    Some(payloads) =>
+      match payloads[range_field_position(field)] {
+        Some(payload) => {
+          let decoded = try decode_range_payload(payload[:], self.total) catch {
+            _ => None
+          } noraise {
+            index => Some(index)
+          }
+          match decoded {
+            Some(index) => {
+              self.db_decodes = self.db_decodes + 1
+              Some(index)
+            }
+            None => None
+          }
+        }
+        None => None
+      }
+    None =>
+      if field.is_core() {
+        self.store_builds = self.store_builds + 1
+        let index = match field {
+          Size => build_size(self.store, self.total)
+          MTime => build_mtime(self.store, self.total)
+          Depth => build_depth(self.store, self.total)
+          ChildCount => build_child_count(self.store, self.total)
+          Parent => build_parent(self.store, self.total)
+          ChildFileCount | ChildFolderCount => RangeIndex::empty()
+        }
+        Some(index)
+      } else {
+        None
+      }
   }
 }
 
@@ -853,6 +1102,22 @@ pub fn Ranges::is_loaded(self : Ranges, field : RangeField) -> Bool {
     Depth => self.depth_index is Some(_)
     ChildCount => self.child_count_index is Some(_)
     Parent => self.parent_index is Some(_)
+    ChildFileCount => self.child_file_count_index is Some(_)
+    ChildFolderCount => self.child_folder_count_index is Some(_)
+  }
+}
+
+///|
+/// Whether a field can serve an indexed query. Core fields in a freshly built
+/// or legacy index may still materialize from the store; persisted indexes only
+/// report fields whose arrays or encoded slices are present.
+pub fn Ranges::is_available(self : Ranges, field : RangeField) -> Bool {
+  if self.is_loaded(field) {
+    return true
+  }
+  match self.persisted_ranges {
+    Some(payloads) => payloads[range_field_position(field)] is Some(_)
+    None => field.is_core()
   }
 }
 
@@ -861,11 +1126,14 @@ pub fn Ranges::is_loaded(self : Ranges, field : RangeField) -> Bool {
 pub fn Ranges::size(self : Ranges) -> RangeIndex {
   match self.size_index {
     Some(index) => index
-    None => {
-      let index = build_size(self.store, self.total)
-      self.size_index = Some(index)
-      index
-    }
+    None =>
+      match self.missing_field(Size) {
+        Some(index) => {
+          self.size_index = Some(index)
+          index
+        }
+        None => RangeIndex::empty()
+      }
   }
 }
 
@@ -874,11 +1142,14 @@ pub fn Ranges::size(self : Ranges) -> RangeIndex {
 pub fn Ranges::mtime(self : Ranges) -> RangeIndex {
   match self.mtime_index {
     Some(index) => index
-    None => {
-      let index = build_mtime(self.store, self.total)
-      self.mtime_index = Some(index)
-      index
-    }
+    None =>
+      match self.missing_field(MTime) {
+        Some(index) => {
+          self.mtime_index = Some(index)
+          index
+        }
+        None => RangeIndex::empty()
+      }
   }
 }
 
@@ -887,11 +1158,14 @@ pub fn Ranges::mtime(self : Ranges) -> RangeIndex {
 pub fn Ranges::depth(self : Ranges) -> RangeIndex {
   match self.depth_index {
     Some(index) => index
-    None => {
-      let index = build_depth(self.store, self.total)
-      self.depth_index = Some(index)
-      index
-    }
+    None =>
+      match self.missing_field(Depth) {
+        Some(index) => {
+          self.depth_index = Some(index)
+          index
+        }
+        None => RangeIndex::empty()
+      }
   }
 }
 
@@ -900,11 +1174,14 @@ pub fn Ranges::depth(self : Ranges) -> RangeIndex {
 pub fn Ranges::child_count(self : Ranges) -> RangeIndex {
   match self.child_count_index {
     Some(index) => index
-    None => {
-      let index = build_child_count(self.store, self.total)
-      self.child_count_index = Some(index)
-      index
-    }
+    None =>
+      match self.missing_field(ChildCount) {
+        Some(index) => {
+          self.child_count_index = Some(index)
+          index
+        }
+        None => RangeIndex::empty()
+      }
   }
 }
 
@@ -913,24 +1190,64 @@ pub fn Ranges::child_count(self : Ranges) -> RangeIndex {
 pub fn Ranges::parent(self : Ranges) -> RangeIndex {
   match self.parent_index {
     Some(index) => index
-    None => {
-      let index = build_parent(self.store, self.total)
-      self.parent_index = Some(index)
-      index
-    }
+    None =>
+      match self.missing_field(Parent) {
+        Some(index) => {
+          self.parent_index = Some(index)
+          index
+        }
+        None => RangeIndex::empty()
+      }
   }
 }
 
 ///|
-/// The path-to-folder table, built together with the parent index.
+/// The optional direct-child-file-count index.
+pub fn Ranges::child_file_count(self : Ranges) -> RangeIndex {
+  match self.child_file_count_index {
+    Some(index) => index
+    None =>
+      match self.missing_field(ChildFileCount) {
+        Some(index) => {
+          self.child_file_count_index = Some(index)
+          index
+        }
+        None => RangeIndex::empty()
+      }
+  }
+}
+
+///|
+/// The optional direct-child-folder-count index.
+pub fn Ranges::child_folder_count(self : Ranges) -> RangeIndex {
+  match self.child_folder_count_index {
+    Some(index) => index
+    None =>
+      match self.missing_field(ChildFolderCount) {
+        Some(index) => {
+          self.child_folder_count_index = Some(index)
+          index
+        }
+        None => RangeIndex::empty()
+      }
+  }
+}
+
+///|
+/// The path-to-folder table. Persisted indexes install it during loading and
+/// never sort paths here; only fresh or legacy indexes may derive it.
 fn Ranges::parent_paths(self : Ranges) -> ParentPaths {
   match self.parent_paths {
     Some(paths) => paths
-    None => {
-      let paths = build_parent_paths(self.store)
-      self.parent_paths = Some(paths)
-      paths
-    }
+    None =>
+      match self.persisted_ranges {
+        Some(_) => ParentPaths::restore(paths=[], ids=[])
+        None => {
+          let paths = build_parent_paths(self.store)
+          self.parent_paths = Some(paths)
+          paths
+        }
+      }
   }
 }
 
@@ -943,7 +1260,69 @@ pub fn Ranges::field(self : Ranges, field : RangeField) -> RangeIndex {
     Depth => self.depth()
     ChildCount => self.child_count()
     Parent => self.parent()
+    ChildFileCount => self.child_file_count()
+    ChildFolderCount => self.child_folder_count()
   }
+}
+
+///|
+/// Serialize one field, preferring decoded arrays and otherwise copying an
+/// owned persisted slice. Fresh indexes materialize missing core fields here so
+/// a database always contains the complete default set.
+fn Ranges::range_payload(self : Ranges, field : RangeField) -> Bytes? {
+  if self.is_loaded(field) {
+    let index = self.field(field)
+    let buffer = @buffer.Buffer()
+    buffer.write_byte(range_field_tag(field).to_byte())
+    buffer.write_uint_le(index.len().reinterpret_as_uint())
+    for value in index.values() {
+      buffer.write_int64_le(value)
+    }
+    for id in index.ids() {
+      buffer.write_uint_le(id.reinterpret_as_uint())
+    }
+    Some(buffer.to_bytes())
+  } else {
+    match self.persisted_range(field) {
+      Some(payload) => Some(payload)
+      None =>
+        if field.is_core() && self.persisted_ranges is None {
+          let index = self.field(field)
+          let buffer = @buffer.Buffer()
+          buffer.write_byte(range_field_tag(field).to_byte())
+          buffer.write_uint_le(index.len().reinterpret_as_uint())
+          for value in index.values() {
+            buffer.write_int64_le(value)
+          }
+          for id in index.ids() {
+            buffer.write_uint_le(id.reinterpret_as_uint())
+          }
+          Some(buffer.to_bytes())
+        } else {
+          None
+        }
+    }
+  }
+}
+
+///|
+/// Stable on-disk tag of a range field.
+fn range_field_tag(field : RangeField) -> Int32 {
+  match field {
+    Size => RANGE_SIZE
+    MTime => RANGE_MTIME
+    Depth => RANGE_DEPTH
+    ChildCount => RANGE_CHILD_COUNT
+    Parent => RANGE_PARENT
+    ChildFileCount => RANGE_CHILD_FILE_COUNT
+    ChildFolderCount => RANGE_CHILD_FOLDER_COUNT
+  }
+}
+
+///|
+/// Encode the path translation table without rebuilding or sorting it.
+fn Ranges::parent_paths_payload(self : Ranges) -> Bytes raise DbError {
+  self.parent_paths().to_bytes()
 }
 
 ///|

@@ -157,12 +157,14 @@ Query
 | `file:` / `folder:` / `hidden:` / `nohidden:` | 字典集合 |
 | `ext:` / 内置分类 | 扩展名桶 / 物化分类集合 |
 | `size:` / `depth:` / `childcount:` / `dm:` / `parent:` / `empty:` | 范围索引切片 |
+| `childfilecount:` / `childfoldercount:` | 已持久化时走范围索引；否则 `Scan`，字段名即原因 |
 | 普通名字子串 / `exact:`，needle ≥ 3 字节 | `Trigram` |
 | `*.pdf` / `regex:` / `path:` | `Scan`，原因 `glob` / `regex` / `path` |
 | needle < 3 字节 | `Scan`，原因 `short-needle` |
 | 全部 trigram 为 stop-gram | `Scan`，原因 `stop-grams` |
 | 未建 trigram | `Scan`，原因 `no-trigram` |
-| `childfilecount:` / `childfoldercount:` / `contenttype:` | `Scan`，字段名即原因 |
+| 可选 child-count 未持久化 | `Scan`，原因 `childfilecount` / `childfoldercount` |
+| `contenttype:` | `Scan`，原因 `contenttype` |
 
 - term 级 `file:` / `folder:` / `hidden:` / `nohidden:` 在编译期与叶子集合相交；
   `Trigram` 候选也先收窄，再逐条验证。

@@ -98,6 +98,25 @@ fn engine_of(invocation : Invocation) -> Result[Engine, String] {
 }
 
 ///|
+/// Parse the range fields to decode immediately from a persisted database.
+fn load_fast_fields_of(
+  invocation : Invocation,
+) -> Result[@index.RangeFieldSet, String] {
+  match explicit_option_value(invocation.matches, "fast-fields") {
+    Some(text) =>
+      match @index.RangeFieldSet::parse(text) {
+        Ok(fields) => Ok(fields)
+        Err(message) => Err("error: \{message}")
+      }
+    None =>
+      match invocation.config.fast_fields {
+        Some(fields) => Ok(@index.RangeFieldSet::of(fields))
+        None => Ok(@index.RangeFieldSet::default())
+      }
+  }
+}
+
+///|
 /// Parse `--limit`, then the configured limit, then zero (unlimited).
 fn limit_of(invocation : Invocation) -> Result[Int32, String] {
   match explicit_option_value(invocation.matches, "limit") {
@@ -277,7 +296,10 @@ async fn scan_store(
 /// postings come back without a rebuild. `--auto-index` scans and writes the
 /// database first when it is missing. A plain search with no database is a
 /// usage error that names the command which creates one.
-async fn query_source(invocation : Invocation) -> Result[QuerySource, String] {
+async fn query_source(
+  invocation : Invocation,
+  eager : @index.RangeFieldSet,
+) -> Result[QuerySource, String] {
   let matches = invocation.matches
   if flag_set(matches, "live") {
     let (store, _) = match scan_store(invocation) {
@@ -293,7 +315,7 @@ async fn query_source(invocation : Invocation) -> Result[QuerySource, String] {
   let exists = @fs.exists(database) catch { _ => false }
   if exists {
     let loaded : Result[@index.Index, String] = Ok(
-      @index.Index::read_database(database),
+      @index.Index::read_database(database, eager~),
     ) catch {
       err => Err("error: \{err.message()}")
     }
@@ -307,7 +329,7 @@ async fn query_source(invocation : Invocation) -> Result[QuerySource, String] {
       Ok(result) => result
       Err(message) => return Err(message)
     }
-    let index = live_index(invocation, store, excludes~)
+    let index = live_index(invocation, store, eager~, excludes~)
     let written : Result[Unit, String] = Ok(
       @index.Index::write_database(index, database),
     ) catch {
@@ -332,23 +354,15 @@ fn elapsed_ms(started : UInt64) -> Int64 {
 ///|
 /// Build the in-memory index a live bitmap query runs against.
 ///
-/// The product default is `--fast-fields size,mtime`: the other range fields
-/// materialize on first use inside the query compiler. The trigram postings are
-/// built because a name term is the common case; `--no-trigram` belongs to the
-/// index command, which is where an index shape is chosen.
+/// The five core range fields are always built. `eager` additionally selects
+/// optional child-count fields; unselected optional queries degrade to scan.
+/// The trigram postings are built because a name term is the common case.
 fn live_index(
   invocation : Invocation,
   store : @core.Store,
+  eager~ : @index.RangeFieldSet,
   excludes~ : Array[@index.ExcludeRule] = [],
 ) -> @index.Index {
-  let eager = match invocation.config.fast_fields {
-    Some(fields) => @index.RangeFieldSet::of(fields)
-    None =>
-      @index.RangeFieldSet::of([
-        @index.RangeField::Size,
-        @index.RangeField::MTime,
-      ])
-  }
   @index.Index::build(
     store,
     eager~,
@@ -482,8 +496,12 @@ async fn run_search(invocation : Invocation) -> CliResult {
   let stream_order = order.streams_name_order()
   let reverse_name = stream_order && order.reverse
   let collect_limit = if stream_order { order.limit } else { 0 }
+  let eager = match load_fast_fields_of(invocation) {
+    Ok(fields) => fields
+    Err(message) => return Failure(message)
+  }
   let source_started = @env.now()
-  let source = match query_source(invocation) {
+  let source = match query_source(invocation, eager) {
     Ok(source) => source
     Err(message) => return Failure(message)
   }
@@ -527,7 +545,7 @@ async fn run_search(invocation : Invocation) -> CliResult {
       let index = match source {
         Live(store) => {
           let build_started = @env.now()
-          let index = live_index(invocation, store)
+          let index = live_index(invocation, store, eager~)
           index_ms = Some(elapsed_ms(build_started))
           index
         }
@@ -628,8 +646,12 @@ async fn run_count(invocation : Invocation) -> CliResult {
     Ok(query) => query
     Err(message) => return Failure(message)
   }
+  let eager = match load_fast_fields_of(invocation) {
+    Ok(fields) => fields
+    Err(message) => return Failure(message)
+  }
   let source_started = @env.now()
-  let source = match query_source(invocation) {
+  let source = match query_source(invocation, eager) {
     Ok(source) => source
     Err(message) => return Failure(message)
   }
@@ -660,7 +682,7 @@ async fn run_count(invocation : Invocation) -> CliResult {
       let index = match source {
         Live(store) => {
           let build_started = @env.now()
-          let index = live_index(invocation, store)
+          let index = live_index(invocation, store, eager~)
           index_ms = Some(elapsed_ms(build_started))
           index
         }

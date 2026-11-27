@@ -203,13 +203,18 @@ test "field sets parse names, aliases, spaces, and reject unknown names" {
     Ok(_) => abort("an empty field name must be rejected")
   }
   let all = @index.RangeFieldSet::all()
-  assert_eq(all.size(), 5)
-  assert_eq(all.describe(), "size,mtime,depth,childcount,parent")
+  assert_eq(all.size(), 7)
+  assert_eq(
+    all.describe(),
+    "size,mtime,depth,childcount,parent,childfilecount,childfoldercount",
+  )
+  assert_eq(@index.RangeFieldSet::core().size(), 5)
+  assert_eq(@index.RangeFieldSet::default().describe(), "size,mtime")
   assert_eq(@index.RangeFieldSet::empty().describe(), "")
 }
 
 ///|
-test "ranges build the five default fields" {
+test "ranges build all seven fields" {
   let store = range_store() catch {
     err => abort("fixture failed: \{err.message()}")
   }
@@ -219,6 +224,8 @@ test "ranges build the five default fields" {
   assert_eq(ranges.mtime().len(), 8)
   assert_eq(ranges.depth().len(), 8)
   assert_eq(ranges.child_count().len(), 4)
+  assert_eq(ranges.child_file_count().len(), 4)
+  assert_eq(ranges.child_folder_count().len(), 4)
   assert_eq(ranges.parent().len(), 7)
   assert_eq(ranges.size().is_empty(), false)
 }
@@ -286,6 +293,24 @@ test "child count index covers folders only" {
 }
 
 ///|
+test "optional child kind counts index folders only" {
+  let store = range_store() catch {
+    err => abort("fixture failed: \{err.message()}")
+  }
+  let ranges = @index.Ranges::build(store)
+  let files = ranges.child_file_count()
+  assert_eq(range_values(files), [0L, 1L, 1L, 2L])
+  assert_eq(range_ids(files), [1, 2, 3, 0])
+  assert_eq(files.equal(2L).to_sorted_ids(), [0])
+  assert_eq(files.range(1L, 2L).to_sorted_ids(), [2, 3])
+  let folders = ranges.child_folder_count()
+  assert_eq(range_values(folders), [0L, 0L, 1L, 2L])
+  assert_eq(range_ids(folders), [2, 3, 1, 0])
+  assert_eq(folders.equal(0L).to_sorted_ids(), [2, 3])
+  assert_eq(folders.at_least(1L).to_sorted_ids(), [0, 1])
+}
+
+///|
 test "parent index is counting-sorted and skips roots" {
   let store = range_store() catch {
     err => abort("fixture failed: \{err.message()}")
@@ -349,6 +374,9 @@ test "eager fields are built up front and the rest are lazy" {
   assert_false(ranges.is_loaded(@index.RangeField::Depth))
   assert_false(ranges.is_loaded(@index.RangeField::ChildCount))
   assert_false(ranges.is_loaded(@index.RangeField::Parent))
+  assert_false(ranges.is_available(@index.RangeField::ChildFileCount))
+  assert_false(ranges.is_available(@index.RangeField::ChildFolderCount))
+  assert_true(ranges.is_available(@index.RangeField::Depth))
   assert_eq(ranges.mtime().len(), 8)
   assert_true(ranges.is_loaded(@index.RangeField::MTime))
   assert_eq(ranges.depth().equal(2L).to_sorted_ids(), [2, 6])

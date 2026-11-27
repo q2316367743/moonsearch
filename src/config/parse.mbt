@@ -535,9 +535,7 @@ pub fn parse(
   input : StringView,
   env~ : Map[String, String] = Map([]),
 ) -> Config raise ConfigError {
-  let json = try
-    @json.parse(input, max_nesting_depth=64, reject_duplicate_keys=true)
-  catch {
+  let json = try @json.parse(input, reject_duplicate_keys=true) catch {
     err => raise ConfigError::Invalid("invalid JSON: \{err}")
   } noraise {
     value => value

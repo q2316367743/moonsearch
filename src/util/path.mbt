@@ -6,11 +6,11 @@
 /// rather than `//tmp`.
 pub fn join_path(parent : BytesView, name : BytesView) -> Bytes {
   let buffer = @buffer.Buffer(capacity=parent.length() + name.length() + 1)
-  buffer.write_bytes(parent)
+  buffer.write_bytesview(parent)
   if !parent.is_empty() && parent[parent.length() - 1] != b'/' {
     buffer.write_byte(b'/')
   }
-  buffer.write_bytes(name)
+  buffer.write_bytesview(name)
   buffer.to_bytes()
 }
 

@@ -413,8 +413,26 @@ fn compile_leaf(
         scan,
         range_ids(context.ranges.child_count(), comparison),
       )
-    ChildFileCount(_) => Expr::Scan(scan_leaf(scan, "childfilecount"))
-    ChildFolderCount(_) => Expr::Scan(scan_leaf(scan, "childfoldercount"))
+    ChildFileCount(comparison) =>
+      if context.ranges.is_available(@index.ChildFileCount) {
+        make_const(
+          context,
+          scan,
+          range_ids(context.ranges.child_file_count(), comparison),
+        )
+      } else {
+        Expr::Scan(scan_leaf(scan, "childfilecount"))
+      }
+    ChildFolderCount(comparison) =>
+      if context.ranges.is_available(@index.ChildFolderCount) {
+        make_const(
+          context,
+          scan,
+          range_ids(context.ranges.child_folder_count(), comparison),
+        )
+      } else {
+        Expr::Scan(scan_leaf(scan, "childfoldercount"))
+      }
     Parent(path) => make_const(context, scan, context.ranges.parent_ids(path))
     Empty => make_const(context, scan, context.ranges.child_count().equal(0L))
     ContentType(_) => Expr::Scan(scan_leaf(scan, "contenttype"))

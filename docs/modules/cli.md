@@ -33,7 +33,8 @@ argv
       数据库缺失      : --auto-index 时扫描 → 建 Index → 原子写库；否则报错并提示 index
   → 引擎
       scan   : exec_scan_with(collect_limit)
-      bitmap : 持久化索引直接使用；live 时 Index::build(eager=size,mtime, trigram)
+      bitmap : 持久化索引按 `--fast-fields` 立即解码范围字段，其余首次使用时从 DB
+               切片解码；live 时 Index::build 总是构建五个核心范围字段
                → exec_indexed → 规范顺序 membership
   → order_hits: 排序、--reverse、--folders-first、--limit / top-K
   → format_hits: 路径 / basename / JSON / 模板、--null、--relative-to
@@ -43,7 +44,10 @@ argv
 `index`/`update` 完成扫描后构建同一个 `@index.Index`，再用
 `Index::write_database` 做原子替换：临时文件 + `sync` + `rename`。`info` 默认只读
 header 与 section table；`--verify` 额外校验全文件 CRC，并从 Store 重算全部派生索引。
-`update` 在 CLI/配置未提供排除规则时复用数据库 `EXCLUDES` 快照。默认数据库路径为
+`update` 在 CLI/配置未提供排除规则时复用数据库 `EXCLUDES` 快照。`index` 总是构建并持久化
+五个核心范围字段；`--fast-fields`（默认 `size,mtime`）额外选择两个可选 child-count 字段，
+并控制 `search`/`count` 加载数据库时立即解码哪些字段。未选可选字段明确退化为 scan。
+默认数据库路径为
 `$XDG_DATA_HOME/moonsearch/index.msdb`，未设置时为
 `$HOME/.local/share/moonsearch/index.msdb`；Windows 上 `HOME` 未设置时回退到
 `%LOCALAPPDATA%\moonsearch\index.msdb`，再回退到
@@ -101,7 +105,8 @@ header 与 section table；`--verify` 额外校验全文件 CRC，并从 Store �
 - 真实目录：扫描汇总、fixed/glob/regex 排除、权限告警、POSIX `--one-file-system`
   无空操作警告、`--quiet`；
 - 持久化：`index` 写库、`info --verify` 读头、删除根目录后 `search`/`count` 仍从库中
-  命中、bitmap 引擎直接读库、`--no-trigram` 库退化为扫描、损坏数据库以退出码 2 失败；
+  命中、`depth`/`childcount`/`parent` 使用持久化数据、可选 child-count 未选择时退化为
+  scan、bitmap 引擎直接读库、`--no-trigram` 库退化为扫描、损坏数据库以退出码 2 失败；
 - `search`/`count` 的 `--live`、`--auto-index`、多 root、`--type`、`--regex`、
   `--explain`、`--stats`；`--compat` 把解析期与编译期的非法值、非法正则/日期变成空集；
 - 每个排序键、`--reverse`、`--folders-first`、`--limit`、`--basename`、`--null`、

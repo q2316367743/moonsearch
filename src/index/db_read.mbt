@@ -11,8 +11,9 @@ pub fn Index::from_bytes(
   bytes : BytesView,
   verify~ : Bool = false,
   budget~ : @ids.IdsDecodeBudget? = None,
+  eager~ : RangeFieldSet = RangeFieldSet::all(),
 ) -> Index raise DbError {
-  decode_index(bytes, verify~, budget~).0
+  decode_index(bytes, verify~, budget~, eager~).0
 }
 
 ///|
@@ -23,6 +24,7 @@ fn decode_index(
   bytes : BytesView,
   verify~ : Bool,
   budget~ : @ids.IdsDecodeBudget?,
+  eager~ : RangeFieldSet,
 ) -> (Index, DbEnvelope) raise DbError {
   let envelope = parse_envelope(bytes, verify~)
   let total = envelope.folder_count + envelope.file_count
@@ -45,7 +47,8 @@ fn decode_index(
   )
   validate_canonical_order(store)
   let dict = parse_dict(bytes, envelope, total, decode_budget)
-  let ranges = parse_ranges(bytes, envelope, store, total)
+  let load_eager = if verify { RangeFieldSet::all() } else { eager }
+  let ranges = parse_ranges(bytes, envelope, store, total, load_eager)
   let trigram = parse_postings(bytes, envelope, total, decode_budget)
   let index = Index::restore(store~, dict~, ranges~, trigram~, excludes~)
   if verify {
@@ -63,7 +66,7 @@ pub fn DbInfo::from_bytes(
   verify~ : Bool = false,
 ) -> DbInfo raise DbError {
   let envelope = if verify {
-    decode_index(bytes, verify=true, budget=None).1
+    decode_index(bytes, verify=true, budget=None, eager=RangeFieldSet::all()).1
   } else {
     parse_envelope(bytes, verify=false)
   }
@@ -78,6 +81,9 @@ pub fn DbInfo::from_bytes(
       SECTION_RANGES,
     ] {
     ignore(required_section(envelope.sections, kind))
+  }
+  if envelope.minor >= DB_VERSION_MINOR.to_int() {
+    ignore(required_section(envelope.sections, SECTION_PARENT_PATHS))
   }
   match find_section(envelope.sections, SECTION_EXCLUDES) {
     Some(section) => {
@@ -288,8 +294,8 @@ fn parse_names(
     }
     let suffix_bytes = reader.read_bytes(suffix)
     let buffer = @buffer.Buffer(capacity=prefix + suffix)
-    buffer.write_bytes(previous.exact_view(start=0, end=prefix))
-    buffer.write_bytes(suffix_bytes)
+    buffer.write_bytesview(previous.exact_view(start=0, end=prefix))
+    buffer.write_bytesview(suffix_bytes)
     let name = buffer.to_bytes()
     if position > 0 && previous.lexical_compare(name[:]) >= 0 {
       raise DbError::Corrupt("name table is not strictly ascending")
@@ -700,17 +706,22 @@ fn range_field_of_tag(tag : Int32) -> RangeField? {
     RANGE_DEPTH => Some(Depth)
     RANGE_CHILD_COUNT => Some(ChildCount)
     RANGE_PARENT => Some(Parent)
+    RANGE_CHILD_FILE_COUNT => Some(ChildFileCount)
+    RANGE_CHILD_FOLDER_COUNT => Some(ChildFolderCount)
     _ => None
   }
 }
 
 ///|
-/// Parse the range indexes that were saved and leave the rest lazy.
+/// Parse every persisted range field. Selected fields are materialized now;
+/// unselected fields are structurally validated and retained as owned byte
+/// slices for lazy decoding. No range accessor rebuilds from the Store.
 fn parse_ranges(
   bytes : BytesView,
   envelope : DbEnvelope,
   store : @core.Store,
   total : Int32,
+  eager : RangeFieldSet,
 ) -> Ranges raise DbError {
   let section = required_section(envelope.sections, SECTION_RANGES)
   let reader = section_reader(bytes, section)
@@ -718,7 +729,7 @@ fn parse_ranges(
   if field_count != envelope.range_count {
     raise DbError::Corrupt("range field count does not match the header")
   }
-  if field_count > 5 {
+  if field_count > DB_MAX_RANGE_FIELDS {
     raise DbError::Corrupt("range field count is out of range")
   }
   if field_count.to_int64() * 5L > reader.remaining().to_int64() {
@@ -729,91 +740,218 @@ fn parse_ranges(
   let mut depth_index : RangeIndex? = None
   let mut child_count_index : RangeIndex? = None
   let mut parent_index : RangeIndex? = None
+  let mut child_file_count_index : RangeIndex? = None
+  let mut child_folder_count_index : RangeIndex? = None
+  let persisted_ranges : Array[Bytes?] = Array::makei(DB_MAX_RANGE_FIELDS, fn(
+    _,
+  ) {
+    None
+  })
+  let seen_fields : Array[Bool] = Array::makei(DB_MAX_RANGE_FIELDS, fn(_) {
+    false
+  })
+  let mut decoded_fields = 0
   for _ in 0..<field_count {
+    let payload_start = section.offset + reader.pos
     let tag = reader.read_byte().to_int()
     let field = match range_field_of_tag(tag) {
       Some(field) => field
       None => raise DbError::Corrupt("unknown range field tag \{tag}")
     }
-    if loaded_range(
-        field,
-        size_index~,
-        mtime_index~,
-        depth_index~,
-        child_count_index~,
-        parent_index~,
-      ) {
+    let field_position = range_field_position(field)
+    if seen_fields[field_position] {
       raise DbError::Corrupt("duplicate range field")
     }
+    seen_fields[field_position] = true
     let length = checked_count(reader.read_u32(), "range length")
     if length > total {
       raise DbError::Corrupt("range length exceeds the entry count")
     }
-    if reader.remaining().to_int64() < length.to_int64() * 12L {
+    let data_length = length * 12
+    if reader.remaining() < data_length {
       raise DbError::Truncated
     }
-    let values : Array[Int64] = []
-    for _ in 0..<length {
-      values.push(reader.read_i64())
-    }
-    let ids : Array[Int32] = []
-    for _ in 0..<length {
-      ids.push(checked_count(reader.read_u32(), "range id"))
-    }
-    let seen : Array[Bool] = Array::makei(total, fn(_) { false })
-    for position in 0..<length {
-      let id = ids[position]
-      if id < 0 || id >= total {
-        raise DbError::Corrupt("range id is out of range")
-      }
-      if seen[id] {
-        raise DbError::Corrupt("range contains a duplicate id")
-      }
-      seen[id] = true
-      if position > 0 {
-        let previous = values[position - 1]
-        let value = values[position]
-        if value < previous || (value == previous && id <= ids[position - 1]) {
-          raise DbError::Corrupt("range is not sorted by value and id")
+    ignore(reader.read_bytes(data_length))
+    let payload_end = payload_start + 5 + data_length
+    let payload = bytes.exact_view(start=payload_start, end=payload_end)
+    let materialize = eager.contains(field)
+    let index = parse_range_payload(payload, field, total, materialize)
+    match index {
+      Some(index) => {
+        decoded_fields = decoded_fields + 1
+        match field {
+          Size => size_index = Some(index)
+          MTime => mtime_index = Some(index)
+          Depth => depth_index = Some(index)
+          ChildCount => child_count_index = Some(index)
+          Parent => parent_index = Some(index)
+          ChildFileCount => child_file_count_index = Some(index)
+          ChildFolderCount => child_folder_count_index = Some(index)
         }
       }
-    }
-    let index = RangeIndex::restore(values~, ids~, total~)
-    match field {
-      Size => size_index = Some(index)
-      MTime => mtime_index = Some(index)
-      Depth => depth_index = Some(index)
-      ChildCount => child_count_index = Some(index)
-      Parent => parent_index = Some(index)
+      None => persisted_ranges[field_position] = Some(payload.to_owned())
     }
   }
   reader.expect_end()
-  Ranges::restore(
+  if envelope.minor >= DB_VERSION_MINOR.to_int() {
+    for field in RangeField::core() {
+      if !seen_fields[range_field_position(field)] {
+        raise DbError::Corrupt("database is missing a core range field")
+      }
+    }
+  }
+  let parent_paths = match parse_parent_paths(bytes, envelope) {
+    Some(paths) => paths
+    None => build_parent_paths(store)
+  }
+  Ranges::restore_persisted(
     store,
+    eager~,
     size_index~,
     mtime_index~,
     depth_index~,
     child_count_index~,
     parent_index~,
+    child_file_count_index~,
+    child_folder_count_index~,
+    parent_paths~,
+    persisted_ranges~,
+    decoded_fields~,
   )
 }
 
 ///|
-/// Whether a field is already present in one of the loader's slots.
-fn loaded_range(
+/// Validate one range payload and optionally materialize its arrays. Validation
+/// is always performed so a later lazy decode cannot surface structural corruption.
+fn parse_range_payload(
+  payload : BytesView,
   field : RangeField,
-  size_index~ : RangeIndex?,
-  mtime_index~ : RangeIndex?,
-  depth_index~ : RangeIndex?,
-  child_count_index~ : RangeIndex?,
-  parent_index~ : RangeIndex?,
-) -> Bool {
-  match field {
-    Size => size_index is Some(_)
-    MTime => mtime_index is Some(_)
-    Depth => depth_index is Some(_)
-    ChildCount => child_count_index is Some(_)
-    Parent => parent_index is Some(_)
+  total : Int32,
+  materialize : Bool,
+) -> RangeIndex? raise DbError {
+  let reader = DbReader::new(payload)
+  let tag = reader.read_byte().to_int()
+  if tag != range_field_tag(field) {
+    raise DbError::Corrupt("range field tag does not match its payload")
+  }
+  let length = checked_count(reader.read_u32(), "range length")
+  if length > total {
+    raise DbError::Corrupt("range length exceeds the entry count")
+  }
+  let data_length = length * 12
+  if reader.remaining().to_int64() < data_length.to_int64() {
+    raise DbError::Truncated
+  }
+  ignore(reader.read_bytes(data_length))
+  reader.expect_end()
+  let values_end = 5 + length * 8
+  let values_reader = DbReader::new(payload.exact_view(start=5, end=values_end))
+  let ids_reader = DbReader::new(
+    payload.exact_view(start=values_end, end=5 + data_length),
+  )
+  let values : Array[Int64] = []
+  let ids : Array[Int32] = []
+  let seen : Array[Bool] = Array::makei(total, fn(_) { false })
+  let mut previous_value = 0L
+  let mut previous_id = -1
+  let mut has_previous = false
+  for _ in 0..<length {
+    let value = values_reader.read_i64()
+    let id = checked_count(ids_reader.read_u32(), "range id")
+    if id < 0 || id >= total {
+      raise DbError::Corrupt(
+        "\{field.name()} range id \{id} is out of range for \{total} entries",
+      )
+    }
+    if seen[id] {
+      raise DbError::Corrupt(
+        "\{field.name()} range contains a duplicate id \{id}",
+      )
+    }
+    seen[id] = true
+    if has_previous &&
+      (value < previous_value || (value == previous_value && id <= previous_id)) {
+      raise DbError::Corrupt("range is not sorted by value and id")
+    }
+    if materialize {
+      values.push(value)
+      ids.push(id)
+    }
+    previous_value = value
+    previous_id = id
+    has_previous = true
+  }
+  if materialize {
+    Some(RangeIndex::restore(values~, ids~, total~))
+  } else {
+    None
+  }
+}
+
+///|
+/// Parse the persisted folder-path-to-id table. Legacy v3.0/v3.1 files omit it
+/// and derive the table once during load; v3.2 always requires this section.
+fn parse_parent_paths(
+  bytes : BytesView,
+  envelope : DbEnvelope,
+) -> ParentPaths? raise DbError {
+  match find_section(envelope.sections, SECTION_PARENT_PATHS) {
+    None => None
+    Some(section) => {
+      let reader = section_reader(bytes, section)
+      let count = checked_count(reader.read_u32(), "parent path")
+      if count != envelope.folder_count {
+        raise DbError::Corrupt(
+          "parent path count does not match the folder count",
+        )
+      }
+      if count.to_int64() * 8L > reader.remaining().to_int64() {
+        raise DbError::Truncated
+      }
+      let paths : Array[Bytes] = []
+      let ids : Array[Int32] = []
+      let seen : Array[Bool] = Array::makei(count, fn(_) { false })
+      let mut previous_path = b""[:]
+      let mut previous_id = -1
+      let mut has_previous = false
+      let mut total_bytes = 0L
+      for _ in 0..<count {
+        let path_length = checked_count(reader.read_u32(), "parent path length")
+        if path_length == 0 || path_length > @core.MAX_NAME_LEN {
+          raise DbError::Corrupt("parent path length is out of range")
+        }
+        let path_bytes = reader.read_bytes(path_length)
+        if @util.find_byte(path_bytes, b'\x00') is Some(_) {
+          raise DbError::Corrupt("parent path contains NUL")
+        }
+        let id = checked_count(reader.read_u32(), "parent folder id")
+        if id >= count {
+          raise DbError::Corrupt("parent folder id is out of range")
+        }
+        if seen[id] {
+          raise DbError::Corrupt("parent paths contain a duplicate folder id")
+        }
+        seen[id] = true
+        if has_previous {
+          let order = previous_path.lexical_compare(path_bytes)
+          if order > 0 || (order == 0 && previous_id >= id) {
+            raise DbError::Corrupt("parent paths are not sorted by path and id")
+          }
+        }
+        let path = path_bytes.to_owned()
+        total_bytes = total_bytes + path.length().to_int64()
+        if total_bytes > DB_MAX_NAME_BYTES {
+          raise DbError::Corrupt("parent paths exceed the size limit")
+        }
+        paths.push(path)
+        ids.push(id)
+        previous_path = paths[paths.length() - 1][:]
+        previous_id = id
+        has_previous = true
+      }
+      reader.expect_end()
+      Some(ParentPaths::restore(paths~, ids~))
+    }
   }
 }
 
@@ -949,6 +1087,7 @@ fn validate_semantics(index : Index) -> Unit raise DbError {
     }
   }
   validate_range_semantics(index.ranges(), Ranges::build(store, eager~))
+  validate_parent_path_semantics(index.ranges(), build_parent_paths(store))
   match index.trigram() {
     Some(actual) =>
       validate_trigram_semantics(actual, TrigramIndex::build(store))
@@ -1059,9 +1198,31 @@ fn validate_dictionary_semantics(
 }
 
 ///|
+/// Validate the persisted path translation table against every folder path.
+fn validate_parent_path_semantics(
+  actual : Ranges,
+  expected : ParentPaths,
+) -> Unit raise DbError {
+  let paths = actual.parent_paths()
+  if paths.paths.length() != expected.paths.length() {
+    raise DbError::Corrupt("parent path coverage does not match the store")
+  }
+  for position in 0..<expected.paths.length() {
+    if paths.ids[position] != expected.ids[position] ||
+      !@util.eq_bytes(
+        paths.paths[position][:],
+        expected.paths[position][:],
+        false,
+      ) {
+      raise DbError::Corrupt("parent paths do not match the store")
+    }
+  }
+}
+
+///|
 /// Validate each persisted range field against a fresh build from the Store.
-/// Missing fields remain legitimately lazy until S09; a present field must cover
-/// exactly the same `(value, id)` pairs as its source entries.
+/// Full verification materializes every persisted field; a present field must
+/// cover exactly the same `(value, id)` pairs as its source entries.
 fn validate_range_semantics(
   actual : Ranges,
   expected : Ranges,

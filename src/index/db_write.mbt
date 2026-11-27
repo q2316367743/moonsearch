@@ -34,6 +34,7 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
     raise DbError::TooLarge("the dictionary key count exceeds the format limit")
   }
   let (ranges, range_count) = ranges_section(self.ranges)
+  let parent_paths = self.ranges.parent_paths_payload()
   let (postings, trigram_count, has_trigram) = match self.trigram {
     Some(trigram) => {
       let count = trigram.key_count()
@@ -55,6 +56,7 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
     (SECTION_ORDER, order),
     (SECTION_DICT, dict),
     (SECTION_RANGES, ranges),
+    (SECTION_PARENT_PATHS, parent_paths),
   ]
   if has_trigram {
     sections.push((SECTION_POSTINGS, postings))
@@ -101,9 +103,9 @@ pub fn Index::to_bytes(self : Index) -> Bytes raise DbError {
   crc.update(prefix_bytes.exact_view())
   let metadata_crc = crc.finish()
   let out = @buffer.Buffer(capacity=offset + 8)
-  out.write_bytes(prefix_bytes.exact_view())
+  out.write_bytesview(prefix_bytes.exact_view())
   for section in pending {
-    out.write_bytes(section.data.exact_view())
+    out.write_bytesview(section.data.exact_view())
     crc.update(section.data.exact_view())
   }
   let full_crc = crc.finish()
@@ -127,11 +129,11 @@ fn write_header(
   has_trigram~ : Bool,
   section_count~ : Int32,
 ) -> Unit {
-  buffer.write_bytes(DB_MAGIC.exact_view())
+  buffer.write_bytesview(DB_MAGIC.exact_view())
   buffer.write_uint16_le(DB_VERSION_MAJOR)
   buffer.write_uint16_le(DB_VERSION_MINOR)
   buffer.write_byte(1)
-  buffer.write_bytes(b"\x00\x00\x00")
+  buffer.write_bytesview(b"\x00\x00\x00")
   let flags = if has_trigram { DB_FLAG_TRIGRAM } else { 0U }
   buffer.write_uint_le(flags)
   buffer.write_int64_le(built_at)
@@ -203,7 +205,7 @@ fn roots_section(store : @core.Store) -> Bytes {
   for root in roots {
     let path = root.path
     buffer.write_uint_le(path.length().reinterpret_as_uint())
-    buffer.write_bytes(path[:])
+    buffer.write_bytesview(path[:])
     let flags = if root.one_file_system { 1U } else { 0U }
     buffer.write_uint_le(flags)
     buffer.write_uint_le(root.folder.reinterpret_as_uint())
@@ -236,7 +238,7 @@ fn excludes_section(rules : Array[ExcludeRule]) -> Bytes raise DbError {
     buffer.write_byte(exclude_target_tag(rule.target()).to_byte())
     buffer.write_byte(if rule.is_active() { 1 } else { 0 })
     buffer.write_uint_le(pattern.length().reinterpret_as_uint())
-    buffer.write_bytes(pattern[:])
+    buffer.write_bytesview(pattern[:])
   }
   buffer.to_bytes()
 }
@@ -282,7 +284,7 @@ fn names_section(names : Array[Bytes]) -> Bytes raise DbError {
     let suffix = name.length() - prefix
     buffer.write_uint16_le(prefix.to_uint16())
     buffer.write_uint16_le(suffix.to_uint16())
-    buffer.write_bytes(name.exact_view(start=prefix, end=name.length()))
+    buffer.write_bytesview(name.exact_view(start=prefix, end=name.length()))
     total_bytes = total_bytes + name.length().to_int64()
     if total_bytes > DB_MAX_NAME_BYTES {
       raise DbError::TooLarge("the name table exceeds the size limit")
@@ -447,10 +449,10 @@ fn write_dict_key(
 ) -> Unit {
   buffer.write_byte(kind.to_byte())
   buffer.write_uint16_le(payload.length().to_uint16())
-  buffer.write_bytes(payload)
+  buffer.write_bytesview(payload)
   let encoded = ids.to_bytes()
   buffer.write_uint_le(encoded.length().reinterpret_as_uint())
-  buffer.write_bytes(encoded[:])
+  buffer.write_bytesview(encoded[:])
 }
 
 ///|
@@ -470,48 +472,27 @@ fn u32_payload(value : UInt32) -> Bytes {
 }
 
 ///|
-/// Serialize every range index that is already materialized and return the
-/// field count.
+/// Serialize every available range field and return the field count.
 ///
-/// Lazy fields are deliberately skipped: the restored store lets the loader
-/// rebuild them on first use, so a `--fast-fields size,mtime` index costs the
-/// same in the file as it did in memory.
+/// Fresh indexes always contain the five core fields. Optional child-count
+/// fields appear only when selected. A restored index writes decoded fields
+/// from their arrays and copies still-lazy fields from their persisted slices,
+/// so saving after a partial load never rebuilds or drops an index.
 fn ranges_section(ranges : Ranges) -> (Bytes, Int32) {
   let buffer = @buffer.Buffer()
-  let mut count = 0
+  let payloads : Array[Bytes] = []
   for field in RangeField::all() {
-    if ranges.is_loaded(field) {
-      count = count + 1
+    match ranges.range_payload(field) {
+      Some(payload) => payloads.push(payload)
+      None => ()
     }
   }
+  let count = payloads.length()
   buffer.write_uint_le(count.reinterpret_as_uint())
-  for field in RangeField::all() {
-    if ranges.is_loaded(field) {
-      let index = ranges.field(field)
-      buffer.write_byte(range_field_tag(field).to_byte())
-      let length = index.len()
-      buffer.write_uint_le(length.reinterpret_as_uint())
-      for value in index.values() {
-        buffer.write_int64_le(value)
-      }
-      for id in index.ids() {
-        buffer.write_uint_le(id.reinterpret_as_uint())
-      }
-    }
+  for payload in payloads {
+    buffer.write_bytesview(payload[:])
   }
   (buffer.to_bytes(), count)
-}
-
-///|
-/// Stable on-disk tag of a range field.
-fn range_field_tag(field : RangeField) -> Int32 {
-  match field {
-    Size => RANGE_SIZE
-    MTime => RANGE_MTIME
-    Depth => RANGE_DEPTH
-    ChildCount => RANGE_CHILD_COUNT
-    Parent => RANGE_PARENT
-  }
 }
 
 ///|

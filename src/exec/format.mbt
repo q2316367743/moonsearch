@@ -168,7 +168,7 @@ pub fn FormatOutput::stdout_bytes(self : FormatOutput) -> Bytes {
     return self.bytes
   }
   let out = @buffer.Buffer()
-  out.write_bytes(self.bytes)
+  out.write_bytesview(self.bytes)
   out.write_byte(b'\n')
   out.to_bytes()
 }
@@ -241,11 +241,11 @@ fn write_record(
 ) -> Bool {
   match options.format {
     Paths => {
-      out.write_bytes(output_path(context, entry))
+      out.write_bytesview(output_path(context, entry))
       false
     }
     Names => {
-      out.write_bytes(context.store.entry_name(entry))
+      out.write_bytesview(context.store.entry_name(entry))
       false
     }
     Json => write_json_record(context, entry, out)
@@ -267,12 +267,12 @@ fn write_template(
   for segment in template.segments {
     match segment {
       Literal(text) => out.write_string_utf8(text)
-      Path => out.write_bytes(output_path(context, entry))
-      Name => out.write_bytes(context.store.entry_name(entry))
-      Dir => out.write_bytes(directory_of(output_path(context, entry)))
+      Path => out.write_bytesview(output_path(context, entry))
+      Name => out.write_bytesview(context.store.entry_name(entry))
+      Dir => out.write_bytesview(directory_of(output_path(context, entry)))
       Size => out.write_string_utf8(size_string(context.store, entry))
       MTime => out.write_string_utf8(mtime_string(context.store, entry))
-      Ext => out.write_bytes(extension_string(context.store, entry))
+      Ext => out.write_bytesview(extension_string(context.store, entry))
       Type => out.write_string_utf8(type_string(context, entry))
       Kind => out.write_string_utf8(kind_string(entry))
     }

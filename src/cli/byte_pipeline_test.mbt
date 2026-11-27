@@ -85,18 +85,18 @@ async test "invalid UTF-8 survives real scan, DB load, match, and raw output" {
   let first_path = @util.join_path(canonical, b"bad-\xfe")
   let second_path = @util.join_path(canonical, b"bad-\xff")
   let expected = @buffer.Buffer()
-  expected.write_bytes(first_path)
+  expected.write_bytesview(first_path)
   expected.write_byte(b'\n')
-  expected.write_bytes(second_path)
+  expected.write_bytesview(second_path)
   expected.write_byte(b'\n')
   assert_eq(
     @exec.format_hits(loaded.store(), hits, @exec.FormatOptions::new()).stdout_bytes(),
     expected.to_bytes(),
   )
   let expected_nul = @buffer.Buffer()
-  expected_nul.write_bytes(first_path)
+  expected_nul.write_bytesview(first_path)
   expected_nul.write_byte(b'\x00')
-  expected_nul.write_bytes(second_path)
+  expected_nul.write_bytesview(second_path)
   expected_nul.write_byte(b'\x00')
   assert_eq(
     @exec.format_hits(

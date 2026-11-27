@@ -59,7 +59,11 @@ fn fuzz_info_verified(bytes : Array[Byte]) -> Result[@index.DbInfo, Unit] {
 /// Decode without the payload checksum, as the CLI does by default.
 fn fuzz_decode_unverified(bytes : Array[Byte]) -> Result[@index.Index, Unit] {
   try
-    @index.Index::from_bytes(Bytes::from_array(bytes[:])[:], verify=false)
+    @index.Index::from_bytes(
+      Bytes::from_array(bytes[:])[:],
+      verify=false,
+      eager=@index.RangeFieldSet::default(),
+    )
   catch {
     _ => Err(())
   } noraise {
@@ -131,6 +135,16 @@ fn fuzz_probe(index : @index.Index) -> Unit {
   fuzz_check_ids(ranges.mtime().less_than(2000000000L), count, "ranges.mtime")
   fuzz_check_ids(ranges.depth().at_most(3L), count, "ranges.depth")
   fuzz_check_ids(ranges.child_count().equal(0L), count, "ranges.child_count")
+  fuzz_check_ids(
+    ranges.child_file_count().greater_than(0L),
+    count,
+    "ranges.child_file_count",
+  )
+  fuzz_check_ids(
+    ranges.child_folder_count().greater_than(0L),
+    count,
+    "ranges.child_folder_count",
+  )
   fuzz_check_ids(ranges.parent_ids(b"/data/sub"[:]), count, "ranges.parent")
   match index.trigram() {
     Some(trigram) =>

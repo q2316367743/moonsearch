@@ -125,6 +125,8 @@ Dict::build(store):
 | `depth` | 文件 + 文件夹 | 根为 0，直接子项为 1 |
 | `childcount` | 仅文件夹 | 直接子项总数 |
 | `parent` | 文件 + 文件夹，根除外 | 父文件夹 id |
+| `childfilecount` | 仅文件夹，可选 | 直接子文件数 |
+| `childfoldercount` | 仅文件夹，可选 | 直接子文件夹数 |
 
 ### 结构与查询
 
@@ -143,7 +145,8 @@ range(lo, hi) [lower_bound(lo), lower_bound(hi))   // 半开
 - 空区间或反向区间（`hi <= lo`）直接返回空集，不触碰数组。
 - 区间切片的 id 按值排序而非 id 排序，因此统一经 `Ids::from_sorted` 排序去重；
   `total` 参与 S06 的密度规则，窄区间保持 `Sorted`，覆盖大部分索引时升为 `Bitmap`。
-- 五个访问器共享 `Ranges::field`，构建后只读。
+- 所有访问器共享 `Ranges::field`。已加载字段只读；未立即加载的数据库字段首次访问时
+  从已持久化切片解码并缓存。
 
 ### parent 计数排序
 
@@ -153,18 +156,27 @@ range(lo, hi) [lower_bound(lo), lower_bound(hi))   // 半开
 路径按 `(path, id)` 排序后二分，查不到路径即空集；同一路径有多个 id 时（嵌套根），
 `parent_ids` 合并每个 id 的父桶。路径精确匹配，尾斜杠由查询层归一化。
 
-### 懒构建与 `--fast-fields`
+### 持久化与 `--fast-fields`
 
-`Ranges::build(store, eager~)` 只立即构建 `eager` 选中的字段，其余字段在第一次访问时
-从 `Store` 构建并缓存，因此不需要第二次扫描。`RangeFieldSet` 负责解析
-`--fast-fields`（默认 `size,mtime`，接受 `dm`、`children` 别名与空格）。`--stats` 只遍历
-`is_loaded` 为真的字段，避免为了打印统计而触发懒构建。
+`Index::build` 总是构建五个核心字段 `size`、`mtime`、`depth`、`childcount`、`parent`；
+`--fast-fields` 只额外选择是否构建 `childfilecount` / `childfoldercount`。未选择的可选字段
+不持久化，编译层明确退化为 scan。
+
+数据库加载时，`--fast-fields` 控制立即解码哪些已持久化字段，默认 `size,mtime`。其余核心
+字段以自有字节切片保留，首次访问时直接解码，不调用 `build_*`、不重新排序。`--stats` 只
+遍历 `is_loaded` 为真的字段，避免为了打印统计触发解码。`RangeFieldSet` 接受 `dm`、
+`children` 别名与空格。
+
+`ParentPaths` 由独立 `PARENT_PATHS` section 持久化，加载时直接安装有序路径/id 表；只有旧
+v3.0/v3.1 文件缺少该 section 时才在加载阶段派生一次。
 
 ### 语义对齐
 
 - `depth` 用一次记忆化上溯填满所有文件夹，文件取父目录深度 + 1；与扫描引擎逐条
   `folder_depth` 的结果一致。
 - `childcount` 只收录文件夹；`empty:` 等价于 `childcount` 等于 0。
+- `childfilecount` / `childfoldercount` 只收录文件夹，且仅在显式选择后构建；未持久化时
+  查询退化为 scan。
 - `size` / `mtime` 同时收录文件与文件夹，文件夹的 size 是子树总和。
 - `mtime` 保存原始 Unix 秒；`dm:` 的日历解析仍在查询/编译层完成，再转成区间。
 - `exec/range_compat_test.mbt` 把每个字段的查询结果展开成路径，与 `exec_scan` 对拍：
@@ -173,7 +185,8 @@ range(lo, hi) [lower_bound(lo), lower_bound(hi))   // 半开
 
 ### 复杂度
 
-- 构建：四个字段各一次排序 O(N log N)；`parent` O(N + F)；`ParentPaths` O(F log F)。
+- 构建：四个核心字段各一次排序 O(N log N)；两个可选 child-count 字段同样排序；
+  `parent` O(N + F)；`ParentPaths` O(F log F)。
 - 查询：一次或两次二分 + 区间切片 O(log N + k)；`parent:` 额外一次路径二分
   O(log F · L)，L 为路径长度。
 - 内存：每字段约 12 B/条目（`Int64` 值 + `Int32` id），与计划第 10 节的预算一致。
@@ -283,8 +296,9 @@ pub struct Index {
 pub fn Index::build(store, eager? = all, trigram? = true) -> Index
 ```
 
-- `eager` 选择立即构建的范围字段，默认与 `Ranges::build` 一致（全部字段）；CLI 传入
-  自己的 `--fast-fields` 选择（默认 `size,mtime`），其余字段在首次查询时按需构建。
+- `eager` 总是与五个核心字段取并集；默认 `all` 额外构建两个可选 child-count 字段。
+  CLI 传入自己的 `--fast-fields` 选择。加载时同一选择控制立即解码，其余已持久化字段
+  首次使用时从 DB 切片解码。
 - `trigram=false` 生成 `--no-trigram` 对照索引；编译层把名字 term 标成
   `reason=no-trigram` 并退化为扫描。
 - `Index` 是值类型：复制时共享底层数组，不复制候选数据；所有访问器返回的集合都必须
@@ -293,7 +307,7 @@ pub fn Index::build(store, eager? = all, trigram? = true) -> Index
   `Index`，不再分别传 store、dict、ranges、trigram 四个部件。S12 也以它为序列化与
   恢复的单位。
 
-## 持久化 `MSDB v3.1`（S08）
+## 持久化 `MSDB v3.2`（S09）
 
 `src/index` 的 `db*.mbt` 把完成的 `Index` 写成一个自校验文件，再从文件恢复同一个
 对象；恢复路径不重新扫描、不重建字典、不重排 trigram。字段级布局见
@@ -306,7 +320,7 @@ Index::to_bytes:
   1. 收集并去重全部条目名字，按字节序排序
   2. 生成 ROOTS / EXCLUDES / NAMES / FOLDERS / FILES / ORDER
   3. 生成 DICT（5 个基本键 + 扩展名 + 分类 + 根）
-  4. 生成 RANGES（只写已物化字段）
+  4. 生成 RANGES（五个核心字段 + 已选可选字段）与 PARENT_PATHS
   5. 生成 POSTINGS（trigram 存在时）
   6. 计算 section table 偏移，写 header + table + payload
   7. 一次 CRC 遍历：table 结束时取 metadata_crc，CHECKSUM 前取 full_crc
@@ -320,8 +334,9 @@ Index::to_bytes:
   顺序，然后交给 `Store::restore`；不再执行 `Store::new` 的规范排序。
 - `DICT` 的 `Ids` 值使用 `@ids.Ids::to_bytes`，每个值前带 `u32` 字节长度，读取器可以
   独立解码并拒绝尾随字节。
-- `RANGES` 只写 `Ranges::is_loaded` 为真的字段。未写出的字段在加载后仍按需从
-  `Store` 构建，所以 `--fast-fields` 的取舍在磁盘上保持一致。
+- `RANGES` 始终包含五个核心字段；两个可选 child-count 字段只在选择时写入。加载器按
+  `--fast-fields` 立即解码选中字段，其余字段复制为自有切片，首次访问时解码；不从
+  `Store` 调用任何 `build_*`。未持久化的可选字段保持不可用并退化为 scan。
 - 序列化是确定性的：同一 `Index` 的两次输出逐字节相同，便于 golden 与损坏测试。
 
 ### 读取与校验
@@ -336,7 +351,8 @@ Index::from_bytes:
   validate_parent_chains  父链环检测
   parse_order         0..total-1 的排列
   parse_dict          id 范围、基本键完整性、扩展名序、hidden/visible 划分
-  parse_ranges        (value,id) 升序、id 不重复且在范围内
+  parse_ranges       校验全部字段，立即解码选中字段，其余保留切片
+  parse_parent_paths 安装有序路径/id 表，不重新排序
   parse_postings      key 严格递增、delta 累加不溢出、posting 升序且在范围内
   Index::restore      组装，不触发任何构建
   validate_semantics  仅 verify=true：从 Store 重算 Dict/RANGES/POSTINGS 并比对
@@ -372,7 +388,8 @@ Index::from_bytes:
 | --- | --- |
 | `Store::restore`（core） | 用持久化的 `order` 直接组装 Store |
 | `Dict::restore` / `ExtensionEntry::new` | 安装解码后的集合与扩展名桶 |
-| `RangeIndex::restore` / `Ranges::restore` | 安装已物化字段，其余保持惰性 |
+| `RangeIndex::restore` / `Ranges::restore_persisted` | 安装已解码字段与其余持久化切片 |
+| `ParentPaths::restore` | 安装已验证的有序路径/id 表 |
 | `TrigramPosting::from_sorted` / `TrigramIndex::restore` | 安装 posting，并重算计数与 stop-gram |
 | `Index::restore` | 聚合四个部分 |
 
@@ -395,8 +412,9 @@ release 构建、单文件 100 万条目（1 个根 + 100 万文件，名字 `fi
 
 ### 测试
 
-- `db_test.mbt` 覆盖：全结构往返（store、roots、顺序、dict、5 个范围字段、trigram）、
-  空索引、`--no-trigram`、惰性字段跨往返、header/section 计数、`DbInfo`。
+- `db_test.mbt` 覆盖：全结构往返（store、roots、顺序、dict、7 个范围字段、trigram）、
+  空索引、`--no-trigram`、按需切片解码、核心字段完整性、PARENT_PATHS 损坏与语义篡改、
+  header/section 计数、`DbInfo`。
 - 损坏输入：每个截断长度、每个单字节翻转（`verify=true`）、随机垃圾字节，全部要求
   返回错误而不是崩溃。S13 的 `db_fuzz_test.mbt` 再补随机多操作变异：翻转、删除片段、
   插入片段、覆盖片段与截断随机组合；`verify=true` 下必须全部报错，`verify=false`
@@ -417,7 +435,9 @@ release 构建、单文件 100 万条目（1 个根 + 100 万文件，名字 `fi
 - `dict_test.mbt`：统一 id、隐藏/可见划分、扩展名折叠与空扩展名、分类物化、根集合、
   确定性、空索引。
 - `range_test.mbt`：`RangeIndex` 的排序、上下界、半开区间、空/反向区间、重复值、密度
-  形态；五个字段的构建结果；`parent` 计数排序与路径查找；懒构建；空索引与确定性。
+  形态；七个字段的构建结果；`parent` 计数排序与路径查找；可选字段可用性；空索引与确定性。
+- `range_wbtest.mbt`：验证数据库加载后所有范围访问器的解码计数与 `store_builds == 0`，
+  以及未持久化可选字段不会退化为 Store 重建。
 - `trigram_test.mbt`：键序与 posting 升序、重复窗口去重、ASCII 折叠、非 ASCII 字节、
   短名字、空索引、缺失 trigram、stop-gram 跳过、确定性。
 - `trigram_wbtest.mbt`：`name_trigrams` / `pack_trigram`、归并与 galloping 两条交集
@@ -435,5 +455,5 @@ release 构建、单文件 100 万条目（1 个根 + 100 万文件，名字 `fi
 - `db_fuzz_test.mbt`（S13）：在固定种子下生成 600 个多操作变异（翻转/删除/插入/
   覆盖/截断）与 300 个随机垃圾缓冲，断言 `Index::from_bytes(verify=true)` 与
   `DbInfo::from_bytes(verify=true)` 全部拒绝；再用 `verify=false` 尝试加载，成功时
-  由 `fuzz_probe` 访问 store 条目、字典集合、五个范围字段与 trigram 候选集，并断言
+  由 `fuzz_probe` 访问 store 条目、字典集合、七个范围字段与 trigram 候选集，并断言
   每个返回 id 都小于条目数。变异与垃圾生成都只依赖 `testkit.Rng`，失败可从种子复现。

@@ -358,7 +358,7 @@ fn join_chain(
     } else if !(root_is_slash && index == refs.length() - 2) {
       buffer.write_byte(b'/')
     }
-    buffer.write_bytes(component)
+    buffer.write_bytesview(component)
     first = false
     index = index - 1
   }

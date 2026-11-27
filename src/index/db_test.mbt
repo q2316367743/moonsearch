@@ -28,8 +28,12 @@ fn encoded(index : @index.Index) -> Bytes {
 
 ///|
 /// Decode bytes or abort the test with the decoder's message.
-fn decoded(bytes : Bytes, verify~ : Bool = true) -> @index.Index {
-  @index.Index::from_bytes(bytes[:], verify~) catch {
+fn decoded(
+  bytes : Bytes,
+  verify~ : Bool = true,
+  eager~ : @index.RangeFieldSet = @index.RangeFieldSet::all(),
+) -> @index.Index {
+  @index.Index::from_bytes(bytes[:], verify~, eager~) catch {
     err => abort(err.message())
   }
 }
@@ -754,18 +758,62 @@ test "database records a missing trigram index" {
 }
 
 ///|
-test "lazy range fields stay lazy across a round trip" {
+test "persisted range fields decode lazily without dropping the core" {
   let original = @index.Index::build(
     sample_index().store(),
     eager=@index.RangeFieldSet::of([@index.Size]),
   )
-  let loaded = decoded(encoded(original))
+  let loaded = decoded(
+    encoded(original),
+    verify=false,
+    eager=@index.RangeFieldSet::of([@index.Size]),
+  )
   assert_true(loaded.ranges().is_loaded(@index.Size))
   assert_false(loaded.ranges().is_loaded(@index.MTime))
   assert_false(loaded.ranges().is_loaded(@index.Depth))
+  assert_true(loaded.ranges().is_available(@index.Depth))
+  assert_false(loaded.ranges().is_available(@index.ChildFileCount))
+  assert_false(loaded.ranges().is_available(@index.ChildFolderCount))
   assert_ranges_equal(loaded.ranges().size(), original.ranges().size())
   assert_ranges_equal(loaded.ranges().depth(), original.ranges().depth())
   assert_true(loaded.ranges().is_loaded(@index.Depth))
+  assert_eq(
+    loaded.ranges().parent_ids(b"/data/sub"[:]).to_sorted_ids(),
+    original.ranges().parent_ids(b"/data/sub"[:]).to_sorted_ids(),
+  )
+}
+
+///|
+test "databases always persist the core ranges and optional child counts on request" {
+  let store = sample_index().store()
+  let core = @index.Index::build(
+    store,
+    eager=@index.RangeFieldSet::default(),
+    trigram=false,
+  )
+  let core_bytes = encoded(core)
+  assert_eq(get_test_u32(core_bytes, 44), 5U)
+  let core_loaded = decoded(core_bytes)
+  for field in @index.RangeField::core() {
+    assert_true(core_loaded.ranges().is_loaded(field))
+  }
+  assert_false(core_loaded.ranges().is_available(@index.ChildFileCount))
+  assert_false(core_loaded.ranges().is_available(@index.ChildFolderCount))
+
+  let selected = @index.Index::build(
+    store,
+    eager=@index.RangeFieldSet::of([@index.ChildFileCount]),
+    trigram=false,
+  )
+  let selected_bytes = encoded(selected)
+  assert_eq(get_test_u32(selected_bytes, 44), 6U)
+  let selected_loaded = decoded(selected_bytes)
+  assert_true(selected_loaded.ranges().is_available(@index.ChildFileCount))
+  assert_false(selected_loaded.ranges().is_available(@index.ChildFolderCount))
+  assert_ranges_equal(
+    selected_loaded.ranges().child_file_count(),
+    selected.ranges().child_file_count(),
+  )
 }
 
 ///|
@@ -774,10 +822,11 @@ test "header follows the documented layout" {
   assert_eq(bytes.exact_view(start=0, end=4), b"MSDB"[:])
   assert_eq(bytes[4], b'\x03')
   assert_eq(bytes[5], b'\x00')
-  assert_eq(bytes[6], b'\x01')
+  assert_eq(bytes[6], b'\x02')
   assert_eq(bytes[8], b'\x01')
   assert_eq(get_test_u32(bytes, 36), 0U)
-  assert_eq(bytes[60].to_int() | (bytes[61].to_int() << 8), 10)
+  assert_eq(get_test_u32(bytes, 44), 7U)
+  assert_eq(bytes[60].to_int() | (bytes[61].to_int() << 8), 11)
   assert_eq(
     bytes[52].to_int() |
     (bytes[53].to_int() << 8) |
@@ -822,7 +871,7 @@ test "a database without trigram has one fewer section" {
   let bytes = encoded(
     @index.Index::build(sample_index().store(), trigram=false),
   )
-  assert_eq(bytes[60], b'\x09')
+  assert_eq(bytes[60], b'\x0a')
 }
 
 ///|
@@ -885,7 +934,7 @@ test "database info reads the header without loading the store" {
     err => abort(err.message())
   }
   assert_eq(info.format_major, 3)
-  assert_eq(info.format_minor, 1)
+  assert_eq(info.format_minor, 2)
   assert_eq(info.folder_count, 2)
   assert_eq(info.file_count, 5)
   assert_eq(info.entry_count(), 7)
@@ -893,7 +942,7 @@ test "database info reads the header without loading the store" {
   assert_eq(info.name_count, 6)
   assert_eq(info.file_size, bytes.length().to_int64())
   assert_true(info.trigram_count > 0)
-  assert_eq(info.sections.length(), 10)
+  assert_eq(info.sections.length(), 11)
 }
 
 ///|
@@ -1044,6 +1093,61 @@ test "full verification rejects range values that no longer match Store" {
 }
 
 ///|
+test "parent paths are required, structurally checked, and semantically verified" {
+  let original = encoded(sample_index())
+  let (header, sections) = database_parts(original)
+  let without_paths : Array[(Int32, Bytes)] = []
+  for pair in sections {
+    if pair.0 != 11 {
+      without_paths.push(pair)
+    }
+  }
+  match database_error(rebuild_database(header, without_paths)) {
+    @index.DbError::Corrupt(message) =>
+      assert_true(message.contains("missing parent-paths section"))
+    other =>
+      abort("expected a missing PARENT_PATHS error, got \{other.message()}")
+  }
+
+  let mut payload = b""
+  for pair in sections {
+    if pair.0 == 11 {
+      payload = pair.1
+    }
+  }
+  let bad_count = fuzz_copy(payload)
+  put_test_u32(bad_count, 0, 3U)
+  assert_true(
+    database_error(
+      replace_section(original, 11, Bytes::from_array(bad_count[:])),
+    )
+    is @index.DbError::Corrupt(_),
+  )
+
+  let duplicate_id = fuzz_copy(payload)
+  let duplicate_bytes = Bytes::from_array(duplicate_id[:])
+  let first_length = get_test_u32(duplicate_bytes, 4).reinterpret_as_int()
+  let first_id = get_test_u32(duplicate_bytes, 8 + first_length)
+  let second = 12 + first_length
+  let second_length = get_test_u32(duplicate_bytes, second).reinterpret_as_int()
+  put_test_u32(duplicate_id, second + 4 + second_length, first_id)
+  assert_true(
+    database_error(
+      replace_section(original, 11, Bytes::from_array(duplicate_id[:])),
+    )
+    is @index.DbError::Corrupt(_),
+  )
+
+  let changed_path = fuzz_copy(payload)
+  let path_byte = second + 4 + second_length - 1
+  changed_path[path_byte] = (changed_path[path_byte].to_uint() ^ 1U).to_byte()
+  assert_semantic_tamper(
+    replace_section(original, 11, Bytes::from_array(changed_path[:])),
+    "parent paths do not match the store",
+  )
+}
+
+///|
 test "full verification rejects a trigram posting that names a nonmatching entry" {
   let original = sample_index()
   let trigram = original.trigram().unwrap()
@@ -1156,9 +1260,9 @@ test "unknown sections before checksum are skipped and covered by full verificat
   let info = @index.DbInfo::from_bytes(extended[:], verify=true) catch {
     err => abort(err.message())
   }
-  assert_eq(info.sections.length(), 11)
-  assert_eq(info.sections[9].name, "unknown(99)")
-  assert_eq(info.sections[9].length, 14L)
+  assert_eq(info.sections.length(), 12)
+  assert_eq(info.sections[10].name, "unknown(99)")
+  assert_eq(info.sections[10].length, 14L)
 
   let (_, sections) = database_parts(extended)
   let unknown_index = sections.length() - 2
@@ -1186,7 +1290,7 @@ test "hostile header counts are rejected before section decoding" {
     (32, 3U),
     (36, 1_000_001U),
     (40, 1_000_001U),
-    (44, 6U),
+    (44, 8U),
     (48, 16_777_217U),
   ]
   for (offset, value) in cases {

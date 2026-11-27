@@ -123,6 +123,38 @@ test "child count range index matches the scan engine" {
 }
 
 ///|
+test "optional child kind count indexes match the scan engine" {
+  let store = compat_store()
+  let ranges = @index.Ranges::build(store)
+  let files = ranges.child_file_count()
+  let folders = ranges.child_folder_count()
+  let file_cases : Array[(@query.Comparison, String)] = [
+    (@query.Comparison::equal(0L), "childfilecount:0"),
+    (@query.Comparison::equal(1L), "childfilecount:1"),
+    (@query.Comparison::compare(@query.GreaterEqual, 2L), "childfilecount:>=2"),
+    (@query.Comparison::range(1L, 4L), "childfilecount:1..4"),
+  ]
+  for pair in file_cases {
+    assert_eq(
+      dict_sorted_paths(store, range_ids_of(files, pair.0)),
+      sorted_copy(matched(pair.1)),
+    )
+  }
+  let folder_cases : Array[(@query.Comparison, String)] = [
+    (@query.Comparison::equal(0L), "childfoldercount:0"),
+    (@query.Comparison::equal(1L), "childfoldercount:1"),
+    (@query.Comparison::compare(@query.Smaller, 2L), "childfoldercount:<2"),
+    (@query.Comparison::range(0L, 3L), "childfoldercount:0..3"),
+  ]
+  for pair in folder_cases {
+    assert_eq(
+      dict_sorted_paths(store, range_ids_of(folders, pair.0)),
+      sorted_copy(matched(pair.1)),
+    )
+  }
+}
+
+///|
 test "parent range index matches the scan engine" {
   let store = compat_store()
   let ranges = @index.Ranges::build(store)

@@ -82,6 +82,11 @@ fn filter_options() -> Array[@argparse.OptionArg] {
       about="Root directory for a live scan; may be repeated",
       action=Append,
     ),
+    @argparse.OptionArg(
+      "fast-fields",
+      about="Range fields loaded eagerly: size,mtime",
+      default_values=["size,mtime"],
+    ),
   ]
 }
 

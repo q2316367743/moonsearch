@@ -22,18 +22,21 @@ pub struct Index {
 ///|
 /// Build every candidate source for a finished store.
 ///
-/// `eager` selects the range fields built immediately; the rest materialize on
-/// first use. The default matches `Ranges::build` (every field), while the CLI
-/// passes its own `--fast-fields` selection. `trigram` builds the postings
-/// unless the caller wants a `--no-trigram` comparison index, in which case
-/// ordinary name terms fall back to a full scan.
+/// `eager` selects optional range fields built immediately in addition to the
+/// five core fields, which are always built and persisted. On database load the
+/// same selection controls eager decoding; unselected core fields decode from
+/// their persisted slices on first use. The default matches `Ranges::build`
+/// (every field), while the CLI passes its `--fast-fields` selection.
+/// `trigram` builds the postings unless the caller wants a `--no-trigram`
+/// comparison index, in which case ordinary name terms fall back to a full scan.
 pub fn Index::build(
   store : @core.Store,
   eager~ : RangeFieldSet = RangeFieldSet::all(),
   trigram~ : Bool = true,
   excludes~ : Array[ExcludeRule] = [],
 ) -> Index {
-  let ranges = Ranges::build(store, eager~)
+  let selected = RangeFieldSet::core().union(eager)
+  let ranges = Ranges::build(store, eager=selected)
   let dict = Dict::build(store)
   let postings = if trigram { Some(TrigramIndex::build(store)) } else { None }
   { store, dict, ranges, trigram: postings, excludes, }

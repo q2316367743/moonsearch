@@ -167,7 +167,7 @@ moonsearch update ~/Documents                 # 重新扫描并原子替换
 | `--exclude-hidden` | 跳过以点开头的名称 |
 | `--no-default-excludes` | 不跳过 `/proc`、`/sys`、`/dev`、`/run` |
 | `--allow-nested-roots` | 允许根目录相互嵌套 |
-| `--fast-fields <LIST>` | 预建区间字段，默认 `size,mtime`；可选 `size`、`mtime`、`depth`、`childcount`、`parent` |
+| `--fast-fields <LIST>` | 控制可选区间字段与加载时预解码，默认 `size,mtime`；五个核心字段始终持久化，另可选 `childfilecount`、`childfoldercount` |
 | `--no-trigram` | 不构建 trigram 倒排；名称查询将退化为全扫描 |
 | `--one-file-system` | Unix POSIX 后端按 `st_dev` 过滤跨设备目录、普通文件与符号链接 |
 | `--unreadable-directories <POLICY>` | 不可读目录策略：`continue`（默认）或 `fatal`；也可在配置中设置 |
@@ -226,6 +226,7 @@ moonsearch -r '^report.*\.pdf$'   # 正则：整条查询作为正则
 | `-r, --regex` | 整条查询作为正则 |
 | `--type <any\|file\|folder>` | 限制结果类型，默认 `any` |
 | `--engine <scan\|bitmap>` | 执行引擎，默认 `scan` |
+| `--fast-fields <LIST>` | 数据库加载时预解码的范围字段，默认 `size,mtime` |
 | `--root <PATH>` | `--live` / `--auto-index` 使用的根目录，可重复 |
 | `--live` | 跳过数据库，直接扫描 `--root` |
 | `--auto-index` | 数据库缺失时先按 `--root` 建库 |
@@ -352,7 +353,7 @@ moonsearch count 'ext:mp4 dm:last30days'
 - 子串短于 3 字节（如 `re`）无法使用 trigram，退化为全扫描；
 - glob、正则与 `path:` 没有索引支持，会在候选集上逐条验证；只有它们时就是全扫描；
 - 高频 trigram（超过索引 20%）被当作停用词跳过；
-- `childfilecount:`、`childfoldercount:`、`contenttype:` 尚无区间索引；
+- 未通过 `--fast-fields` 构建的 `childfilecount:`、`childfoldercount:`，以及 `contenttype:`，会退化为扫描；
 - 稠密区间（如 `size:>1kb`）需要把大切片排序并转成位图。
 
 用 `--explain` 可以看到每个词项选了哪种来源、为什么退化。

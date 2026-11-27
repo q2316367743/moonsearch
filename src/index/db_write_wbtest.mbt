@@ -81,8 +81,8 @@ test "deterministic database golden fingerprint and loaded reserialization" {
   let first = write_encoded(index)
   let second = write_encoded(index)
   assert_eq(first, second)
-  assert_eq(first.length(), 1203)
-  assert_eq(crc32(first[:]), 3_195_767_687U)
+  assert_eq(first.length(), 1319)
+  assert_eq(crc32(first[:]), 2_428_210_259U)
   let loaded = Index::from_bytes(first[:], verify=true) catch {
     err => abort(err.message())
   }
