@@ -1,35 +1,35 @@
-META	fsearch	30000	270000	3556.528	1	1
-QUERY	fsearch		5	0.570	0.521	0.778	300000
-QUERY	fsearch	ext:jpg	5	11.243	9.559	12.375	269
-QUERY	fsearch	ext:jpg size:>1mb	5	13.061	9.651	13.963	0
-QUERY	fsearch	ext:jpg size:>1mb dm:lastweek	5	8.677	6.178	15.244	0
-QUERY	fsearch	report	5	19.713	18.332	21.592	8972
-QUERY	fsearch	report pdf	5	20.251	20.112	20.929	271
-QUERY	fsearch	source map	5	21.489	20.159	23.834	614
-QUERY	fsearch	*.pdf	5	13.114	12.355	13.911	271
-QUERY	fsearch	a	5	16.780	15.911	17.513	119812
-QUERY	fsearch	ab	5	19.912	19.675	20.552	0
-QUERY	fsearch	the	5	22.275	21.097	23.680	8710
-QUERY	fsearch	index	5	20.571	19.269	21.091	8710
-QUERY	fsearch	node_modules	5	19.313	17.239	19.712	3750
-QUERY	fsearch	package.json	5	19.688	19.385	20.534	0
-QUERY	fsearch	size:>1kb	5	10.174	9.933	10.708	283530
-QUERY	fsearch	size:>1mb	5	7.812	7.434	8.365	551
-QUERY	fsearch	ext:jpg OR ext:png	5	17.762	17.460	18.602	13737
-QUERY	fsearch	case:Report	5	14.297	13.834	15.197	0
-QUERY	fsearch	exact:report	5	8.753	8.132	8.950	0
-QUERY	fsearch	regex:^report.*\.pdf$	5	12.651	12.057	12.877	270
-QUERY	fsearch	path:src	5	104.947	100.530	116.344	150760
-QUERY	fsearch	folder:src	5	6.956	6.314	7.157	3751
-QUERY	fsearch	depth:>5	5	13.483	13.152	14.085	227871
-QUERY	fsearch	dm:lastweek	5	8.495	8.101	9.282	0
-QUERY	fsearch	dm:thisyear	5	11.080	10.045	11.853	233916
-QUERY	fsearch	dm:thismonth	5	12.716	9.388	15.332	268
-QUERY	fsearch	size:>1000000	5	8.297	7.650	8.672	551
-QUERY	fsearch	file:size:>1000	5	10.901	9.528	11.527	253530
-QUERY	fsearch	ing	5	21.078	19.201	21.658	0
-QUERY	fsearch	ion	5	20.331	19.111	20.671	1
-QUERY	fsearch	ent	5	18.114	17.287	19.592	17419
-QUERY	fsearch	com	5	18.596	17.998	19.236	8710
-QUERY	fsearch	.js	5	20.454	19.383	21.866	54138
-QUERY	fsearch	.ts	5	23.855	22.066	25.260	13458
+META	fsearch	30000	270000	3871.179	1	1
+QUERY	fsearch		11	0.439	0.399	2.211	300000
+QUERY	fsearch	ext:jpg	11	5.663	5.124	6.124	269
+QUERY	fsearch	ext:jpg size:>1mb	11	5.610	5.329	7.228	0
+QUERY	fsearch	ext:jpg size:>1mb dm:lastweek	11	6.757	5.924	9.373	0
+QUERY	fsearch	report	11	7.148	6.971	14.434	8972
+QUERY	fsearch	report pdf	11	7.502	7.349	16.873	271
+QUERY	fsearch	source map	11	10.556	7.991	14.300	614
+QUERY	fsearch	*.pdf	11	6.608	5.754	9.294	271
+QUERY	fsearch	a	11	7.275	6.490	12.732	119812
+QUERY	fsearch	ab	11	8.331	7.399	9.418	0
+QUERY	fsearch	the	11	11.048	8.363	15.117	8710
+QUERY	fsearch	index	11	7.591	7.266	10.618	8710
+QUERY	fsearch	node_modules	11	10.214	6.971	16.565	3750
+QUERY	fsearch	package.json	11	7.593	6.742	11.699	0
+QUERY	fsearch	size:>1kb	11	4.578	4.398	7.174	283530
+QUERY	fsearch	size:>1mb	11	3.244	3.139	4.020	551
+QUERY	fsearch	ext:jpg OR ext:png	11	8.125	7.872	11.605	13737
+QUERY	fsearch	case:Report	11	5.902	5.742	6.253	0
+QUERY	fsearch	exact:report	11	4.251	3.540	4.858	0
+QUERY	fsearch	regex:^report.*\.pdf$	11	6.351	5.559	9.320	270
+QUERY	fsearch	path:src	11	66.992	58.360	70.698	150760
+QUERY	fsearch	folder:src	11	3.007	2.857	3.848	3751
+QUERY	fsearch	depth:>5	11	7.799	5.882	10.619	227871
+QUERY	fsearch	dm:lastweek	11	4.169	3.515	5.224	0
+QUERY	fsearch	dm:thisyear	11	5.099	4.925	6.871	233916
+QUERY	fsearch	dm:thismonth	11	3.805	3.491	4.514	268
+QUERY	fsearch	size:>1000000	11	3.543	3.291	7.902	551
+QUERY	fsearch	file:size:>1000	11	4.858	4.462	5.883	253530
+QUERY	fsearch	ing	11	10.553	8.012	13.094	0
+QUERY	fsearch	ion	11	8.765	7.470	15.244	0
+QUERY	fsearch	ent	11	9.172	7.348	13.247	17419
+QUERY	fsearch	com	11	8.989	7.230	13.036	8710
+QUERY	fsearch	.js	11	9.560	7.899	15.592	54138
+QUERY	fsearch	.ts	11	10.965	8.151	15.706	13458

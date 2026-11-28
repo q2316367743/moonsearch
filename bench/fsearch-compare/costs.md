@@ -8,33 +8,33 @@ Apple M4 Pro, macOS 26.6.2, MoonBit 0.1.20261126, release build.
 
 | Item | moonsearch + trigram | moonsearch `--no-trigram` | FSearch core, 1 thread |
 | --- | ---: | ---: | ---: |
-| Build (scan + index) | 7.42 s | 4.25 s | 3.56 s |
-| Build peak RSS | 204.1 MiB | 155.6 MiB | not measured |
-| Database on disk | 31.0 MB | 27.7 MB | not measured |
-| Load (`Index::read_database`) | 59.9 ms | not measured | not measured |
+| Build (scan + index) | 5.93 s | 3.67 s | 3.87 s |
+| Build peak RSS | 179.4 MiB | 160.5 MiB | not measured |
+| Database on disk | 30.4 MB | 27.1 MB | not measured |
+| Load (`Index::read_database`) | 55.3 ms | not measured | not measured |
 | Query-time RSS | not measured | — | not measured |
-| Trigram keys / postings | 872 / 3,424,744 | — | — |
+| Trigram keys / postings | 861 / 3,424,733 | — | — |
 
 FSearch's number is an in-memory index build from the same tree.  It does not
 build trigram postings and does not write a database, so it is **not** a
 like-for-like build comparison: it establishes the cost of the scan plus
 FSearch's own sort structures, not the cost of moonsearch's extra indexes.
 
-Trigram overhead on this tree: +3.17 s build, +3.5 MB database, +48.5 MiB peak
+Trigram overhead on this tree: +2.26 s build, +3.8 MB database, +18.9 MiB peak
 build RSS.
 
 ### Trigram ablation (same tree, bitmap count path)
 
 | Query | hits | trigram | no trigram | speedup |
 | --- | ---: | ---: | ---: | ---: |
-| `ext:jpg` | 269 | 0.037 ms | 0.037 ms | 1.0x |
-| `report` | 8,972 | 0.684 ms | 15.412 ms | 22.5x |
-| `source map` | 614 | 2.774 ms | 18.280 ms | 6.6x |
-| `index` | 8,710 | 0.707 ms | 15.458 ms | 21.9x |
-| `node_modules` | 3,750 | 0.239 ms | 14.321 ms | 60.0x |
-| `package.json` | 0 | 0.039 ms | 14.381 ms | 369.4x |
-| `the` | 8,710 | 0.645 ms | 16.290 ms | 25.2x |
-| `*.pdf` | 271 | 22.061 ms | 22.234 ms | 1.0x |
+| `ext:jpg` | 269 | 0.034 ms | 0.034 ms | 1.0x |
+| `report` | 8,972 | 0.660 ms | 14.674 ms | 22.2x |
+| `source map` | 614 | 2.439 ms | 17.170 ms | 7.0x |
+| `index` | 8,710 | 0.658 ms | 14.960 ms | 22.7x |
+| `node_modules` | 3,750 | 0.231 ms | 13.880 ms | 60.0x |
+| `package.json` | 0 | 0.035 ms | 13.751 ms | 392.8x |
+| `the` | 8,710 | 0.613 ms | 15.629 ms | 25.5x |
+| `*.pdf` | 271 | 21.343 ms | 21.339 ms | 1.0x |
 
 Trigram postings pay off on name substrings; they do nothing for globs,
 regexes, `path:` or short needles.  Full table:

@@ -50,15 +50,15 @@
 
 | 查询 | 命中 | FSearch 1T | bitmap count | bitmap full | FSearch/full |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `report` | 8,972 | 19.713 | 0.684 | 1.402 | 14.06× |
-| `source map` | 614 | 21.489 | 2.774 | 6.441 | 3.34× |
-| `ext:jpg size:>1mb` | 0 | 13.061 | 0.045 | 0.453 | 28.80× |
-| `a`（1 字节） | 119,812 | 16.780 | 15.695 | 17.853 | 0.94× |
-| `*.pdf`（glob） | 271 | 13.114 | 22.061 | 25.021 | 0.52× |
-| `path:src` | 150,760 | 104.947 | 125.151 | 127.855 | 0.82× |
-| `size:>1kb`（稠密） | 283,530 | 10.174 | 15.553 | 16.270 | 0.63× |
+| `report` | 8,972 | 7.148 | 0.660 | 1.347 | 5.31× |
+| `source map` | 614 | 10.556 | 2.439 | 5.849 | 1.80× |
+| `ext:jpg size:>1mb` | 0 | 5.610 | 0.041 | 0.436 | 12.86× |
+| `a`（1 字节） | 119,812 | 7.275 | 15.175 | 17.227 | 0.42× |
+| `*.pdf`（glob） | 271 | 6.608 | 21.343 | 24.043 | 0.27× |
+| `path:src` | 150,760 | 66.992 | 105.228 | 105.936 | 0.63× |
+| `size:>1kb`（稠密） | 283,530 | 4.578 | 15.082 | 15.741 | 0.29× |
 
-完整表中，选择性高且可索引的完整搜索相对 FSearch 单线程快 2.65–47×，count 快约 4–585×；退化查询的 `FSearch/full` 为 0.50–0.99（moonsearch 慢 1.01–2×）。`source map` 只有 614 命中却要 2.774 ms，`package.json` 0 命中只要 0.039 ms：成本由 posting 长度和候选规模决定，不由命中数决定。短 needle、stop-gram、glob/regex/`path:`、稠密范围退化为 O(N)，完整搜索可能比 FSearch 慢。代价：300k 合成树构建 7.42 s（FSearch 3.56 s 是内存索引，不建 trigram、不写库）、加载 59.9 ms；1,030,056 条目上（Apple M4 Pro，release，热缓存）构建 28.4 s、加载 183 ms、查询态 332.4 MiB，索引额外体积 2.86×/1.66×（未达 1.5×，拆分与后续计划见基准文档）。完整表格、原始 TSV 与 harness 见 [docs/benchmarks.md](docs/benchmarks.md) §6 与 [bench/fsearch-compare/](bench/fsearch-compare/)；2026-11-18 的私有 297,595 条目快照只作历史补充，不替代该主口径。
+完整表中，选择性高且可索引的完整搜索相对 FSearch 单线程快 1.15–24.67×，count 快约 2–300×；退化查询的 `FSearch/full` 为 0.26–0.63（moonsearch 慢 1.6–3.8×）。`source map` 只有 614 命中却要 2.439 ms，`package.json` 0 命中只要 0.035 ms：成本由 posting 长度和候选规模决定，不由命中数决定。短 needle、stop-gram、glob/regex/`path:`、稠密范围退化为 O(N)，完整搜索可能比 FSearch 慢。代价：300k 合成树构建 5.93 s（FSearch 3.87 s 是内存索引，不建 trigram、不写库）、加载 55.3 ms；1,030,056 条目上（Apple M4 Pro，release，热缓存）构建 28.4 s、加载 183 ms、查询态 332.4 MiB，索引额外体积 2.86×/1.66×（未达 1.5×，拆分与后续计划见基准文档）。FSearch 的绝对值随机器负载波动，倍数取 11 次采样的同会话测量。完整表格、原始 TSV 与 harness 见 [docs/benchmarks.md](docs/benchmarks.md) §6 与 [bench/fsearch-compare/](bench/fsearch-compare/)；2026-11-18 的私有 297,595 条目快照只作历史补充，不替代该主口径。
 
 https://github.com/q2316367743/moonsearch。不少于 16 个有效提交（2026-11-11 起，首个提交 `93f613a`），已沿 S01–S12 路线交付，每次是实质增量（实现、测试、文档或 CI）；没有空提交或凑数拆分。S13–S14 尚未声称完成。CI 跑 `moon check`、`fmt --check`、`test`、`testcli`。
 

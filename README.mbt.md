@@ -46,10 +46,10 @@ moonsearch 'ext:pdf size:>1mb' -n 20
 是显式深度校验，1M 条目约 2.1–2.2 s。
 
 同条件 FSearch core 对照（300,000 条目、单线程）：可索引的高选择性完整搜索快
-2.65–47×，count 快约 4–585×；短 needle、stop-gram、glob/regex/`path:`、稠密范围
-不占优。构建成本高于 FSearch 的内存索引（300k：7.42 s 对 3.56 s），因为它额外建
-trigram 并写持久库。完整表格与复现命令见
-[`docs/benchmarks.md`](docs/benchmarks.md) §6 与
+1.15–25×，count 快约 2–300×；短 needle、stop-gram、glob/regex/`path:`、稠密范围
+不占优。构建成本高于 FSearch 的内存索引（300k：5.93 s 对 3.87 s），因为它额外建
+trigram 并写持久库。FSearch 绝对值随机器负载波动，倍数取当日同会话测量。完整表格与
+复现命令见 [`docs/benchmarks.md`](docs/benchmarks.md) §6 与
 [`bench/fsearch-compare/`](bench/fsearch-compare/)。
 
 ## 安装

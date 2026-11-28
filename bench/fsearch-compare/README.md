@@ -61,7 +61,8 @@ Do not redistribute the built binary without complying with FSearch's license.
 
 ## Run
 
-FSearch, one thread, queries as command-line arguments:
+FSearch, one thread, queries as command-line arguments (`--warmup 2 --runs 11` for
+the published table; 5 is enough for a quick check):
 
 ```bash
 TZ=Asia/Shanghai /tmp/bench_fsearch \
