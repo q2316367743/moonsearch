@@ -244,6 +244,38 @@ pub fn compile_indexed(
 }
 
 ///|
+/// Result of one indexed evaluation.
+pub(all) struct IndexedExecution {
+  ids : @ids.Ids
+  candidates : Int32
+  description : String
+}
+
+///|
+/// Compile and evaluate once, retaining the number of predicate candidates.
+pub fn exec_indexed_with_stats(
+  index : @index.Index,
+  query : @query.Query,
+  options~ : PlanOptions = PlanOptions::new(),
+  compat~ : Bool = false,
+) -> IndexedExecution raise @query.QueryError {
+  let expr = compile_indexed(index, query, options~, compat~)
+  let context : EvalContext = {
+    store: index.store(),
+    universe: index.dict().all(),
+    total: index.entry_count(),
+    scratch: [],
+    candidates: 0,
+  }
+  let result = evaluate_plan(expr, context)
+  {
+    ids: result.ids,
+    candidates: context.candidates,
+    description: describe_plan(expr, index.entry_count()),
+  }
+}
+
+///|
 /// Evaluate a query with the indexed engine.
 ///
 /// The result is a set of store-wide ids; turning it into ordered output is the
@@ -254,14 +286,7 @@ pub fn exec_indexed(
   options~ : PlanOptions = PlanOptions::new(),
   compat~ : Bool = false,
 ) -> @ids.Ids raise @query.QueryError {
-  let expr = compile_indexed(index, query, options~, compat~)
-  let context : EvalContext = {
-    store: index.store(),
-    universe: index.dict().all(),
-    total: index.entry_count(),
-    scratch: [],
-  }
-  evaluate_plan(expr, context).ids
+  exec_indexed_with_stats(index, query, options~, compat~).ids
 }
 
 ///|
@@ -826,6 +851,7 @@ priv struct EvalContext {
   universe : @ids.Ids
   total : Int32
   scratch : Array[Array[Int32]]
+  mut candidates : Int32
 }
 
 ///|
@@ -1007,8 +1033,9 @@ fn filter_result(
 /// Candidates come from postings and range slices, so an id is expected to be
 /// in range; an out-of-range id is treated as a non-match instead of panicking.
 fn verify_term(term : ScanTerm, context : EvalContext, id : Int32) -> Bool {
+  context.candidates = context.candidates + 1
   match context.store.entry_at(id) {
-    Some(entry) => eval_term(term, context.store, entry)
+    Some(entry) => eval_term(term, EntryView::of_store(context.store, entry))
     None => false
   }
 }

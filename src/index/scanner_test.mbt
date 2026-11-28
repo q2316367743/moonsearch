@@ -12,6 +12,8 @@ struct FakeSource {
   io_errors : Map[Bytes, String]
   realpath_io_errors : Map[Bytes, String]
   mut devices : Bool
+  mut list_calls : Int32
+  mut stat_calls : Int32
 }
 
 ///|
@@ -24,6 +26,8 @@ fn fake_source() -> FakeSource {
     io_errors: Map([]),
     realpath_io_errors: Map([]),
     devices: true,
+    list_calls: 0,
+    stat_calls: 0,
   }
 }
 
@@ -127,6 +131,7 @@ impl @platform.ScanSource for FakeSource with fn realpath(self, path) -> Bytes r
 
 ///|
 impl @platform.ScanSource for FakeSource with fn stat(self, path) -> @platform.NodeInfo raise @platform.PlatformError {
+  self.stat_calls = self.stat_calls + 1
   let key = path.to_owned()
   match self.io_errors.get(key) {
     Some(message) => raise @platform.PlatformError::io(message)
@@ -140,6 +145,7 @@ impl @platform.ScanSource for FakeSource with fn stat(self, path) -> @platform.N
 
 ///|
 impl @platform.ScanSource for FakeSource with fn list(self, path) -> @platform.DirListing raise @platform.PlatformError {
+  self.list_calls = self.list_calls + 1
   let key = path.to_owned()
   if self.denied.contains(key) {
     raise @platform.PlatformError::access_denied(@utf8.decode_lossy(key))
@@ -746,6 +752,71 @@ async test "hidden directories are skipped without descending" {
   assert_eq(report.store.folder_count(), 1)
   assert_eq(report.store.file_count(), 1)
   assert_eq(report.store.file_path(0), b"/r/a.b")
+}
+
+///|
+async test "streaming traversal uses deterministic depth-first order" {
+  let source = fake_source()
+    .dir(b"/r", [dir_entry(b"a"), dir_entry(b"z"), file_entry(b"a0.txt", 1L)])
+    .dir(b"/r/a", [file_entry(b"z.txt", 2L)])
+    .dir(b"/r/z", [file_entry(b"sentinel.txt", 3L)])
+  let seen : Array[Bytes] = []
+  let report = @index.scan_stream(config([b"/r"]), source, fn(
+    entry,
+  ) -> @index.VisitDecision noraise {
+    seen.push(entry.path)
+    @index.Continue
+  })
+  assert_eq(seen, [
+    b"/r", b"/r/a", b"/r/a/z.txt", b"/r/a0.txt", b"/r/z", b"/r/z/sentinel.txt",
+  ])
+  assert_eq(report.directories_listed, 3)
+  assert_eq(report.entries_seen, 5)
+  assert_eq(report.entries_evaluated, 6)
+  assert_true(!report.stopped_early)
+}
+
+///|
+async test "streaming traversal finishes one root before opening the next" {
+  let source = fake_source()
+    .dir(b"/a", [file_entry(b"x.txt", 1L)])
+    .dir(b"/b", [file_entry(b"y.txt", 2L)])
+  let seen : Array[Bytes] = []
+  ignore(
+    @index.scan_stream(config([b"/b", b"/a"]), source, fn(
+      entry,
+    ) -> @index.VisitDecision noraise {
+      seen.push(entry.path)
+      @index.Continue
+    }),
+  )
+  assert_eq(seen, [b"/a", b"/a/x.txt", b"/b", b"/b/y.txt"])
+}
+
+///|
+async test "streaming traversal stops before listing a later directory" {
+  let source = fake_source()
+    .dir(b"/r", [file_entry(b"a.txt", 1L), dir_entry(b"z")])
+    .dir(b"/r/z", [file_entry(b"sentinel.txt", 2L)])
+  let seen : Array[Bytes] = []
+  let report = @index.scan_stream(config([b"/r"]), source, fn(
+    entry,
+  ) -> @index.VisitDecision noraise {
+    seen.push(entry.path)
+    if entry.name == b"a.txt" {
+      @index.Stop
+    } else {
+      @index.Continue
+    }
+  })
+  assert_eq(seen, [b"/r", b"/r/a.txt"])
+  assert_eq(source.list_calls, 1)
+  assert_eq(source.stat_calls, 1)
+  assert_eq(report.entries_seen, 1)
+  assert_eq(report.entries_evaluated, 2)
+  assert_eq(report.directories_listed, 1)
+  assert_true(report.stopped_early)
+  assert_eq(report.issues.length(), 0)
 }
 
 ///|

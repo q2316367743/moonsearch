@@ -1,7 +1,10 @@
 import {
+  "moonbitlang/core/async/io",
+  "moonbitlang/core/async/os_error",
   "moonbitlang/core/async/stdio",
   "moonbitlang/core/env",
   "q2316367743/moonsearch/src/cli",
+  "q2316367743/moonsearch/src/core",
 }
 
 pkgtype(kind: "executable")

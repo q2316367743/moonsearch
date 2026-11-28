@@ -52,6 +52,13 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
   `Int64` 边界；每次扫描最多记录一次稳定溢出告警。
 - `Builder::finish` 生成不可变 `Store`；物理规范 id、父链回填与合并规范顺序都在
   `Store::new` 中建立，之后才构建 Dict/Ranges/Trigram。
+- `scan_stream` 是独立的可取消遍历：它不创建 `Builder`/`Store`，每个目录只物化一个
+  排序后的 listing，再通过 visitor 逐条交给调用方。顺序是目录内名字排序的深度优先序，
+  不承诺 `Store` 的全局 `(name, path)` 顺序——后者需要先列举所有目录才能确定。
+  visitor 返回 `Stop` 后不再列举后续兄弟目录或根；`WalkReport` 记录已观察的
+  issues/skipped、`directories_listed`、`entries_seen`、`entries_evaluated` 和
+  `stopped_early`。目录聚合字段（size/childcount/empty）此时尚不可知，查询层必须回退
+  完整扫描。
 
 ### 排除规则
 

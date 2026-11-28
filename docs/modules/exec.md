@@ -14,7 +14,8 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `compile.mbt` | `Query` → `ScanExpr`、名字匹配器、日期解析、扫描计划文本 |
+| `compile.mbt` | `Query` → `ScanExpr`、`CompiledScan`、名字匹配器、日期解析、扫描计划文本 |
+| `entry_view.mbt` | `EntryView`：Store 条目与 live Scanner 元数据的统一谓词输入 |
 | `predicate.mbt` | 逐条目谓词：名字、扩展名、类型、可见性、数值、父路径 |
 | `content_type.mbt` | 扩展名 → MIME 表与 `contenttype:` |
 | `scan.mbt` | `exec_scan` / `exec_scan_reverse_with` / `exec_count` / `ScanOptions` |
@@ -40,6 +41,17 @@ Query
 
 常量折叠与类型域剪枝发生在 `compile_query`：`None` 吸收 AND，`All` 吸收 OR，`Not`
 互补。求值按 AND/OR 短路，`--limit` 在收集到足够条目时停止。
+
+`EntryView` 把谓词输入与 `Store + EntryRef` 解耦：完整扫描从 Store 适配，live 扫描直接
+使用 Scanner 提供的 path/name/kind/size/mtime/flags/depth/parent。两路径共用同一个
+`CompiledScan`，因此字段、日期、glob/regex 和 kind/visibility 语义不会分叉。
+`CompiledScan::needs_folder_totals` 在表达式包含 `size:`、`childcount:`、
+`childfilecount:`、`childfoldercount:` 或 `empty:` 时返回 true；live 流式路径遇到这些
+字段必须回退完整 Store 扫描，因为文件夹统计只有在后序递归完成后才存在。
+
+`exec_scan_ordered_stats` 返回 `ScanExecution`：命中、候选谓词次数、总命中数和
+`stopped_early`。`exec_indexed_with_stats` 在求值上下文中统计实际经过 `verify_term`
+的候选数，并连同最终 `Ids` 返回，供 `--stats` 区分总命中、输出数和候选数。
 
 位图计划的类型域剪枝是纯优化，不能掩盖语义错误：`compile_plan` 在把 `Never` 域折叠成
 空集前先调用 `validate_terms`，所以 `file:regex:"[" folder:` 仍然报告非法正则，而不是

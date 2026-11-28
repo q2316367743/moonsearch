@@ -18,6 +18,8 @@ pub async fn read_database_info(StringView, verify? : Bool) -> DbInfo raise DbEr
 
 pub async fn[Source : @platform.ScanSource] scan(ScanConfig, Source) -> ScanReport raise IndexError
 
+pub async fn[Source : @platform.ScanSource] scan_stream(ScanConfig, Source, async (ScanEntry) -> VisitDecision noraise) -> WalkReport raise IndexError
+
 // Errors
 pub suberror DbError {
   NotFound(String)
@@ -240,6 +242,17 @@ pub(all) struct ScanConfig {
 }
 pub fn ScanConfig::new(roots~ : Array[RootSpec], excludes? : Array[ExcludeRule], exclude_hidden? : Bool, allow_nested_roots? : Bool, default_excludes? : Bool, unreadable_directories? : UnreadableDirectoryPolicy) -> Self
 
+pub(all) struct ScanEntry {
+  path : Bytes
+  name : Bytes
+  kind : @core.EntryKind
+  size : Int64
+  mtime : Int64
+  flags : UInt16
+  depth : Int32
+  parent_path : Bytes?
+}
+
 pub(all) struct ScanIssue {
   path : Bytes
   message : String
@@ -292,6 +305,23 @@ pub fn TrigramPosting::len(Self) -> Int32
 pub(all) enum UnreadableDirectoryPolicy {
   Continue
   Fatal
+}
+
+pub(all) enum VisitDecision {
+  Continue
+  Stop
+}
+
+pub(all) struct WalkReport {
+  issues : Array[ScanIssue]
+  skipped_hidden : Int32
+  skipped_excluded : Int32
+  skipped_mount : Int32
+  device_ids_available : Bool
+  directories_listed : Int32
+  entries_seen : Int32
+  entries_evaluated : Int32
+  stopped_early : Bool
 }
 
 // Type aliases

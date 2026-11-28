@@ -119,6 +119,68 @@ fn compile_query(
 }
 
 ///|
+/// A query compiled once for either a Store walk or a live filesystem walk.
+pub(all) struct CompiledScan {
+  priv expr : ScanExpr
+  priv description : String
+  needs_folder_totals : Bool
+}
+
+///|
+/// Compile a scan predicate and retain its diagnostic rendering.
+pub fn compile_scan(
+  query : @query.Query,
+  now : Int64,
+  zone : @time.Zone,
+  compat~ : Bool = false,
+) -> CompiledScan raise @query.QueryError {
+  let expr = compile_query(query, now, zone, compat~)
+  {
+    expr,
+    description: explain_expr(expr),
+    needs_folder_totals: expr_needs_folder_totals(expr),
+  }
+}
+
+///|
+/// Evaluate one already-compiled predicate.
+pub fn CompiledScan::matches(self : CompiledScan, entry : EntryView) -> Bool {
+  eval_expr(self.expr, entry)
+}
+
+///|
+/// Human-readable compiled predicate.
+pub fn CompiledScan::describe(self : CompiledScan) -> String {
+  self.description
+}
+
+///|
+/// Whether evaluation needs post-order folder size or child counts.
+pub fn CompiledScan::needs_folder_totals(self : CompiledScan) -> Bool {
+  self.needs_folder_totals
+}
+
+///|
+/// Conservatively detect fields unavailable during pre-order streaming.
+fn expr_needs_folder_totals(expr : ScanExpr) -> Bool {
+  match expr {
+    Test(term) =>
+      match term.body {
+        Size(_)
+        | ChildCount(_)
+        | ChildFileCount(_)
+        | ChildFolderCount(_)
+        | Empty => true
+        _ => false
+      }
+    And(left, right) | Or(left, right) =>
+      expr_needs_folder_totals(left) || expr_needs_folder_totals(right)
+    Not(inner) => expr_needs_folder_totals(inner)
+    All | None => false
+  }
+}
+
+///|
 /// Compile one term.
 fn compile_term(
   term : @query.Term,

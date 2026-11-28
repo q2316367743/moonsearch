@@ -21,6 +21,16 @@ pub fn ScanOptions::new(
 }
 
 ///|
+/// Compile once with the same clock and zone used by scan execution.
+pub fn compile_scan_with(
+  query : @query.Query,
+  options : ScanOptions,
+  compat~ : Bool = false,
+) -> CompiledScan raise @query.QueryError {
+  compile_scan(query, resolved_now(options), resolved_zone(options), compat~)
+}
+
+///|
 /// Evaluate a query with the linear scan engine and return the matching entries
 /// in canonical order.
 ///
@@ -65,6 +75,16 @@ pub fn exec_scan_reverse_with(
 }
 
 ///|
+/// Counts produced by one scan evaluation.
+pub(all) struct ScanExecution {
+  hits : Array[@core.EntryRef]
+  candidates : Int32
+  total_matches : Int32
+  stopped_early : Bool
+  description : String
+}
+
+///|
 /// Forward or backward streaming scan.
 fn exec_scan_ordered(
   store : @core.Store,
@@ -73,40 +93,58 @@ fn exec_scan_ordered(
   reverse : Bool,
   compat~ : Bool = false,
 ) -> Array[@core.EntryRef] raise @query.QueryError {
-  let expr = compile_query(
+  exec_scan_ordered_stats(store, query, options, reverse, compat~).hits
+}
+
+///|
+/// Forward or backward streaming scan with deterministic counters.
+pub fn exec_scan_ordered_stats(
+  store : @core.Store,
+  query : @query.Query,
+  options : ScanOptions,
+  reverse : Bool,
+  compat~ : Bool = false,
+) -> ScanExecution raise @query.QueryError {
+  let compiled = compile_scan(
     query,
     resolved_now(options),
     resolved_zone(options),
     compat~,
   )
   let hits : Array[@core.EntryRef] = []
-  if expr is None {
-    return hits
+  if compiled.expr is None {
+    return {
+      hits,
+      candidates: 0,
+      total_matches: 0,
+      stopped_early: false,
+      description: compiled.describe(),
+    }
   }
+  let mut candidates = 0
+  let mut stopped_early = false
   let order = store.entries_in_order()
-  if reverse {
-    let mut index = order.length() - 1
-    while index >= 0 {
-      let entry = order[index]
-      if eval_expr(expr, store, entry) {
-        hits.push(entry)
-        if options.limit > 0 && hits.length() >= options.limit {
-          break
-        }
-      }
-      index = index - 1
-    }
-  } else {
-    for entry in order {
-      if eval_expr(expr, store, entry) {
-        hits.push(entry)
-        if options.limit > 0 && hits.length() >= options.limit {
-          break
-        }
+  let mut index = if reverse { order.length() - 1 } else { 0 }
+  while index >= 0 && index < order.length() {
+    let entry = order[index]
+    candidates = candidates + 1
+    if compiled.matches(EntryView::of_store(store, entry)) {
+      hits.push(entry)
+      if options.limit > 0 && hits.length() >= options.limit {
+        stopped_early = index > 0 &&
+          (if reverse { true } else { index + 1 < order.length() })
+        break
       }
     }
+    index = index + (if reverse { -1 } else { 1 })
   }
-  hits
+  {
+    hits,
+    candidates,
+    total_matches: hits.length(),
+    stopped_early,
+    description: compiled.describe(),
+  }
 }
 
 ///|
@@ -122,6 +160,13 @@ pub fn exec_count(
 }
 
 ///|
+/// Count result plus the number of entries whose predicate was evaluated.
+pub(all) struct CountExecution {
+  count : Int32
+  candidates : Int32
+}
+
+///|
 /// Count matches with explicit options.
 pub fn exec_count_with(
   store : @core.Store,
@@ -129,23 +174,36 @@ pub fn exec_count_with(
   options~ : ScanOptions = ScanOptions::new(),
   compat~ : Bool = false,
 ) -> Int32 raise @query.QueryError {
-  let expr = compile_query(
+  exec_count_with_stats(store, query, options~, compat~).count
+}
+
+///|
+/// Count matches and report the evaluated predicate candidates.
+pub fn exec_count_with_stats(
+  store : @core.Store,
+  query : @query.Query,
+  options~ : ScanOptions = ScanOptions::new(),
+  compat~ : Bool = false,
+) -> CountExecution raise @query.QueryError {
+  let compiled = compile_scan(
     query,
     resolved_now(options),
     resolved_zone(options),
     compat~,
   )
-  match expr {
-    None => 0
-    All => store.entry_count()
+  match compiled.expr {
+    None => { count: 0, candidates: 0, }
+    All => { count: store.entry_count(), candidates: 0, }
     _ => {
       let mut count = 0
+      let mut candidates = 0
       for entry in store.entries_in_order() {
-        if eval_expr(expr, store, entry) {
+        candidates = candidates + 1
+        if compiled.matches(EntryView::of_store(store, entry)) {
           count = count + 1
         }
       }
-      count
+      { count, candidates, }
     }
   }
 }
@@ -157,13 +215,13 @@ pub fn explain_query(
   options~ : ScanOptions = ScanOptions::new(),
   compat~ : Bool = false,
 ) -> String raise @query.QueryError {
-  let expr = compile_query(
+  let compiled = compile_scan(
     query,
     resolved_now(options),
     resolved_zone(options),
     compat~,
   )
-  explain_expr(expr)
+  compiled.describe()
 }
 
 ///|

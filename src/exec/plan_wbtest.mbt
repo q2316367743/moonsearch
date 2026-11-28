@@ -20,6 +20,7 @@ fn workspace_context(store : @core.Store) -> EvalContext {
     universe: @ids.Ids::from_sorted([0, 1, 2]),
     total: 128,
     scratch: [],
+    candidates: 0,
   }
 }
 

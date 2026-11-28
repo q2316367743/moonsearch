@@ -12,15 +12,25 @@ import {
 // Values
 pub fn compile_indexed(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> Expr raise @query.QueryError
 
+pub fn compile_scan(@query.Query, Int64, @time.Zone, compat? : Bool) -> CompiledScan raise @query.QueryError
+
+pub fn compile_scan_with(@query.Query, ScanOptions, compat? : Bool) -> CompiledScan raise @query.QueryError
+
 pub fn exec_count(@core.Store, @query.Query) -> Int32 raise @query.QueryError
 
 pub fn exec_count_with(@core.Store, @query.Query, options? : ScanOptions, compat? : Bool) -> Int32 raise @query.QueryError
+
+pub fn exec_count_with_stats(@core.Store, @query.Query, options? : ScanOptions, compat? : Bool) -> CountExecution raise @query.QueryError
 
 pub fn exec_indexed(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> @ids.Ids raise @query.QueryError
 
 pub fn exec_indexed_count(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> Int32 raise @query.QueryError
 
+pub fn exec_indexed_with_stats(@index.Index, @query.Query, options? : PlanOptions, compat? : Bool) -> IndexedExecution raise @query.QueryError
+
 pub fn exec_scan(@core.Store, @query.Query) -> Array[@core.EntryRef] raise @query.QueryError
+
+pub fn exec_scan_ordered_stats(@core.Store, @query.Query, ScanOptions, Bool, compat? : Bool) -> ScanExecution raise @query.QueryError
 
 pub fn exec_scan_reverse_with(@core.Store, @query.Query, options? : ScanOptions, compat? : Bool) -> Array[@core.EntryRef] raise @query.QueryError
 
@@ -30,6 +40,8 @@ pub fn explain_indexed(@index.Index, @query.Query, options? : PlanOptions, compa
 
 pub fn explain_query(@query.Query, options? : ScanOptions, compat? : Bool) -> String raise @query.QueryError
 
+pub fn format_entry(EntryView, FormatOptions) -> FormatOutput
+
 pub fn format_hits(@core.Store, Array[@core.EntryRef], FormatOptions) -> FormatOutput
 
 pub fn order_hits(@core.Store, Array[@core.EntryRef], OrderOptions) -> Array[@core.EntryRef]
@@ -37,11 +49,40 @@ pub fn order_hits(@core.Store, Array[@core.EntryRef], OrderOptions) -> Array[@co
 // Errors
 
 // Types and methods
+pub(all) struct CompiledScan {
+  needs_folder_totals : Bool
+  // private fields
+}
+pub fn CompiledScan::describe(Self) -> String
+pub fn CompiledScan::matches(Self, EntryView) -> Bool
+pub fn CompiledScan::needs_folder_totals(Self) -> Bool
+
 pub struct ConstLeaf {
   // private fields
 }
 pub fn ConstLeaf::ids(Self) -> @ids.Ids
 pub fn ConstLeaf::label(Self) -> String
+
+pub(all) struct CountExecution {
+  count : Int32
+  candidates : Int32
+}
+
+pub(all) struct EntryView {
+  path : Bytes
+  name : Bytes
+  kind : @core.EntryKind
+  size : Int64
+  mtime : Int64
+  flags : UInt16
+  depth : Int32
+  parent_path : Bytes?
+  child_count : UInt32
+  num_files : UInt32
+  num_folders : UInt32
+}
+pub fn EntryView::live(path~ : Bytes, name~ : Bytes, kind~ : @core.EntryKind, size~ : Int64, mtime~ : Int64, flags~ : UInt16, depth~ : Int32, parent_path~ : Bytes?) -> Self
+pub fn EntryView::of_store(@core.Store, @core.EntryRef) -> Self
 
 pub enum Expr {
   Const(ConstLeaf)
@@ -74,6 +115,13 @@ pub struct FormatTemplate {
   // private fields
 }
 pub fn FormatTemplate::parse(StringView) -> Result[Self, String]
+pub fn FormatTemplate::uses_size(Self) -> Bool
+
+pub(all) struct IndexedExecution {
+  ids : @ids.Ids
+  candidates : Int32
+  description : String
+}
 
 pub(all) struct OrderOptions {
   key : SortKey
@@ -97,6 +145,14 @@ pub(all) struct PlanOptions {
   optimize : Bool
 }
 pub fn PlanOptions::new(now? : Int64?, zone? : @time.Zone?, optimize? : Bool) -> Self
+
+pub(all) struct ScanExecution {
+  hits : Array[@core.EntryRef]
+  candidates : Int32
+  total_matches : Int32
+  stopped_early : Bool
+  description : String
+}
 
 pub struct ScanLeaf {
   // private fields

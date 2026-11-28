@@ -28,18 +28,32 @@ argv
     query.constrain_kind 作为全局约束求交；--regex 应用自动路径/大小写规则
   → 校验输出参数：--sort、--limit、--json/--format/--basename/--null/--relative-to
   → query_source
-      --live          : 扫描 roots → Store（不读写数据库）
+      --live --engine scan : scan_stream 边遍历边匹配，不建 Store
+      --live --engine bitmap: 完整扫描 → Store → Index::build（内存索引）
       数据库存在      : Index::read_database → 字典/范围/posting 原样恢复
       数据库缺失      : --auto-index 时扫描 → 建 Index → 原子写库；否则报错并提示 index
   → 引擎
-      scan   : exec_scan_with(collect_limit)
-      bitmap : 持久化索引按 `--fast-fields` 立即解码范围字段，其余首次使用时从 DB
-               切片解码；live 时 Index::build 总是构建五个核心范围字段
-               → exec_indexed → 规范顺序 membership
+      scan（流式）: 目录内按名字排序的 DFS；谓词求值后逐条写 stdout；
+                   达到 limit 停止遍历，--stats 时继续遍历计数但不继续输出
+      scan（完整）: 目录聚合字段、reverse/非 name 排序、JSON 或 {size} 模板回退
+                   exec_scan_ordered_stats(collect_limit)
+      bitmap      : 默认引擎；持久化索引按 `--fast-fields` 立即解码范围字段，其余首次使用时从
+                    DB 切片解码；live 时 Index::build 总是构建五个核心范围字段
+                    → exec_indexed_with_stats → 规范顺序 membership
   → order_hits: 排序、--reverse、--folders-first、--limit / top-K
-  → format_hits: 路径 / basename / JSON / 模板、--null、--relative-to
+  → format_hits / format_entry: 路径 / basename / JSON / 模板、--null、--relative-to
   → CliResult + 退出码
 ```
+
+`search` 与 `count` 默认使用 `bitmap`；`scan` 保留为对照与调试引擎。`--live
+--engine scan` 是唯一在遍历结束前写 stdout 的路径；它不承诺 Store 的全局
+`(name, path)` 顺序，而是输出每个目录内按名字排序的深度优先序。持久化引擎与完整
+scan 仍使用规范顺序。`--reverse`、`--folders-first`、其他排序、JSON 输出以及模板中的
+`{size}` 需要完整元数据或全局排序，因此自动回退完整 scan/Store 路径。
+
+live scan 的 `--limit` 在输出达到上限后停止后续目录列举；带 `--stats` 时会继续完成
+遍历以获得真实 `matches`，但只输出前 N 条。`--verbose` 的 skipped/issues 描述已观察
+区间，提前停止时报告 `scan: partial`。
 
 `index`/`update` 完成扫描后构建同一个 `@index.Index`，再用
 `Index::write_database` 做原子替换：临时文件 + `sync` + `rename`。`info` 默认只读
@@ -77,9 +91,14 @@ header 与 section table；`--verify` 额外校验全文件 CRC，并从 Store �
   未闭合的 `{` 直接以退出码 2 失败。
 - `--relative-to <DIR>` 先 `realpath`；基准内的路径去掉基准，等于基准输出 `.`，
   基准外保持绝对路径；作用于 `{path}` 与 JSON `path`。
-- `--stats` 输出 `entries` / `matches` / `search` 等诊断到 stderr；持久化索引路径
-  额外输出 `load: <ms>`，实时扫描输出 `scan: <ms>`；`index --stats` 还会打印
-  `database: <path> (<bytes> bytes)`。`--explain` 输出查询文本与当前引擎的计划。
+- `--stats` 输出 `entries` / `candidates` / `matches` / `output` / `ids` / `search` 等
+  诊断到 stderr；`matches` 是应用 `--limit` 前的总命中数，`output` 是实际输出条数，
+  `candidates` 是引擎检查的谓词候选次数。bitmap 的 `ids` 为最终 `Ids` 形态
+  （`sorted`/`bitmap`），scan 为 `n/a`。持久化索引路径额外输出 `load: <ms>`，实时扫描
+  输出 `scan: <ms>`；`index --stats` 还会打印 `database: <path> (<bytes> bytes)`。
+- `--explain` 输出查询文本与当前引擎的计划。bitmap 叶子包含基数估计、候选来源和降级
+  原因；scan 输出 `(scan#N source=universe reason=scan-engine ...)`。live scan 在未
+  遍历前无法给出精确基数，使用 `scan#unknown`。
 - `info` 输出 `database`、`format`、`built`、根/文件夹/文件/名字计数、文件大小、
   trigram 键数与各 section 字节数；`--verify` 会把 `checksum` 从 `metadata` 改为
   `verified`，但只有 full CRC 与 Store 语义重算都通过才输出该状态。
@@ -91,7 +110,10 @@ header 与 section table；`--verify` 额外校验全文件 CRC，并从 Store �
 - `--null` 生成每条以 NUL 结尾（包括最后一条）的字节；入口直接写 `Bytes`，不检测文本、
   不补换行，也不会改变文件名中的原始字节。
 - 退出码：`0` 成功/help/version，`1` 无命中，`2` 参数/查询/IO/DB 错误，
-  `130` SIGINT（见 `core::EXIT_*`）。
+  `130` SIGINT（shell 状态；直接 `waitpid` 为 `-SIGINT`）。
+- stdout 下游关闭（EPIPE，Unix errno 32 / Windows 109）时安静退出 `0`，不输出统计或
+  告警；其他 stdout 写入错误以退出码 `2` 报告。SIGINT 沿用 async runtime 的取消并重发
+  信号约定，扫描循环在目录和条目之间让出事件循环。
 - Unix 扫描、索引、DB 与默认/basename/模板输出全程保留原始字节。JSON 使用合法 UTF-8，
   非法字节以 U+FFFD 替换，并由入口向 stderr 发出一次稳定告警。
 
@@ -109,6 +131,9 @@ header 与 section table；`--verify` 额外校验全文件 CRC，并从 Store �
   scan、bitmap 引擎直接读库、`--no-trigram` 库退化为扫描、损坏数据库以退出码 2 失败；
 - `search`/`count` 的 `--live`、`--auto-index`、多 root、`--type`、`--regex`、
   `--explain`、`--stats`；`--compat` 把解析期与编译期的非法值、非法正则/日期变成空集；
+  live scan 的 `--stats -n 1` 报告真实总命中数与输出数；
+- `tests/process_reliability.py` 验证关闭管道、`| head`、`/dev/full`、SIGINT shell 状态
+  130 与 `waitpid` 的 `-SIGINT`；Scanner 单测用 list/stat 计数证明 limit 提前停止。
 - 每个排序键、`--reverse`、`--folders-first`、`--limit`、`--basename`、`--null`、
   `--json`、`--format`、`--relative-to` 的进程内输出；
 - 同一夹具上 `--engine scan` 与 `--engine bitmap` 的 stdout 与退出码逐字节一致。

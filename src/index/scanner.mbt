@@ -373,6 +373,291 @@ async fn[Source : @platform.ScanSource] normalize_roots(
 }
 
 ///|
+/// One entry observed by the cancellable live traversal.
+pub(all) struct ScanEntry {
+  path : Bytes
+  name : Bytes
+  kind : @core.EntryKind
+  size : Int64
+  mtime : Int64
+  flags : UInt16
+  depth : Int32
+  parent_path : Bytes?
+}
+
+///|
+/// Visitor control for the live traversal.
+pub(all) enum VisitDecision {
+  Continue
+  Stop
+}
+
+///|
+/// Partial scan diagnostics. Counts describe only the traversed prefix when the
+/// visitor stops early.
+pub(all) struct WalkReport {
+  issues : Array[ScanIssue]
+  skipped_hidden : Int32
+  skipped_excluded : Int32
+  skipped_mount : Int32
+  device_ids_available : Bool
+  directories_listed : Int32
+  entries_seen : Int32
+  entries_evaluated : Int32
+  stopped_early : Bool
+}
+
+///|
+/// Mutable state for the live traversal.
+priv struct WalkCtx {
+  excludes : Array[ExcludeRule]
+  exclude_hidden : Bool
+  default_excludes : Bool
+  unreadable_directories : UnreadableDirectoryPolicy
+  issues : Array[ScanIssue]
+  mut skipped_hidden : Int32
+  mut skipped_excluded : Int32
+  mut skipped_mount : Int32
+  mut directories_listed : Int32
+  mut entries_seen : Int32
+  mut entries_evaluated : Int32
+}
+
+///|
+fn WalkCtx::new(config : ScanConfig) -> WalkCtx {
+  {
+    excludes: config.excludes,
+    exclude_hidden: config.exclude_hidden,
+    default_excludes: config.default_excludes,
+    unreadable_directories: config.unreadable_directories,
+    issues: [],
+    skipped_hidden: 0,
+    skipped_excluded: 0,
+    skipped_mount: 0,
+    directories_listed: 0,
+    entries_seen: 0,
+    entries_evaluated: 0,
+  }
+}
+
+///|
+fn WalkCtx::record(
+  self : WalkCtx,
+  path : BytesView,
+  message : StringView,
+) -> Unit {
+  self.issues.push({ path: path.to_owned(), message: "\{message}", })
+}
+
+///|
+/// One sorted directory stream on the depth-first walk stack.
+priv struct WalkFrame {
+  parent_path : Bytes
+  depth : Int32
+  entries : Array[@platform.NodeInfo]
+  mut index : Int32
+  one_file_system : Bool
+  root_device : UInt64?
+}
+
+///|
+/// Read a directory, retaining recoverable failures in the walk report.
+async fn[Source : @platform.ScanSource] walk_listing(
+  source : Source,
+  path : Bytes,
+  ctx : WalkCtx,
+) -> @platform.DirListing raise IndexError {
+  ctx.directories_listed = ctx.directories_listed + 1
+  let listing = source.list(path) catch {
+    err => {
+      if err is @platform.AccessDenied(_) && ctx.unreadable_directories is Fatal {
+        raise UnreadableDirectory(path)
+      }
+      ctx.record(path, err.message())
+      return @platform.DirListing::new(entries=[], failures=[])
+    }
+  }
+  for failure in listing.failures {
+    ctx.record(@util.join_path(path, failure.name), failure.message)
+  }
+  listing.entries.sort_by(fn(left, right) {
+    @util.cmp_paths(left.name[:], right.name[:])
+  })
+  listing
+}
+
+///|
+/// Select the deepest open directory stream.
+///
+/// This is depth-first traversal: once a folder is emitted and opened, its
+/// sorted children are visited before returning to later siblings. Streaming
+/// cannot reproduce Store's global `(name, path)` order without listing every
+/// directory first, which would defeat early stopping.
+fn next_walk_entry(frames : Array[WalkFrame]) -> (Int32, @platform.NodeInfo)? {
+  let mut index = frames.length() - 1
+  while index >= 0 {
+    let frame = frames[index]
+    if frame.index < frame.entries.length() {
+      let entry = frame.entries[frame.index]
+      frames[index].index = frame.index + 1
+      return Some((index, entry))
+    }
+    index = index - 1
+  }
+  None
+}
+
+///|
+/// Walk roots in deterministic depth-first order without building a Store.
+///
+/// Each directory is materialized one at a time and its entries are sorted by
+/// name. Entries are matched and emitted incrementally; Store's global
+/// `(name, path)` order is deliberately not promised because reproducing it
+/// requires listing every directory before the first result.
+pub async fn[Source : @platform.ScanSource] scan_stream(
+  config : ScanConfig,
+  source : Source,
+  visitor : async (ScanEntry) -> VisitDecision noraise,
+) -> WalkReport raise IndexError {
+  let roots = normalize_roots(config, source)
+  roots.sort_by(fn(left, right) { @util.cmp_paths(left.path[:], right.path[:]) })
+  let ctx = WalkCtx::new(config)
+  let frames : Array[WalkFrame] = []
+  let mut root_index = 0
+  let mut stopped_early = false
+  while root_index < roots.length() || !frames.is_empty() {
+    @async.pause()
+    while !frames.is_empty() &&
+          frames[frames.length() - 1].index >=
+          frames[frames.length() - 1].entries.length() {
+      ignore(frames.pop())
+    }
+    let next = if root_index < roots.length() && frames.is_empty() {
+      let spec = roots[root_index]
+      root_index = root_index + 1
+      let info = source.stat(spec.path) catch {
+        @platform.NotFound(_) => raise RootMissing(spec.path)
+        @platform.NotDirectory(_) => raise RootNotDirectory(spec.path)
+        err => raise Io(err.message())
+      }
+      if !(info.kind is Directory) {
+        raise RootNotDirectory(spec.path)
+      }
+      Some((spec, info))
+    } else {
+      None
+    }
+    match next {
+      Some((spec, info)) => {
+        ctx.entries_evaluated = ctx.entries_evaluated + 1
+        let decision = visitor({
+          path: spec.path,
+          name: spec.path,
+          kind: @core.Folder,
+          size: 0L,
+          mtime: info.mtime,
+          flags: 0,
+          depth: 0,
+          parent_path: None,
+        })
+        if decision is Stop {
+          stopped_early = true
+          break
+        }
+        let listing = walk_listing(source, spec.path, ctx)
+        frames.push({
+          parent_path: spec.path,
+          depth: 1,
+          entries: listing.entries,
+          index: 0,
+          one_file_system: spec.one_file_system && source.has_devices(),
+          root_device: info.device,
+        })
+        continue
+      }
+      None => ()
+    }
+    let candidate = next_walk_entry(frames)
+    if candidate is None {
+      break
+    }
+    let (frame_index, entry) = match candidate {
+      Some(value) => value
+      None => break
+    }
+    let frame = frames[frame_index]
+    let child_path = @util.join_path(frame.parent_path, entry.name)
+    let is_dir = entry.kind is Directory
+    ctx.entries_seen = ctx.entries_seen + 1
+    if entry.name.length() > @core.MAX_NAME_LEN {
+      ctx.record(child_path, "name does not fit in the index")
+      continue
+    }
+    if ctx.exclude_hidden && is_hidden_name(entry.name) {
+      ctx.skipped_hidden = ctx.skipped_hidden + 1
+      continue
+    }
+    if any_rule_matches(ctx.excludes, child_path, entry.name, is_dir) {
+      ctx.skipped_excluded = ctx.skipped_excluded + 1
+      continue
+    }
+    if is_dir && ctx.default_excludes && is_default_excluded(child_path) {
+      ctx.skipped_excluded = ctx.skipped_excluded + 1
+      continue
+    }
+    if cross_device(entry.device, frame.root_device, frame.one_file_system) {
+      ctx.skipped_mount = ctx.skipped_mount + 1
+      continue
+    }
+    ctx.entries_evaluated = ctx.entries_evaluated + 1
+    let decision = visitor({
+      path: child_path,
+      name: entry.name,
+      kind: if is_dir {
+        @core.Folder
+      } else {
+        @core.File
+      },
+      size: if is_dir {
+        0L
+      } else {
+        entry.size
+      },
+      mtime: entry.mtime,
+      flags: entry_flags(entry),
+      depth: frame.depth,
+      parent_path: Some(frame.parent_path),
+    })
+    if decision is Stop {
+      stopped_early = true
+      break
+    }
+    if is_dir {
+      let listing = walk_listing(source, child_path, ctx)
+      frames.push({
+        parent_path: child_path,
+        depth: frame.depth + 1,
+        entries: listing.entries,
+        index: 0,
+        one_file_system: frame.one_file_system,
+        root_device: frame.root_device,
+      })
+    }
+  }
+  {
+    issues: ctx.issues,
+    skipped_hidden: ctx.skipped_hidden,
+    skipped_excluded: ctx.skipped_excluded,
+    skipped_mount: ctx.skipped_mount,
+    device_ids_available: source.has_devices(),
+    directories_listed: ctx.directories_listed,
+    entries_seen: ctx.entries_seen,
+    entries_evaluated: ctx.entries_evaluated,
+    stopped_early,
+  }
+}
+
+///|
 /// Scan every configured root into a fresh in-memory store.
 ///
 /// Configuration errors (a missing root, nested roots) raise `IndexError`.

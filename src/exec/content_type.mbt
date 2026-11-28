@@ -66,15 +66,11 @@ fn mime_of_extension(extension : BytesView) -> String {
 /// the whole MIME type (`application/pdf`); a value without one selects either
 /// the main type (`text` matches every `text/*`) or the subtype (`pdf` matches
 /// `application/pdf`), which is what users type in practice.
-fn match_content_type(
-  store : @core.Store,
-  entry : @core.EntryRef,
-  value : String,
-) -> Bool {
+fn match_content_type(entry : EntryView, value : String) -> Bool {
   if entry.kind is @core.Folder {
     return false
   }
-  let mime = mime_of_extension(@util.extension_of(store.entry_name(entry)))
+  let mime = mime_of_extension(@util.extension_of(entry.name[:]))
   if value.contains_char('/') {
     mime == value
   } else {

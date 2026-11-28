@@ -3,6 +3,8 @@ package "q2316367743/moonsearch/src/cli"
 
 import {
   "moonbitlang/core/argparse",
+  "moonbitlang/core/async/io",
+  "moonbitlang/core/async/stdio",
   "q2316367743/moonsearch/src/config",
 }
 
@@ -13,6 +15,8 @@ pub fn parse(ArrayView[String], env? : Map[String, String]) -> Result[Parsed, St
 
 pub async fn run(ArrayView[String], env? : Map[String, String]) -> CliResult
 
+pub async fn run_streaming(ArrayView[String], @stdio.Output, env? : Map[String, String]) -> CliResult
+
 // Errors
 
 // Types and methods
@@ -21,6 +25,8 @@ pub(all) enum CliResult {
   SuccessWith(Bytes, String)
   NoMatch(Bytes, String)
   Failure(String)
+  Streamed(Int32, String)
+  OutputFailure(@io.WriterError)
 }
 pub fn CliResult::exit_code(Self) -> Int32
 

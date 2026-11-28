@@ -88,7 +88,7 @@ priv enum Engine {
 ///|
 /// Parse `--engine`.
 fn engine_of(invocation : Invocation) -> Result[Engine, String] {
-  let configured = invocation.config.engine.unwrap_or("scan")
+  let configured = invocation.config.engine.unwrap_or("bitmap")
   match
     explicit_option_value(invocation.matches, "engine").unwrap_or(configured) {
     "scan" => Ok(ScanEngine)
@@ -245,7 +245,7 @@ async fn format_options_of(
 /// Where a query's store and candidate sources come from.
 priv enum QuerySource {
   /// A scan performed for this query by `--live` or `--auto-index`.
-  Live(@core.Store)
+  Live(@core.Store, @index.ScanReport)
   /// The persisted index loaded from the database.
   Persisted(@index.Index)
 }
@@ -254,7 +254,7 @@ priv enum QuerySource {
 /// The store backing a query source.
 fn source_store(source : QuerySource) -> @core.Store {
   match source {
-    Live(store) => store
+    Live(store, _) => store
     Persisted(index) => index.store()
   }
 }
@@ -263,7 +263,7 @@ fn source_store(source : QuerySource) -> @core.Store {
 /// Whether the source was scanned during this invocation.
 fn source_is_live(source : QuerySource) -> Bool {
   match source {
-    Live(_) => true
+    Live(_, _) => true
     Persisted(_) => false
   }
 }
@@ -272,7 +272,7 @@ fn source_is_live(source : QuerySource) -> Bool {
 /// Scan the configured roots into a store.
 async fn scan_store(
   invocation : Invocation,
-) -> Result[(@core.Store, Array[@index.ExcludeRule]), String] {
+) -> Result[(@core.Store, Array[@index.ExcludeRule], @index.ScanReport), String] {
   let config = match scan_config_of(invocation) {
     Ok(config) => config
     Err(message) => return Err(message)
@@ -283,7 +283,7 @@ async fn scan_store(
     err => Err("error: \{err.message()}")
   }
   match outcome {
-    Ok(report) => Ok((report.store, config.excludes))
+    Ok(report) => Ok((report.store, config.excludes, report))
     Err(message) => Err(message)
   }
 }
@@ -302,11 +302,11 @@ async fn query_source(
 ) -> Result[QuerySource, String] {
   let matches = invocation.matches
   if flag_set(matches, "live") {
-    let (store, _) = match scan_store(invocation) {
+    let (store, _, report) = match scan_store(invocation) {
       Ok(result) => result
       Err(message) => return Err(message)
     }
-    return Ok(Live(store))
+    return Ok(Live(store, report))
   }
   let database = match database_path(invocation) {
     Ok(path) => path
@@ -325,7 +325,7 @@ async fn query_source(
     }
   }
   if flag_set(matches, "auto-index") {
-    let (store, excludes) = match scan_store(invocation) {
+    let (store, excludes, _) = match scan_store(invocation) {
       Ok(result) => result
       Err(message) => return Err(message)
     }
@@ -421,6 +421,9 @@ fn search_diagnostics(
   plan : String,
   store : @core.Store,
   hit_count : Int32,
+  candidate_count : Int32,
+  output_count : Int32,
+  ids_shape : String,
   scan_ms : Int64,
   index_ms : Int64?,
   exec_ms : Int64,
@@ -442,7 +445,10 @@ fn search_diagnostics(
       None => ()
     }
     out.write_string("entries: \{store.entry_count()}\n")
+    out.write_string("candidates: \{candidate_count}\n")
     out.write_string("matches: \{hit_count}\n")
+    out.write_string("output: \{output_count}\n")
+    out.write_string("ids: \{ids_shape}\n")
     out.write_string("search: \{exec_ms} ms\n")
   }
   trim_trailing_newline(out.to_string())
@@ -459,8 +465,122 @@ fn append_warning(diagnostics : String, warning : String) -> String {
 }
 
 ///|
+/// Whether output can be rendered before folder aggregation is complete.
+fn output_supports_stream(output : @exec.FormatOptions) -> Bool {
+  match output.format {
+    @exec.Json => false
+    @exec.Template(template) => !template.uses_size()
+    _ => true
+  }
+}
+
+///|
+/// Run a true filesystem-streaming scan query.
+async fn run_live_stream(
+  invocation : Invocation,
+  query : @query.Query,
+  compiled : @exec.CompiledScan,
+  output : @exec.FormatOptions,
+  limit : Int32,
+  sink : @stdio.Output,
+) -> CliResult {
+  let matches = invocation.matches
+  let accurate_stats = flag_set(matches, "stats")
+  let config = match scan_config_of(invocation) {
+    Ok(config) => config
+    Err(message) => return Failure(message)
+  }
+  let started = @env.now()
+  let mut candidates = 0
+  let mut total_matches = 0
+  let mut emitted = 0
+  let mut invalid_json = 0
+  let mut write_error : @io.WriterError? = None
+  let report = @index.scan_stream(config, @platform.system_source(), async fn(
+    entry,
+  ) -> @index.VisitDecision noraise {
+    candidates = candidates + 1
+    let view = @exec.EntryView::live(
+      path=entry.path,
+      name=entry.name,
+      kind=entry.kind,
+      size=entry.size,
+      mtime=entry.mtime,
+      flags=entry.flags,
+      depth=entry.depth,
+      parent_path=entry.parent_path,
+    )
+    if compiled.matches(view) {
+      total_matches = total_matches + 1
+      if limit == 0 || emitted < limit {
+        let rendered = @exec.format_entry(view, output)
+        invalid_json = invalid_json + rendered.invalid_utf8_records
+        sink.write(rendered.bytes) catch {
+          err => {
+            write_error = Some(err)
+            return @index.Stop
+          }
+        }
+        emitted = emitted + 1
+      }
+    }
+    if !accurate_stats && limit > 0 && emitted >= limit {
+      @index.Stop
+    } else {
+      @index.Continue
+    }
+  }) catch {
+    err => return Failure("error: \{err.message()}")
+  }
+  match write_error {
+    Some(err) => return OutputFailure(err)
+    None => ()
+  }
+  let scan_ms = elapsed_ms(started)
+  let mut diagnostics = ""
+  if flag_set(matches, "explain") {
+    diagnostics = "query: \{query.describe()}\nplan: (scan#unknown source=universe reason=scan-engine \{compiled.describe()})"
+  }
+  if flag_set(matches, "stats") {
+    if !diagnostics.is_empty() {
+      diagnostics = "\{diagnostics}\n"
+    }
+    diagnostics = "\{diagnostics}scan: \{scan_ms} ms\nentries: \{report.entries_evaluated}\ncandidates: \{candidates}\nmatches: \{total_matches}\noutput: \{emitted}\nids: n/a\nsearch: \{scan_ms} ms"
+  }
+  if flag_set(matches, "verbose") && !flag_set(matches, "quiet") {
+    if !diagnostics.is_empty() {
+      diagnostics = "\{diagnostics}\n"
+    }
+    diagnostics = "\{diagnostics}skipped: hidden=\{report.skipped_hidden} excluded=\{report.skipped_excluded} mount=\{report.skipped_mount}\nissues: \{report.issues.length()}"
+    if report.stopped_early {
+      diagnostics = "\{diagnostics}\nscan: partial"
+    }
+    for issue in report.issues {
+      diagnostics = "\{diagnostics}\nissue: \{@utf8.decode_lossy(issue.path)}: \{issue.message}"
+    }
+  }
+  if invalid_json > 0 {
+    diagnostics = append_warning(
+      diagnostics,
+      "warning: replaced invalid UTF-8 in \{invalid_json} JSON record(s) with U+FFFD",
+    )
+  }
+  Streamed(
+    if total_matches == 0 {
+      @core.EXIT_NO_MATCH
+    } else {
+      @core.EXIT_OK
+    },
+    diagnostics,
+  )
+}
+
+///|
 /// Run `search` with the selected engine.
-async fn run_search(invocation : Invocation) -> CliResult {
+async fn run_search(
+  invocation : Invocation,
+  streaming_output : @stdio.Output?,
+) -> CliResult {
   let matches = invocation.matches
   let engine = match engine_of(invocation) {
     Ok(engine) => engine
@@ -495,7 +615,34 @@ async fn run_search(invocation : Invocation) -> CliResult {
   // order needs the complete match set before choosing the first hits.
   let stream_order = order.streams_name_order()
   let reverse_name = stream_order && order.reverse
-  let collect_limit = if stream_order { order.limit } else { 0 }
+  if engine is ScanEngine &&
+    flag_set(matches, "live") &&
+    stream_order &&
+    !reverse_name &&
+    output_supports_stream(output) {
+    let compiled = @exec.compile_scan_with(query, options, compat~) catch {
+      err => return Failure("error: \{err.message()}")
+    }
+    if !compiled.needs_folder_totals() {
+      match streaming_output {
+        Some(sink) =>
+          return run_live_stream(
+            invocation,
+            query,
+            compiled,
+            output,
+            order.limit,
+            sink,
+          )
+        None => ()
+      }
+    }
+  }
+  let collect_limit = if stream_order && !flag_set(matches, "stats") {
+    order.limit
+  } else {
+    0
+  }
   let eager = match load_fast_fields_of(invocation) {
     Ok(fields) => fields
     Err(message) => return Failure(message)
@@ -512,38 +659,53 @@ async fn run_search(invocation : Invocation) -> CliResult {
   let mut index_ms : Int64? = None
   let mut plan = ""
   let mut exec_ms = 0L
+  let mut total_matches = 0
+  let mut candidate_count = 0
+  let mut ids_shape = "n/a"
   match engine {
     ScanEngine => {
       let exec_started = @env.now()
       let scan_options = @exec.ScanOptions::new(limit=collect_limit)
       let executed = if reverse_name {
         Ok(
-          @exec.exec_scan_reverse_with(
+          @exec.exec_scan_ordered_stats(
             store,
             query,
-            options=scan_options,
+            scan_options,
+            true,
             compat~,
           ),
         ) catch {
           err => Err("error: \{err.message()}")
         }
       } else {
-        Ok(@exec.exec_scan_with(store, query, options=scan_options, compat~)) catch {
+        Ok(
+          @exec.exec_scan_ordered_stats(
+            store,
+            query,
+            scan_options,
+            false,
+            compat~,
+          ),
+        ) catch {
           err => Err("error: \{err.message()}")
         }
       }
-      hits = match executed {
-        Ok(hits) => hits
+      let execution = match executed {
+        Ok(execution) => execution
         Err(message) => return Failure(message)
       }
+      hits = execution.hits
+      total_matches = execution.total_matches
+      candidate_count = execution.candidates
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_scan_plan(query, options, compat)
+        plan = "(scan#\{candidate_count} source=universe reason=scan-engine \{execution.description})"
       }
     }
     BitmapEngine => {
       let index = match source {
-        Live(store) => {
+        Live(store, _) => {
           let build_started = @env.now()
           let index = live_index(invocation, store, eager~)
           index_ms = Some(elapsed_ms(build_started))
@@ -552,19 +714,32 @@ async fn run_search(invocation : Invocation) -> CliResult {
         Persisted(index) => index
       }
       let exec_started = @env.now()
-      let executed = Ok(@exec.exec_indexed(index, query, compat~)) catch {
+      let executed = Ok(@exec.exec_indexed_with_stats(index, query, compat~)) catch {
         err => Err("error: \{err.message()}")
       }
-      let ids = match executed {
-        Ok(ids) => ids
+      let execution = match executed {
+        Ok(execution) => execution
         Err(message) => return Failure(message)
+      }
+      let ids = execution.ids
+      total_matches = ids.cardinality()
+      candidate_count = execution.candidates
+      ids_shape = match ids {
+        @ids.Sorted(_) => "sorted"
+        @ids.Bitmap(_) => "bitmap"
       }
       hits = hits_of_ids(store, ids, collect_limit, reverse=reverse_name)
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_bitmap_plan(index, query, compat)
+        plan = execution.description
       }
     }
+  }
+  if stream_order &&
+    flag_set(matches, "stats") &&
+    order.limit > 0 &&
+    hits.length() > order.limit {
+    hits = hits[:order.limit].to_owned()
   }
   if !stream_order {
     hits = @exec.order_hits(store, hits, order)
@@ -574,12 +749,30 @@ async fn run_search(invocation : Invocation) -> CliResult {
     query,
     plan,
     store,
+    total_matches,
+    candidate_count,
     hits.length(),
+    ids_shape,
     source_ms,
     index_ms,
     exec_ms,
     live,
   )
+  let mut diagnostics = diagnostics
+  if flag_set(matches, "verbose") && !flag_set(matches, "quiet") {
+    match source {
+      Live(_, report) => {
+        if !diagnostics.is_empty() {
+          diagnostics = "\{diagnostics}\n"
+        }
+        diagnostics = "\{diagnostics}skipped: hidden=\{report.skipped_hidden} excluded=\{report.skipped_excluded} mount=\{report.skipped_mount}\nissues: \{report.issues.length()}"
+        for issue in report.issues {
+          diagnostics = "\{diagnostics}\nissue: \{@utf8.decode_lossy(issue.path)}: \{issue.message}"
+        }
+      }
+      Persisted(_) => ()
+    }
+  }
   let rendered = @exec.format_hits(store, hits, output)
   let mut diagnostics = diagnostics
   match rendered.warning() {
@@ -605,22 +798,6 @@ fn explain_scan_plan(
   compat : Bool,
 ) -> String {
   let explained = Ok(@exec.explain_query(query, options~, compat~)) catch {
-    err => Err(err.message())
-  }
-  match explained {
-    Ok(plan) => plan
-    Err(message) => "error: \{message}"
-  }
-}
-
-///|
-/// Compile the indexed plan for `--explain`.
-fn explain_bitmap_plan(
-  index : @index.Index,
-  query : @query.Query,
-  compat : Bool,
-) -> String {
-  let explained = Ok(@exec.explain_indexed(index, query, compat~)) catch {
     err => Err(err.message())
   }
   match explained {
@@ -663,24 +840,30 @@ async fn run_count(invocation : Invocation) -> CliResult {
   let mut index_ms : Int64? = None
   let mut plan = ""
   let mut exec_ms = 0L
+  let mut candidate_count = 0
+  let mut ids_shape = "n/a"
   match engine {
     ScanEngine => {
       let exec_started = @env.now()
-      let counted = Ok(@exec.exec_count_with(store, query, options~, compat~)) catch {
+      let counted = Ok(
+        @exec.exec_count_with_stats(store, query, options~, compat~),
+      ) catch {
         err => Err("error: \{err.message()}")
       }
-      count = match counted {
-        Ok(count) => count
+      let execution = match counted {
+        Ok(execution) => execution
         Err(message) => return Failure(message)
       }
+      count = execution.count
+      candidate_count = execution.candidates
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_scan_plan(query, options, compat)
+        plan = "(scan#\{candidate_count} source=universe reason=scan-engine \{explain_scan_plan(query, options, compat)})"
       }
     }
     BitmapEngine => {
       let index = match source {
-        Live(store) => {
+        Live(store, _) => {
           let build_started = @env.now()
           let index = live_index(invocation, store, eager~)
           index_ms = Some(elapsed_ms(build_started))
@@ -689,16 +872,22 @@ async fn run_count(invocation : Invocation) -> CliResult {
         Persisted(index) => index
       }
       let exec_started = @env.now()
-      let counted = Ok(@exec.exec_indexed_count(index, query, compat~)) catch {
+      let counted = Ok(@exec.exec_indexed_with_stats(index, query, compat~)) catch {
         err => Err("error: \{err.message()}")
       }
-      count = match counted {
-        Ok(count) => count
+      let execution = match counted {
+        Ok(execution) => execution
         Err(message) => return Failure(message)
+      }
+      count = execution.ids.cardinality()
+      candidate_count = execution.candidates
+      ids_shape = match execution.ids {
+        @ids.Sorted(_) => "sorted"
+        @ids.Bitmap(_) => "bitmap"
       }
       exec_ms = elapsed_ms(exec_started)
       if flag_set(matches, "explain") {
-        plan = explain_bitmap_plan(index, query, compat)
+        plan = execution.description
       }
     }
   }
@@ -718,10 +907,26 @@ async fn run_count(invocation : Invocation) -> CliResult {
       None => ()
     }
     out.write_string("entries: \{store.entry_count()}\n")
+    out.write_string("candidates: \{candidate_count}\n")
     out.write_string("matches: \{count}\n")
+    out.write_string("ids: \{ids_shape}\n")
     out.write_string("search: \{exec_ms} ms\n")
   }
-  let diagnostics = trim_trailing_newline(out.to_string())
+  let mut diagnostics = trim_trailing_newline(out.to_string())
+  if flag_set(matches, "verbose") && !flag_set(matches, "quiet") {
+    match source {
+      Live(_, report) => {
+        if !diagnostics.is_empty() {
+          diagnostics = "\{diagnostics}\n"
+        }
+        diagnostics = "\{diagnostics}skipped: hidden=\{report.skipped_hidden} excluded=\{report.skipped_excluded} mount=\{report.skipped_mount}\nissues: \{report.issues.length()}"
+        for issue in report.issues {
+          diagnostics = "\{diagnostics}\nissue: \{@utf8.decode_lossy(issue.path)}: \{issue.message}"
+        }
+      }
+      Persisted(_) => ()
+    }
+  }
   let text = text_line(count.to_string())
   if count == 0 {
     NoMatch(text, diagnostics)

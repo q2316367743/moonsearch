@@ -5,6 +5,8 @@ fn config_stdout(result : @cli.CliResult) -> Bytes {
     @cli.Success(out) | @cli.SuccessWith(out, _) => out
     @cli.NoMatch(out, _) => out
     @cli.Failure(message) => abort("expected success, got: \{message}")
+    @cli.Streamed(_, _) | @cli.OutputFailure(_) =>
+      abort("buffered run unexpectedly used streaming output")
   }
 }
 

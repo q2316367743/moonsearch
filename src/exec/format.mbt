@@ -232,6 +232,138 @@ pub fn format_hits(
 }
 
 ///|
+/// Whether a template reads folder-subtree size.
+pub fn FormatTemplate::uses_size(self : FormatTemplate) -> Bool {
+  for segment in self.segments {
+    if segment is Size {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Render and terminate one live entry. Unlike `format_hits`, every record is
+/// complete so it can be written to stdout before the scan continues.
+pub fn format_entry(entry : EntryView, options : FormatOptions) -> FormatOutput {
+  let out = @buffer.Buffer()
+  let invalid = match options.format {
+    Paths => {
+      out.write_bytesview(view_output_path(entry.path, options.relative_to))
+      false
+    }
+    Names => {
+      out.write_bytesview(entry.name[:])
+      false
+    }
+    Json => write_view_json(entry, options, out)
+    Template(template) => {
+      for segment in template.segments {
+        match segment {
+          Literal(text) => out.write_string_utf8(text)
+          Path =>
+            out.write_bytesview(
+              view_output_path(entry.path, options.relative_to),
+            )
+          Name => out.write_bytesview(entry.name[:])
+          Dir =>
+            out.write_bytesview(
+              directory_of(view_output_path(entry.path, options.relative_to)),
+            )
+          Size => out.write_string_utf8(entry.size.to_string())
+          MTime => out.write_string_utf8(entry.mtime.to_string())
+          Ext => out.write_bytesview(view_extension(entry))
+          Type => out.write_string_utf8(view_type(entry))
+          Kind => out.write_string_utf8(view_kind(entry))
+        }
+      }
+      false
+    }
+  }
+  out.write_byte(if options.null_terminated { b'\x00' } else { b'\n' })
+  {
+    bytes: out.to_bytes(),
+    invalid_utf8_records: if invalid {
+      1
+    } else {
+      0
+    },
+    null_terminated: options.null_terminated,
+  }
+}
+
+///|
+/// Path for one live entry.
+fn view_output_path(path : Bytes, relative_base : Bytes?) -> Bytes {
+  match relative_base {
+    Some(base) => relativize(path, base[:])
+    None => path
+  }
+}
+
+///|
+/// Extension bytes for one live entry.
+fn view_extension(entry : EntryView) -> Bytes {
+  if entry.kind is @core.Folder {
+    b""
+  } else {
+    @util.ascii_fold(@util.extension_of(entry.name[:]))
+  }
+}
+
+///|
+/// Category name for one live entry.
+fn view_type(entry : EntryView) -> String {
+  if entry.kind is @core.Folder {
+    "folder"
+  } else {
+    let ext = view_extension(entry)
+    match type_category_map().get_from_bytes(ext[:]) {
+      Some(category) => category.name()
+      None => "other"
+    }
+  }
+}
+
+///|
+/// Kind text for one live entry.
+fn view_kind(entry : EntryView) -> String {
+  if entry.kind is @core.File {
+    "file"
+  } else {
+    "folder"
+  }
+}
+
+///|
+/// Write one live JSON record.
+fn write_view_json(
+  entry : EntryView,
+  options : FormatOptions,
+  out : @buffer.Buffer,
+) -> Bool {
+  out.write_string_utf8("{\"path\":")
+  let path_valid = write_json_bytes(
+    out,
+    view_output_path(entry.path, options.relative_to)[:],
+  )
+  out.write_string_utf8(",\"name\":")
+  let name_valid = write_json_bytes(out, entry.name[:])
+  out.write_string_utf8(",\"size\":")
+  out.write_string_utf8(entry.size.to_string())
+  out.write_string_utf8(",\"mtime\":")
+  out.write_string_utf8(entry.mtime.to_string())
+  out.write_string_utf8(",\"ext\":")
+  let ext_valid = write_json_bytes(out, view_extension(entry)[:])
+  out.write_string_utf8(",\"type\":")
+  write_json_text(out, view_type(entry))
+  out.write_string_utf8(",\"kind\":")
+  write_json_text(out, view_kind(entry))
+  out.write_byte(b'}')
+  !(path_valid && name_valid && ext_valid)
+}
+
+///|
 /// Render one match, returning whether JSON required lossy decoding.
 fn write_record(
   context : FormatContext,

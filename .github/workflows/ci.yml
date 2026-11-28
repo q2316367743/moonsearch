@@ -42,6 +42,9 @@ jobs:
       - name: Run Linux raw-byte process tests
         run: python3 tests/raw_bytes_linux.py
 
+      - name: Run process pipe and signal tests
+        run: python3 tests/process_reliability.py
+
       - name: Check generated interfaces are committed
         run: |
           moon info

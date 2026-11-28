@@ -328,3 +328,7 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch index --config _build/cram-missing
 error: cannot read configuration _build/cram-missing.json: .* (regex)
 [2]
 ```
+
+Real-process pipe and signal checks (S10). `tests/process_reliability.py` is
+executed by CI after `moon build`; it verifies EPIPE quiet success, `/dev/full`
+failure, shell status 130, and the lower-level `waitpid` SIGINT result.

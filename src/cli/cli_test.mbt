@@ -16,6 +16,8 @@ fn stdout_bytes_of(result : @cli.CliResult) -> Bytes {
     @cli.SuccessWith(out, _) => out
     @cli.NoMatch(out, _) => out
     @cli.Failure(text) => abort("expected success, got: \{text}")
+    @cli.Streamed(_, _) | @cli.OutputFailure(_) =>
+      abort("buffered run unexpectedly used streaming output")
   }
 }
 
@@ -205,7 +207,7 @@ async test "search help is stable" {
       #|  --json                       Print one JSON object per result
       #|  --basename                   Print only the entry name
       #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>            Execution engine: scan or bitmap [default: scan]
+      #|  --engine <engine>            Execution engine: scan or bitmap [default: bitmap]
       #|  --root <root>                Root directory for a live scan; may be repeated
       #|  --fast-fields <fast-fields>  Range fields loaded eagerly: size,mtime [default: size,mtime]
       #|  --sort <sort>                Result order: name, path, size, mtime, ext, or type [default: name]
@@ -246,7 +248,7 @@ async test "count help is stable" {
       #|  --auto-index                 Build the index first when the database is missing
       #|  --compat                     Reproduce upstream query error recovery
       #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>            Execution engine: scan or bitmap [default: scan]
+      #|  --engine <engine>            Execution engine: scan or bitmap [default: bitmap]
       #|  --root <root>                Root directory for a live scan; may be repeated
       #|  --fast-fields <fast-fields>  Range fields loaded eagerly: size,mtime [default: size,mtime]
     ),
@@ -736,6 +738,8 @@ fn index_stdout(result : @cli.CliResult) -> Bytes {
       abort("unexpected diagnostics: \{diagnostics}")
     @cli.NoMatch(_, _) => abort("index must not return NoMatch")
     @cli.Failure(text) => abort("index failed: \{text}")
+    @cli.Streamed(_, _) | @cli.OutputFailure(_) =>
+      abort("index unexpectedly used streaming output")
   }
 }
 
@@ -1340,7 +1344,9 @@ async fn real_dir(dir : String) -> String {
 async test "search --live runs the scan engine end to end" {
   let dir = make_fixture("moonsearch-search")
   let real = real_dir(dir)
-  let result = @cli.run(["search", "--live", "--root", dir, "a.txt"])
+  let result = @cli.run([
+    "search", "--live", "--engine", "scan", "--root", dir, "a.txt",
+  ])
   @fs.remove(dir, recursive=true)
   match result {
     @cli.Success(text) =>
@@ -1527,12 +1533,67 @@ async test "search --live explains the plan and prints statistics" {
     @cli.SuccessWith(out, diagnostics) => {
       assert_eq(trim_final_lf(out), @utf8.encode("\{real}/sub/b.pdf"))
       assert_true(diagnostics.contains("query: (ext \"pdf\")"))
-      assert_true(diagnostics.contains("plan: (ext \"pdf\")"))
+      assert_true(diagnostics.contains("plan: (const#1 (ext \"pdf\"))"))
       assert_true(diagnostics.contains("entries: "))
       assert_true(diagnostics.contains("matches: 1"))
       assert_true(diagnostics.contains("search: "))
     }
     _ => abort("expected search output with diagnostics")
+  }
+}
+
+///|
+async test "stats reports total matches before the output limit" {
+  let dir = @fs.tmpdir(prefix="moonsearch-stats-total")
+  @fs.write_text("\{dir}/a.pdf", "a")
+  @fs.write_text("\{dir}/b.pdf", "b")
+  @fs.write_text("\{dir}/c.pdf", "c")
+  @fs.write_text("\{dir}/skip.txt", "x")
+  for engine in ["scan", "bitmap"] {
+    let result = @cli.run([
+      "search", "--live", "--root", dir, "--engine", engine, "--stats", "-n", "1",
+      "ext:pdf",
+    ])
+    match result {
+      @cli.SuccessWith(out, diagnostics) => {
+        assert_eq(line_count(out), 1)
+        assert_true(diagnostics.contains("matches: 3"))
+        assert_true(diagnostics.contains("output: 1"))
+        assert_true(diagnostics.contains("candidates: "))
+        if engine == "bitmap" {
+          assert_true(
+            diagnostics.contains("ids: sorted") ||
+            diagnostics.contains("ids: bitmap"),
+          )
+        } else {
+          assert_true(diagnostics.contains("ids: n/a"))
+        }
+      }
+      _ => abort("expected limited output with full statistics")
+    }
+  }
+  @fs.remove(dir, recursive=true)
+}
+
+///|
+async test "live verbose reports skipped entries and issues" {
+  let dir = @fs.tmpdir(prefix="moonsearch-live-verbose")
+  @fs.mkdir("\{dir}/sub")
+  @fs.write_text("\{dir}/.hidden", "h")
+  @fs.write_text("\{dir}/sub/a.txt", "a")
+  let config = "\{dir}/config.json"
+  @fs.write_text(config, "{\"exclude_hidden\":true}")
+  let result = @cli.run([
+    "search", "--config", config, "--live", "--engine", "scan", "--root", dir, "--verbose",
+    "a.txt",
+  ])
+  @fs.remove(dir, recursive=true)
+  match result {
+    @cli.SuccessWith(_, diagnostics) => {
+      assert_true(diagnostics.contains("skipped: hidden=1"))
+      assert_true(diagnostics.contains("issues: 0"))
+    }
+    _ => abort("expected verbose live diagnostics")
   }
 }
 
@@ -1797,7 +1858,7 @@ async test "both engines produce byte-identical output" {
     for variant in variants {
       let base = ["search", "--live", "--root", dir, "--sort", sort, "file:"] +
         variant
-      let scan = @cli.run(base)
+      let scan = @cli.run(base + ["--engine", "scan"])
       let bitmap = @cli.run(base + ["--engine", "bitmap"])
       if stdout_of(scan) != stdout_of(bitmap) ||
         scan.exit_code() != bitmap.exit_code() {

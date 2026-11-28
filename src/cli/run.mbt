@@ -13,6 +13,10 @@ pub(all) enum CliResult {
   /// code is 1.
   NoMatch(Bytes, String)
   Failure(String)
+  /// Stdout was written incrementally by the streaming live path.
+  Streamed(Int32, String)
+  /// A stdout write failed; the executable classifies EPIPE separately.
+  OutputFailure(@io.WriterError)
 }
 
 ///|
@@ -34,17 +38,21 @@ pub fn CliResult::exit_code(self : CliResult) -> Int32 {
     Success(_) => @core.EXIT_OK
     SuccessWith(_, _) => @core.EXIT_OK
     NoMatch(_, _) => @core.EXIT_NO_MATCH
-    Failure(_) => @core.EXIT_ERROR
+    Failure(_) | OutputFailure(_) => @core.EXIT_ERROR
+    Streamed(code, _) => code
   }
 }
 
 ///|
 /// Run one subcommand.
-async fn execute(invocation : Invocation) -> CliResult {
+async fn execute(
+  invocation : Invocation,
+  streaming_output : @stdio.Output?,
+) -> CliResult {
   match invocation.command {
     Index => run_index(invocation)
     Update => run_index(invocation)
-    Search => run_search(invocation)
+    Search => run_search(invocation, streaming_output)
     Count => run_count(invocation)
     Info => run_info(invocation)
   }
@@ -92,10 +100,30 @@ pub async fn run(
   argv : ArrayView[String],
   env~ : Map[String, String] = Map([]),
 ) -> CliResult {
+  run_with_output(argv, env~, None)
+}
+
+///|
+/// Run with a real stdout sink so eligible live searches can emit records before
+/// the directory walk finishes. Other commands retain the buffered contract.
+pub async fn run_streaming(
+  argv : ArrayView[String],
+  output : @stdio.Output,
+  env~ : Map[String, String] = Map([]),
+) -> CliResult {
+  run_with_output(argv, env~, Some(output))
+}
+
+///|
+async fn run_with_output(
+  argv : ArrayView[String],
+  env~ : Map[String, String],
+  streaming_output : @stdio.Output?,
+) -> CliResult {
   match parse(argv, env~) {
     Ok(Run(invocation)) =>
       match load_configuration(invocation) {
-        Ok(configured) => execute(configured)
+        Ok(configured) => execute(configured, streaming_output)
         Err(message) => Failure(message)
       }
     Ok(ShowHelp(text)) => Success(text_line(text))

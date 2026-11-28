@@ -1,66 +1,51 @@
 ///|
-/// Evaluate a compiled expression against one entry.
-///
-/// The tree is short-circuiting: an `AND` stops at the first false branch, an
-/// `OR` at the first true one. `NOT` is the complement over every entry in the
-/// store, which is what `MIGRATION_PLAN.md` section 5.8.1 means when it gives a
-/// negation the `Both` domain.
-fn eval_expr(
-  expr : ScanExpr,
-  store : @core.Store,
-  entry : @core.EntryRef,
-) -> Bool {
+/// Evaluate a compiled expression against one entry view.
+fn eval_expr(expr : ScanExpr, entry : EntryView) -> Bool {
   match expr {
     All => true
     None => false
-    Test(term) => eval_term(term, store, entry)
-    And(left, right) =>
-      eval_expr(left, store, entry) && eval_expr(right, store, entry)
-    Or(left, right) =>
-      eval_expr(left, store, entry) || eval_expr(right, store, entry)
-    Not(inner) => !eval_expr(inner, store, entry)
+    Test(term) => eval_term(term, entry)
+    And(left, right) => eval_expr(left, entry) && eval_expr(right, entry)
+    Or(left, right) => eval_expr(left, entry) || eval_expr(right, entry)
+    Not(inner) => !eval_expr(inner, entry)
   }
 }
 
 ///|
 /// Evaluate one leaf predicate.
-fn eval_term(
-  term : ScanTerm,
-  store : @core.Store,
-  entry : @core.EntryRef,
-) -> Bool {
+fn eval_term(term : ScanTerm, entry : EntryView) -> Bool {
   if !kind_allows(term.kind, entry.kind) {
     return false
   }
-  if !visibility_allows(term.visibility, store, entry) {
+  if !visibility_allows(term.visibility, entry) {
     return false
   }
   match term.body {
-    Name(matcher) => match_name(store, entry, matcher)
+    Name(matcher) => match_name(entry, matcher)
     Kind(kind) => kind_allows(kind, entry.kind)
-    Visibility(filter) => visibility_allows(filter, store, entry)
-    Category(_, extensions) => match_extensions(store, entry, extensions)
-    Extensions(list) => match_extensions(store, entry, list)
-    Size(comparison) => compare_number(comparison, entry_size(store, entry))
-    Depth(comparison) =>
-      compare_number(comparison, entry_depth(store, entry).to_int64())
-    ChildCount(comparison) => match_child_count(store, entry, 0, comparison)
-    ChildFileCount(comparison) => match_child_count(store, entry, 1, comparison)
+    Visibility(filter) => visibility_allows(filter, entry)
+    Category(_, extensions) => match_extensions(entry, extensions)
+    Extensions(list) => match_extensions(entry, list)
+    Size(comparison) => compare_number(comparison, entry.size)
+    Depth(comparison) => compare_number(comparison, entry.depth.to_int64())
+    ChildCount(comparison) =>
+      entry.kind is @core.Folder &&
+      compare_number(comparison, entry.child_count.to_int64())
+    ChildFileCount(comparison) =>
+      entry.kind is @core.Folder &&
+      compare_number(comparison, entry.num_files.to_int64())
     ChildFolderCount(comparison) =>
-      match_child_count(store, entry, 2, comparison)
-    Modified(comparison) =>
-      compare_number(comparison, entry_mtime(store, entry))
-    Parent(path) => match_parent(store, entry, path)
+      entry.kind is @core.Folder &&
+      compare_number(comparison, entry.num_folders.to_int64())
+    Modified(comparison) => compare_number(comparison, entry.mtime)
+    Parent(path) => match_parent(entry, path)
     Empty =>
       if entry.kind is @core.File {
         false
       } else {
-        match store.folder(entry.id) {
-          Some(folder) => folder.child_count() == 0U
-          None => false
-        }
+        entry.child_count == 0U
       }
-    ContentType(text) => match_content_type(store, entry, text)
+    ContentType(text) => match_content_type(entry, text)
   }
 }
 
@@ -76,36 +61,15 @@ fn kind_allows(filter : @query.KindFilter, kind : @core.EntryKind) -> Bool {
 
 ///|
 /// Whether a visibility filter admits an entry.
-///
-/// Hidden means the dot-prefixed name flag recorded by the scanner; the field
-/// dictionary builds the same set from the same flag.
 fn visibility_allows(
   filter : @query.VisibilityFilter,
-  store : @core.Store,
-  entry : @core.EntryRef,
+  entry : EntryView,
 ) -> Bool {
+  let hidden = (entry.flags & @core.ENTRY_FLAG_HIDDEN) != 0
   match filter {
     @query.AnyVisibility => true
-    @query.HiddenOnly => entry_is_hidden(store, entry)
-    @query.VisibleOnly => !entry_is_hidden(store, entry)
-  }
-}
-
-///|
-/// Whether the entry carries the hidden flag, defaulting to `false` when the
-/// id is out of range.
-fn entry_is_hidden(store : @core.Store, entry : @core.EntryRef) -> Bool {
-  match entry.kind {
-    @core.Folder =>
-      match store.folder(entry.id) {
-        Some(folder) => folder.is_hidden()
-        None => false
-      }
-    @core.File =>
-      match store.file(entry.id) {
-        Some(file) => file.is_hidden()
-        None => false
-      }
+    @query.HiddenOnly => hidden
+    @query.VisibleOnly => !hidden
   }
 }
 
@@ -124,15 +88,11 @@ fn compare_number(comparison : @query.Comparison, value : Int64) -> Bool {
 
 ///|
 /// Match a name term against the name or the full path.
-fn match_name(
-  store : @core.Store,
-  entry : @core.EntryRef,
-  matcher : NameMatcher,
-) -> Bool {
+fn match_name(entry : EntryView, matcher : NameMatcher) -> Bool {
   let text : BytesView = if matcher.path {
-    store.entry_path(entry)[:]
+    entry.path[:]
   } else {
-    store.entry_name(entry)
+    entry.name[:]
   }
   match matcher.kind {
     Substring =>
@@ -149,15 +109,11 @@ fn match_name(
 
 ///|
 /// Match an extension list. `ext:` only applies to files.
-fn match_extensions(
-  store : @core.Store,
-  entry : @core.EntryRef,
-  list : Array[Bytes],
-) -> Bool {
+fn match_extensions(entry : EntryView, list : Array[Bytes]) -> Bool {
   if entry.kind is @core.Folder {
     return false
   }
-  let extension = @util.extension_of(store.entry_name(entry))
+  let extension = @util.extension_of(entry.name[:])
   for candidate in list {
     if @util.eq_bytes(extension, candidate[:], true) {
       return true
@@ -167,107 +123,10 @@ fn match_extensions(
 }
 
 ///|
-/// The three child-count fields share one implementation.
-fn match_child_count(
-  store : @core.Store,
-  entry : @core.EntryRef,
-  field : Int32,
-  comparison : @query.Comparison,
-) -> Bool {
-  if entry.kind is @core.File {
-    return false
-  }
-  match store.folder(entry.id) {
-    Some(folder) => {
-      let value = match field {
-        0 => folder.child_count()
-        1 => folder.num_files()
-        _ => folder.num_folders()
-      }
-      compare_number(comparison, value.to_int64())
-    }
-    None => false
-  }
-}
-
-///|
-/// Size of one entry, defaulting to zero for an out-of-range id.
-fn entry_size(store : @core.Store, entry : @core.EntryRef) -> Int64 {
-  match store.entry_size(entry) {
-    Some(value) => value
-    None => 0L
-  }
-}
-
-///|
-/// Modification time of one entry, defaulting to zero for an out-of-range id.
-fn entry_mtime(store : @core.Store, entry : @core.EntryRef) -> Int64 {
-  match store.entry_mtime(entry) {
-    Some(value) => value
-    None => 0L
-  }
-}
-
-///|
-/// Folder depth of an entry: roots are 0, their direct children 1.
-fn entry_depth(store : @core.Store, entry : @core.EntryRef) -> Int32 {
-  match entry.kind {
-    @core.Folder => folder_depth(store, entry.id)
-    @core.File =>
-      match store.file(entry.id) {
-        Some(file) => folder_depth(store, file.parent()) + 1
-        None => 0
-      }
-  }
-}
-
-///|
-/// Number of parent links above a folder. The folder itself is not counted, so
-/// a root is zero.
-fn folder_depth(store : @core.Store, id : @core.FolderId) -> Int32 {
-  let mut depth = 0
-  let mut current = id
-  while current >= 0 {
-    match store.folder(current) {
-      Some(folder) => {
-        depth = depth + 1
-        current = folder.parent()
-      }
-      None => break
-    }
-  }
-  depth - 1
-}
-
-///|
 /// Match `parent:` against the full path of the entry's parent folder.
-///
-/// Roots have no parent and never match. Paths are compared byte for byte; the
-/// query side is normalized once at compile time.
-fn match_parent(
-  store : @core.Store,
-  entry : @core.EntryRef,
-  target : Bytes,
-) -> Bool {
-  let parent = match entry.kind {
-    @core.Folder =>
-      match store.folder(entry.id) {
-        Some(folder) => Some(folder.parent())
-        None => None
-      }
-    @core.File =>
-      match store.file(entry.id) {
-        Some(file) => Some(file.parent())
-        None => None
-      }
-  }
-  match parent {
-    Some(id) =>
-      if id < 0 {
-        false
-      } else {
-        @util.eq_bytes(store.folder_path(id)[:], target[:], false)
-      }
+fn match_parent(entry : EntryView, target : Bytes) -> Bool {
+  match entry.parent_path {
+    Some(parent) => @util.eq_bytes(parent[:], target[:], false)
     None => false
   }
 }

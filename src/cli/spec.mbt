@@ -75,7 +75,7 @@ fn filter_options() -> Array[@argparse.OptionArg] {
       default_values=["any"],
     ),
     @argparse.OptionArg("engine", about="Execution engine: scan or bitmap", default_values=[
-      "scan",
+      "bitmap",
     ]),
     @argparse.OptionArg(
       "root",

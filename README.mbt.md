@@ -139,12 +139,19 @@ moonsearch count code:
 `search` 与 `count` 默认读取该数据库。数据库缺失时会报错并提示先运行 `index`；
 `--auto-index` 则在缺失时先扫描 `--root` 建库。
 
-`--live` 完全跳过数据库，直接扫描 `--root` 或配置中的 `roots`：
+`--live` 完全跳过数据库，直接扫描 `--root` 或配置中的 `roots`。`--live --engine scan`
+在遍历时逐条匹配并写入 stdout，达到 `--limit` 后停止继续列举目录；输出顺序是每个目录
+内按名字排序的深度优先序，不等同于持久化索引的全局 `name` 排序。默认的
+`--live --engine bitmap` 会先完整扫描并在内存中建索引，因此结果顺序与持久化 bitmap
+一致，但内存代价更高。
 
 ```bash
-moonsearch search --live --root ~/Documents 'ext:jpg;png size:>1mb'
+moonsearch search --live --engine scan --root ~/Documents 'ext:jpg;png size:>1mb'
 moonsearch count --live --root ~/Documents 'dm:lastweek ext:mp4'
+moonsearch search --live --root ~/Documents --stats -n 20 'report'
 ```
+
+带 `--stats` 时 live scan 会完成遍历以报告真实总命中数，即使只输出前 N 条。
 
 ## 建立索引
 
@@ -225,7 +232,7 @@ moonsearch -r '^report.*\.pdf$'   # 正则：整条查询作为正则
 | `-p, --search-path` | 按完整路径匹配 |
 | `-r, --regex` | 整条查询作为正则 |
 | `--type <any\|file\|folder>` | 限制结果类型，默认 `any` |
-| `--engine <scan\|bitmap>` | 执行引擎，默认 `scan` |
+| `--engine <scan\|bitmap>` | 执行引擎，默认 `bitmap`；`scan` 是对照与调试路径 |
 | `--fast-fields <LIST>` | 数据库加载时预解码的范围字段，默认 `size,mtime` |
 | `--root <PATH>` | `--live` / `--auto-index` 使用的根目录，可重复 |
 | `--live` | 跳过数据库，直接扫描 `--root` |
@@ -393,13 +400,18 @@ moonsearch count 'ext:mp4 dm:last30days'
 ## 诊断
 
 ```bash
-moonsearch --stats 'ext:pdf'          # 条目数、命中数、耗时；读库时还有 load，实时扫描为 scan
+moonsearch --stats -n 20 'ext:pdf'    # entries/candidates/matches/output/ids 与耗时
 moonsearch --explain 'report pdf'     # 解析后的查询 + 执行计划
 moonsearch info --verify              # 数据库各段校验
 ```
 
-`--engine bitmap` 使用持久化索引执行，`--engine scan`（默认）线性扫描；两者结果一致，
-后者是前者的语义基准。`--live` 下也可以指定 `--engine bitmap`，此时在内存中建索引。
+`--stats` 的 `matches` 是应用 `--limit` 之前的总命中数，`output` 是实际写出的记录数，
+`candidates` 是引擎实际检查的谓词候选数；bitmap 还报告最终 `Ids` 形态（`sorted` 或
+`bitmap`），scan 为 `n/a`。`--explain` 输出每个叶子的基数估计、候选来源和降级原因。
+
+`--engine bitmap`（默认）使用持久化索引执行，`--engine scan` 线性扫描；两者命中集合与
+排序一致，后者是前者的语义基准。`--live` 下也可以指定 `--engine bitmap`，此时在内存中
+建索引。持久化 bitmap 缺失可选 child-count 字段时，相关查询明确退化为 scan。
 
 ## 退出码
 
@@ -409,6 +421,10 @@ moonsearch info --verify              # 数据库各段校验
 | `1` | 无命中 |
 | `2` | 参数、查询、IO 或数据库错误 |
 | `130` | 被 SIGINT 中断 |
+
+stdout 的下游管道关闭（EPIPE，例如 `| head`）时安静退出 `0`，不打印诊断；其他 stdout
+写入错误仍以退出码 `2` 报告。SIGINT 沿用系统约定：shell 观察到的状态为 `130`，直接
+`waitpid` 的子进程结果为 `-SIGINT`。
 
 ## 文档
 
@@ -424,9 +440,10 @@ moonsearch info --verify              # 数据库各段校验
 | [`docs/benchmarks.md`](docs/benchmarks.md) | 基准口径、实测结果与调优待办 |
 | [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) | 迁移计划与设计取舍 |
 
-补漏计划按步骤验收；S02 已建立 Unix 字节安全扫描与原始字节输出。其余步骤与明确的
-P1/P2 扩展（Unicode casefold、libmagic 内容类型、PCRE2 正则、路径 trigram、增量监控）
-以 [`plan/补漏计划书.md`](plan/补漏计划书.md) 的状态为准。
+补漏计划按步骤验收；S01–S10 已落地，包括字节安全扫描、live 流式输出、默认 bitmap 与
+管道/信号可靠性。其余步骤与明确的 P1/P2 扩展（Unicode casefold、libmagic 内容类型、
+PCRE2 正则、路径 trigram、增量监控）以
+[`plan/补漏计划书.md`](plan/补漏计划书.md) 的状态为准。
 
 ## 开发
 

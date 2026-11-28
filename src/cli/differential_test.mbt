@@ -23,6 +23,10 @@ fn cli_diff_outcome(result : @cli.CliResult) -> CliDiffOutcome {
     @cli.SuccessWith(out, _) => { code: 0, out, detail: "", }
     @cli.NoMatch(out, _) => { code: 1, out, detail: "", }
     @cli.Failure(text) => { code: 2, out: b"", detail: text, }
+    @cli.Streamed(_, _) =>
+      abort("buffered differential run used streaming output")
+    @cli.OutputFailure(_) =>
+      { code: 2, out: b"", detail: "stdout write failed", }
   }
 }
 
@@ -150,6 +154,18 @@ async test "scan and bitmap agree on a no-trigram database" {
 }
 
 ///|
+/// Sorted logical records for live comparisons. A live scan streams in
+/// depth-first order, while the persisted engines use Store's global name order.
+fn diff_live_lines(bytes : Bytes) -> Array[String] {
+  let lines = @utf8.decode_lossy(bytes)
+    .split("\n")
+    .map(fn(line) { line.to_owned() })
+    .collect()
+  lines.sort()
+  lines
+}
+
+///|
 async test "the live scan matches the persisted bitmap engine" {
   let dir = cli_diff_fixture()
   let database = cli_diff_index("diff-live", dir, [])
@@ -169,12 +185,13 @@ async test "the live scan matches the persisted bitmap engine" {
     }
     let query = queries[position]
     let live = cli_diff_outcome(
-      @cli.run(["search", "--live", "--root", dir, query]),
+      @cli.run(["search", "--live", "--engine", "scan", "--root", dir, query]),
     )
     let indexed = cli_diff_outcome(
       @cli.run(["search", "-D", database, "--engine", "bitmap", query]),
     )
-    if live.code != indexed.code || live.out != indexed.out {
+    if live.code != indexed.code ||
+      diff_live_lines(live.out) != diff_live_lines(indexed.out) {
       abort(
         "live scan differs from the indexed engine for '\{query}' (live code=\{live.code}, indexed code=\{indexed.code})",
       )
