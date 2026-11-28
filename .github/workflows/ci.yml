@@ -42,7 +42,7 @@ jobs:
         run: |
           python3 bench/gen_dataset.py --dir /tmp/moonsearch-dataset-smoke \
             --entries 2000 --reference-time 2026-01-01T00:00:00Z \
-            > /tmp/moonsearch-dataset-smoke.json
+            --manifest-json /tmp/moonsearch-dataset-smoke.json >/dev/null
           python3 -c 'import json; m = json.load(open("/tmp/moonsearch-dataset-smoke.json")); assert m["entries"] == 2000, m; print(m["manifest_sha256"])'
 
       - name: Build native
