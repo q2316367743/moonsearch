@@ -33,7 +33,7 @@ S08 的范围索引 `Ranges` 与 S09 的 trigram 倒排 `TrigramIndex`。它依�
 | `db_read.mbt` | S12：`Index::from_bytes`、`DbInfo::from_bytes` 与逐段校验 |
 | `db.mbt` | S12：`DbError`、文件读写、写锁与原子替换、`info` 读取入口 |
 | `db_test.mbt` | S12：往返、逐截断/逐字节翻转、garbage 输入 |
-| `db_fuzz_test.mbt` | S13：随机多操作变异、garbage 缓冲、`verify=false` 的越界探测 |
+| `db_fuzz_test.mbt` | S13：随机多操作变异、garbage 缓冲、`verify=false` 的越界探测；S11 操作/时间预算 |
 | `errors.mbt` | `IndexError` |
 
 ## 扫描与构建器
@@ -464,3 +464,6 @@ release 构建、单文件 100 万条目（1 个根 + 100 万文件，名字 `fi
   `DbInfo::from_bytes(verify=true)` 全部拒绝；再用 `verify=false` 尝试加载，成功时
   由 `fuzz_probe` 访问 store 条目、字典集合、七个范围字段与 trigram 候选集，并断言
   每个返回 id 都小于条目数。变异与垃圾生成都只依赖 `testkit.Rng`，失败可从种子复现。
+  S11 给两个循环加上 `testkit.FuzzBudget` 的操作数/墙钟双上限（600/300 次、120 s），
+  并保留 `IdsDecodeBudget` 的受限解码路径（64 次操作、16 KiB）——即使构造回归导致
+  解码器停止推进，fuzz 也会在有限时间内失败而不是挂住 CI。

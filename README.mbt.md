@@ -437,13 +437,14 @@ stdout 的下游管道关闭（EPIPE，例如 `| head`）时安静退出 `0`，�
 | [`docs/modules/exec.md`](docs/modules/exec.md) | 扫描引擎、查询编译与位图执行 |
 | [`docs/modules/index.md`](docs/modules/index.md) | 扫描器、字典、区间索引、trigram 倒排、持久化 |
 | [`docs/db-format.md`](docs/db-format.md) | MSDB v3 数据库格式 |
+| [`docs/p0-traceability.md`](docs/p0-traceability.md) | P0 能力与测试的追溯矩阵、CI 矩阵 |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | 基准口径、实测结果与调优待办 |
 | [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) | 迁移计划与设计取舍 |
 
-补漏计划按步骤验收；S01–S10 已落地，包括字节安全扫描、live 流式输出、默认 bitmap 与
-管道/信号可靠性。其余步骤与明确的 P1/P2 扩展（Unicode casefold、libmagic 内容类型、
-PCRE2 正则、路径 trigram、增量监控）以
-[`plan/补漏计划书.md`](plan/补漏计划书.md) 的状态为准。
+补漏计划按步骤验收；S01–S11 已落地，包括字节安全扫描、live 流式输出、默认 bitmap、
+管道/信号可靠性，以及 DST、稀疏文件、真实进程差分等测试补齐。S12 的基准与可复现
+材料，以及明确的 P1/P2 扩展（Unicode casefold、libmagic 内容类型、PCRE2 正则、路径
+trigram、增量监控）以 [`plan/补漏计划书.md`](plan/补漏计划书.md) 的状态为准。
 
 ## 开发
 

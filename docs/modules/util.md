@@ -12,6 +12,8 @@
 | `glob.mbt` | `*` / `?` / `\` 通配符匹配 |
 | `time.mbt` | 日期文本解析、本地时区、`DateSpan` |
 | `category.mbt` | 内置分类 `TypeCategory` 与扩展名列表 |
+| `dst_fixture_test.mbt` | 测试夹具：`America/New_York` TZif 的嵌入字节 |
+| `testdata/` | 夹具源文件与再生成说明（IANA tz database，public domain） |
 
 ## 扩展名规则
 
@@ -47,3 +49,19 @@
 `cmp_paths` 用于名字、路径与规范顺序：`\0` 权重 0、`/` 权重 1、其他字节按值；连续数字
 按数值比较，前导零遵循 `strverscmp` 语义。合法 UTF-8 的字节序与码点序一致，非法 UTF-8
 仍有确定顺序。
+
+## 时间与 DST
+
+`resolve_date_span(text, now, zone)` 的日历运算全部在传入的 `zone` 中完成：
+
+- 一天是 `[本地 00:00, 次日本地 00:00)`，因此夏令时切换日是 23 或 25 小时，而不是
+  固定 86400 秒；`today`、`yesterday`、`dm:` 的整天范围都走这条路径；
+- 显式时间（`2024-03-10 02:30`）交给 `@time.date_time`，默认 `Disambiguation::Compatible`：
+  不存在的本地时间向前平移跨越间隙，歧义的本地时间取较早的偏移；调用方可用 `Reject`
+  得到错误；
+- 固定偏移 zone 没有切换，所以每一天都恰好 24 小时，这是测试中“固定 TZ”的对照。
+
+DST 测试不读宿主机的 `/usr/share/zoneinfo`：`dst_fixture_test.mbt` 嵌入一份
+`America/New_York` TZif（public domain），断言 2024-03-10 是 23 小时、2024-11-03 是
+25 小时，并固定不存在/歧义时刻的 UTC 结果。这样 Linux 与 macOS CI 得到同一结论；
+替换夹具后按 `testdata/README.md` 的 `moon tool embed` 命令重新生成。

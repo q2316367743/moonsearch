@@ -19,6 +19,16 @@
 | `database_wbtest.mbt` | 白盒测试：`resolve_home` / `resolve_data_home` 的平台回退顺序 |
 | `differential_test.mbt` | S13：三层语料在持久化库、`--no-trigram` 库、`--live` 与全部输出选项上的端到端字节对拍 |
 
+仓库级进程测试（不在 `src/cli` 包内，CI 直接执行）：
+
+| 文件 | 内容 |
+| --- | --- |
+| `tests/cli.md` | mooncram golden：真实可执行文件的 help、退出码、index/search/count/info 与输出格式 |
+| `tests/process_reliability.py` | EPIPE 安静成功、`/dev/full` 失败、SIGINT 退出码 130、`waitpid` 信号语义 |
+| `tests/executable_differential.py` | S11：真实进程的最小差分语料（search/count × 两引擎、无 trigram、live、输出选项、非法查询、`--compat`） |
+| `tests/sparse_files.py` | S11：1 TiB / 3 GiB+1 稀疏文件的 size 过滤、排序、DB 往返与 info |
+| `tests/raw_bytes_linux.py` | S02：Linux 非法 UTF-8 文件名的 scan→DB→match→raw 输出 |
+
 ## 执行流程
 
 ```text
@@ -156,3 +166,12 @@ explain 覆盖）：
 
 `tests/cli.md` 用可执行文件覆盖同样的排序、格式、错误消息与退出码，并保留 S01
 以来的 help golden。
+
+`tests/executable_differential.py`（S11）补上“真实进程”这一层：它在临时目录构造固定
+mtime 的夹具，索引持久化库与 `--no-trigram` 库后，把 40 余条手写查询分别以
+`--engine scan` 与 `--engine bitmap` 跑一遍 `search` 与 `count`，比较退出码、stdout
+字节与 stderr；另覆盖 `--live`、9 组输出选项、运行时拼接的 `parent:`/`path:`/
+`nopath:` 查询、4 条非法查询的退出码 2，以及 `--compat` 下同一批查询统一变成空集。
+它不替代进程内对拍，而是验证参数解析、真实 stdout 缓冲与进程退出码没有引入差异。
+`tests/sparse_files.py`（S11）用 1 TiB 与 3 GiB+1 的稀疏文件验证超过 `Int32` 的
+`size:` 比较、排序、`info` 与“删掉源树后仍可查询”；文件系统不能保持稀疏时跳过。

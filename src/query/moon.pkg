@@ -3,3 +3,7 @@ import {
   "moonbitlang/core/string",
   "q2316367743/moonsearch/src/util",
 }
+
+import {
+  "q2316367743/moonsearch/src/testkit",
+} for "test"

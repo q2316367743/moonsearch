@@ -1,4 +1,6 @@
-// Test-only support package. It has no production dependencies on purpose so
-// every package's blackbox tests can import it without creating a cycle.
+// Test-only support package. It only depends on the standard environment
+// clock so every package's blackbox tests can import it without creating a
+// cycle.
 import {
+  "moonbitlang/core/env",
 }

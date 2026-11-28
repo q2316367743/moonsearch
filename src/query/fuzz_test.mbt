@@ -31,8 +31,16 @@ fn fuzz_input(seed : Int64, alphabet : Array[String]) -> String {
 ///|
 test "lexer invariants hold on generated inputs" {
   let alphabet = fuzz_alphabet()
+  // The loop is bounded twice: 2000 iterations and a 60-second wall clock.
+  // A lexer regression that spins or allocates without bound aborts here
+  // instead of stalling the whole test job.
+  let budget = @testkit.FuzzBudget::new(2000L, 60_000L)
   let mut seed = 17L
   for _ in 0..<2000 {
+    match budget.charge("lexer fuzz") {
+      Ok(_) => ()
+      Err(message) => abort(message)
+    }
     seed = fuzz_seed(seed)
     let input = fuzz_input(seed, alphabet)
     let result : Result[Array[@query.Token], @query.QueryError] = Ok(
@@ -65,8 +73,15 @@ test "lexer invariants hold on generated inputs" {
 ///|
 test "parser never panics on generated inputs" {
   let alphabet = fuzz_alphabet()
+  // Parser and compat parsing run in the same bounded loop; each iteration
+  // charges one operation.
+  let budget = @testkit.FuzzBudget::new(2000L, 60_000L)
   let mut seed = 99L
   for _ in 0..<2000 {
+    match budget.charge("parser fuzz") {
+      Ok(_) => ()
+      Err(message) => abort(message)
+    }
     seed = fuzz_seed(seed)
     let input = fuzz_input(seed, alphabet)
     let normal : Result[@query.Query, @query.QueryError] = Ok(

@@ -251,8 +251,15 @@ fn fuzz_mutate(rng : @testkit.Rng, original : Bytes) -> Array[Byte] {
 test "random database mutations are rejected by full verification" {
   let original = encoded(sample_index())
   let rng = @testkit.Rng::new(0xC0FFEEUL)
+  // 600 mutants, each decoded through four paths. The operation budget caps
+  // the loop and the time budget catches a decoder that stops making progress.
+  let budget = @testkit.FuzzBudget::new(600L, 120_000L)
   let mut rejected = 0
   for _ in 0..<600 {
+    match budget.charge("database mutation fuzz") {
+      Ok(_) => ()
+      Err(message) => abort(message)
+    }
     let mutant = fuzz_mutate(rng, original)
     match fuzz_decode_verified(mutant) {
       Ok(_) =>
@@ -282,7 +289,12 @@ test "random database mutations are rejected by full verification" {
 ///|
 test "random garbage is rejected without panicking" {
   let rng = @testkit.Rng::new(0xBADF00DUL)
+  let budget = @testkit.FuzzBudget::new(300L, 120_000L)
   for _ in 0..<300 {
+    match budget.charge("database garbage fuzz") {
+      Ok(_) => ()
+      Err(message) => abort(message)
+    }
     let length = rng.below(600)
     let bytes : Array[Byte] = []
     for _ in 0..<length {

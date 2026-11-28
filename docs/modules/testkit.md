@@ -1,8 +1,9 @@
-# testkit — 确定性随机源与查询语料（仅测试使用）
+# testkit — 确定性随机源、模糊预算与查询语料（仅测试使用）
 
-`src/testkit` 是 S13 的对拍基础设施：一个与平台无关的伪随机数生成器，以及按
-“手写语义 / 随机生成 / explain 覆盖”三层组织的查询语料。它只被各包的 blackbox
-测试通过 `for "test"` 导入，不进入任何生产路径。
+`src/testkit` 是 S13 的对拍基础设施：一个与平台无关的伪随机数生成器、一个带
+操作/墙钟上限的 `FuzzBudget`，以及按“手写语义 / 随机生成 / explain 覆盖”三层
+组织的查询语料。它只被各包的 blackbox 测试通过 `for "test"` 导入，不进入任何
+生产路径。
 
 ## 职责
 
@@ -10,16 +11,43 @@
 - 维护查询语料，所有消费者（exec、ids、index、cli）使用同一份字符串列表。
 - 保证语料中的每条查询都能被查询解析器接受；生成器只组合合法叶子与合法布尔
   连接词，不依赖错误恢复。
+- 给模糊测试循环提供统一的操作数与墙钟预算，避免回归把有界 fuzz 变成无界。
 
 ## 文件
 
 | 文件 | 内容 |
 | --- | --- |
 | `rng.mbt` | `Rng`：xorshift64 状态、`below`、`between`、`chance`、`pick` |
+| `budget.mbt` | `FuzzBudget`：操作数 + 墙钟双上限，`charge` 返回预算错误文本 |
 | `corpus.mbt` | 语义语料、日期语料、转义边界语料、explain 语料、随机生成器 |
 
-包本身没有 import，因此任何包都可以在自己的测试目标里依赖它，不会形成
+包只依赖 `moonbitlang/core/env`（读取毫秒时钟），没有对被测试包的反向依赖，
+因此任何包都可以在自己的测试目标里依赖它，不会形成
 “被测包 → testkit → 被测包”的循环。
+
+## 模糊预算
+
+```moonbit
+let budget = @testkit.FuzzBudget::new(2000L, 60_000L)
+for _ in 0..<2000 {
+  match budget.charge("lexer fuzz") {
+    Ok(_) => ()
+    Err(message) => abort(message)
+  }
+  // ... one fuzz iteration ...
+}
+```
+
+- `FuzzBudget::new(max_operations, max_milliseconds)` 在构造时记录起点。
+- `charge(label)` 每次迭代调用一次；超过任一上限返回 `Err`，调用方用 `abort` 终止，
+  消息包含驱动名、实际值与上限。
+- `operations()` / `elapsed_milliseconds()` 供断言与失败信息使用。
+- 上限刻意宽松（60–120 秒），只用于捕获“停止推进”的回归，不约束正常机器速度；
+  单测覆盖操作数耗尽与时间预算耗尽两条分支。
+
+消费者：`src/query/fuzz_test.mbt`（lexer/parser 各 2000 次、60 s）、
+`src/index/db_fuzz_test.mbt`（600/300 次、120 s；DB 解码另有 `IdsDecodeBudget`
+的操作/内存预算）。
 
 ## 确定性随机源
 

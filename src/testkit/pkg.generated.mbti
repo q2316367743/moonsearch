@@ -19,6 +19,17 @@ pub fn semantic_queries() -> Array[String]
 // Errors
 
 // Types and methods
+pub struct FuzzBudget {
+  mut operations : Int64
+  max_operations : Int64
+  started_ms : Int64
+  max_milliseconds : Int64
+}
+pub fn FuzzBudget::charge(Self, String) -> Result[Unit, String]
+pub fn FuzzBudget::elapsed_milliseconds(Self) -> Int64
+pub fn FuzzBudget::new(Int64, Int64) -> Self
+pub fn FuzzBudget::operations(Self) -> Int64
+
 pub struct Rng {
   mut state : UInt64
 }

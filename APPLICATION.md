@@ -22,7 +22,7 @@
 
 ## 二、交付范围与工程边界
 
-**交付与核心功能。** MoonBit 库 + native CLI：`index`/`update`/`search`/`count`/`info`；查询语言（布尔、前缀修饰符、范围/日期/大小/结构字段、类别宏、glob/regex）；字典位图、范围数组、trigram 倒排；`Ids = Bitmap | Sorted` 集合代数；MSDB v3 持久化（分节、校验和、原子替换、损坏恢复）；排序/`--limit`/JSON/NUL/模板输出。补漏计划按步骤验收，当前完成 S01 查询正确性与 S02 Unix 字节安全扫描/输出；测试数量由每次质量门禁实际输出，不写死。
+**交付与核心功能。** MoonBit 库 + native CLI：`index`/`update`/`search`/`count`/`info`；查询语言（布尔、前缀修饰符、范围/日期/大小/结构字段、类别宏、glob/regex）；字典位图、范围数组、trigram 倒排；`Ids = Bitmap | Sorted` 集合代数；MSDB v3 持久化（分节、校验和、原子替换、损坏恢复）；排序/`--limit`/JSON/NUL/模板输出。补漏计划 S01–S11 已按步骤验收（S12 基准与可复现材料待完成）；测试数量由每次质量门禁实际输出，不写死。
 
 **不做。** 不做 GUI；不做文件内容全文检索；不做 Windows MFT/USN 与 Windows 路径语义；不做分布式分片；v1 只做 ASCII 大小写折叠；`update` 当前全量重建，watcher 增量更新留到后续。
 
