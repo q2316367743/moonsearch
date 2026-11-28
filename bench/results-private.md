@@ -1,6 +1,6 @@
 # moonsearch benchmark results
 
-Generated: `2026-11-28T07:20:36+00:00`
+Generated: `2026-11-28T07:22:38+00:00`
 
 ## Dataset
 
@@ -24,18 +24,18 @@ Generated: `2026-11-28T07:20:36+00:00`
 | platform | macOS-26.6.2-arm64-arm-64bit |
 | machine | arm64 |
 | moon | moon 0.1.20261126 (ccd306a 2026-11-26) |
-| commit | fb47a98-dirty |
+| commit | 1f1c092 |
 
 ## Index build
 
 | Metric | Target | Measured | Status |
 | --- | --- | --- | --- |
-| Scan + build + write | 92.7 s (90 s at 1M) | 27.5 s | PASS |
-| Build peak RSS (information) | n/a | 734.7 MiB | n/a |
+| Scan + build + write | 92.7 s (90 s at 1M) | 27.4 s | PASS |
+| Build peak RSS (information) | n/a | 720.3 MiB | n/a |
 
 Build statistics from `index --stats`:
 
-- `scan_ms`: 25924
+- `scan_ms`: 25772
 - `database_bytes`: 115005406
 - `names`: 1030277
 - `name_bytes`: 16522271
@@ -48,8 +48,8 @@ Build statistics from `index --stats`:
 
 | Metric | Target | Measured | Status |
 | --- | --- | --- | --- |
-| Read MSDB into memory | 824 ms (800 ms at 1M) | 194 ms | PASS |
-| Query-time peak RSS | 400 MiB at 1M | 372.4 MiB | PASS |
+| Read MSDB into memory | 824 ms (800 ms at 1M) | 192 ms | PASS |
+| Query-time peak RSS | 400 MiB at 1M | 371.8 MiB | PASS |
 
 ## Engine latency
 
@@ -57,15 +57,15 @@ Engine numbers come from `moonsearch-bench`: one database load, then `moonsearch
 
 | Query | Target | Bitmap median | Scan median | Matches | Status |
 | --- | --- | --- | --- | --- | --- |
-| `ext:jpg` | 1 ms | 33.9 µs | 41.54 ms | 73 | PASS |
-| `ext:jpg size:>1mb` | 5 ms | 296.0 µs | 51.39 ms | 2 | PASS |
-| `ext:jpg size:>1mb dm:lastweek` | 8 ms | 3.43 ms | 59.49 ms | 0 | PASS |
-| `report` | 20 ms | 71.1 µs | 46.96 ms | 419 | PASS |
-| `report pdf` | 40 ms | 299.1 µs | 49.39 ms | 0 | PASS |
-| `*.pdf` | 120 ms | 82.27 ms | 75.98 ms | 4 | PASS |
-| `source map` | 40 ms | 12.50 ms | 48.54 ms | 2,445 | PASS |
-| `count ext:mp4` | 1.0 ms | 33.9 µs | n/a | 25 | PASS |
-| empty query, `-n 20` | 1.0 ms | 32.8 µs | 33.9 µs | 1,030,277 | PASS |
+| `ext:jpg` | 1 ms | 33.7 µs | 42.26 ms | 73 | PASS |
+| `ext:jpg size:>1mb` | 5 ms | 301.1 µs | 51.67 ms | 2 | PASS |
+| `ext:jpg size:>1mb dm:lastweek` | 8 ms | 3.42 ms | 59.53 ms | 0 | PASS |
+| `report` | 20 ms | 73.0 µs | 47.48 ms | 419 | PASS |
+| `report pdf` | 40 ms | 252.8 µs | 49.91 ms | 0 | PASS |
+| `*.pdf` | 120 ms | 83.49 ms | 76.36 ms | 4 | PASS |
+| `source map` | 40 ms | 12.20 ms | 49.19 ms | 2,445 | PASS |
+| `count ext:mp4` | 1.0 ms | 34.0 µs | n/a | 25 | PASS |
+| empty query, `-n 20` | 1.0 ms | 33.5 µs | 33.9 µs | 1,030,277 | PASS |
 
 ## CLI wall time
 
@@ -73,15 +73,15 @@ Each CLI invocation loads the database and formats results, so this column is th
 
 | Command | Target (engine) | Median wall | Min wall | Status |
 | --- | --- | --- | --- | --- |
-| `search 'ext:jpg'` | 1.0 ms | 226.3 ms | 225.4 ms | n/a (includes load) |
-| `search 'ext:jpg size:>1mb'` | 5.0 ms | 215.5 ms | 209.7 ms | n/a (includes load) |
-| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 202.6 ms | 198.8 ms | n/a (includes load) |
-| `search 'report'` | 20.0 ms | 241.7 ms | 219.9 ms | n/a (includes load) |
-| `search 'report pdf'` | 40.0 ms | 201.8 ms | 199.0 ms | n/a (includes load) |
-| `search '*.pdf'` | 120.0 ms | 301.7 ms | 300.2 ms | n/a (includes load) |
-| `search 'source map'` | 40.0 ms | 243.3 ms | 240.6 ms | n/a (includes load) |
-| `count 'ext:mp4'` | 1.0 ms | 216.9 ms | 211.4 ms | n/a (includes load) |
-| `search -n 20 ''` | 1.0 ms | 210.1 ms | 210.0 ms | n/a (includes load) |
+| `search 'ext:jpg'` | 1.0 ms | 221.2 ms | 220.6 ms | n/a (includes load) |
+| `search 'ext:jpg size:>1mb'` | 5.0 ms | 222.5 ms | 218.6 ms | n/a (includes load) |
+| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 203.9 ms | 202.6 ms | n/a (includes load) |
+| `search 'report'` | 20.0 ms | 223.1 ms | 223.0 ms | n/a (includes load) |
+| `search 'report pdf'` | 40.0 ms | 198.4 ms | 195.4 ms | n/a (includes load) |
+| `search '*.pdf'` | 120.0 ms | 305.0 ms | 304.7 ms | n/a (includes load) |
+| `search 'source map'` | 40.0 ms | 242.0 ms | 238.3 ms | n/a (includes load) |
+| `count 'ext:mp4'` | 1.0 ms | 214.9 ms | 213.8 ms | n/a (includes load) |
+| `search -n 20 ''` | 1.0 ms | 220.1 ms | 215.3 ms | n/a (includes load) |
 
 ## Index size
 
