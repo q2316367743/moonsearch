@@ -39,7 +39,7 @@
 ## 四、预期使用场景
 
 1. **monorepo 清理**：`moonsearch index -r ~/work/repo` 建一次索引，之后反复查 `folder:node_modules`、`ext:log size:>10mb dm:lastmonth`，用 `--null` 交给删除脚本；`find` 每次都要重走几十万条目。
-2. **编辑器快速打开**：库嵌入编辑器，启动加载一次（100 万条约 0.18–0.20 s），按键查 `report file:ext:md`，`-n 20` 返回自然序前 20 条；可索引查询 37 µs–10 ms，纯 glob 约 76 ms。
+2. **编辑器快速打开**：库嵌入编辑器，启动加载一次（100 万条约 0.18–0.19 s），按键查 `report file:ext:md`，`-n 20` 返回自然序前 20 条；可索引查询 36 µs–9.1 ms，纯 glob 约 73 ms。
 3. **CI 产物审计**：`moonsearch count 'size:>100mb ext:zip dm:lastweek'`，按退出码判断是否遗留大产物；`--json` 输出清单，固定索引让同一提交的检查可复现。
 
 ## 五、实测、证据与仓库
@@ -58,7 +58,7 @@
 | `path:src` | 150,760 | 104.947 | 125.151 | 127.855 | 0.82× |
 | `size:>1kb`（稠密） | 283,530 | 10.174 | 15.553 | 16.270 | 0.63× |
 
-完整表中，选择性高且可索引的完整搜索相对 FSearch 单线程快 2.65–47×，count 快约 4–585×；退化查询的 `FSearch/full` 为 0.50–0.99（moonsearch 慢 1.01–2×）。`source map` 只有 614 命中却要 2.774 ms，`package.json` 0 命中只要 0.039 ms：成本由 posting 长度和候选规模决定，不由命中数决定。短 needle、stop-gram、glob/regex/`path:`、稠密范围退化为 O(N)，完整搜索可能比 FSearch 慢。代价：300k 合成树构建 7.42 s（FSearch 3.56 s 是内存索引，不建 trigram、不写库）、加载 59.9 ms；1,030,056 条目上（Apple M4 Pro，release，热缓存）构建 28.0 s、加载 176 ms、查询态 332.2 MiB，索引额外体积 2.86×/1.66×（未达 1.5×，拆分与后续计划见基准文档）。完整表格、原始 TSV 与 harness 见 [docs/benchmarks.md](docs/benchmarks.md) §6 与 [bench/fsearch-compare/](bench/fsearch-compare/)；2026-11-18 的私有 297,595 条目快照只作历史补充，不替代该主口径。
+完整表中，选择性高且可索引的完整搜索相对 FSearch 单线程快 2.65–47×，count 快约 4–585×；退化查询的 `FSearch/full` 为 0.50–0.99（moonsearch 慢 1.01–2×）。`source map` 只有 614 命中却要 2.774 ms，`package.json` 0 命中只要 0.039 ms：成本由 posting 长度和候选规模决定，不由命中数决定。短 needle、stop-gram、glob/regex/`path:`、稠密范围退化为 O(N)，完整搜索可能比 FSearch 慢。代价：300k 合成树构建 7.42 s（FSearch 3.56 s 是内存索引，不建 trigram、不写库）、加载 59.9 ms；1,030,056 条目上（Apple M4 Pro，release，热缓存）构建 28.4 s、加载 183 ms、查询态 332.4 MiB，索引额外体积 2.86×/1.66×（未达 1.5×，拆分与后续计划见基准文档）。完整表格、原始 TSV 与 harness 见 [docs/benchmarks.md](docs/benchmarks.md) §6 与 [bench/fsearch-compare/](bench/fsearch-compare/)；2026-11-18 的私有 297,595 条目快照只作历史补充，不替代该主口径。
 
 https://github.com/q2316367743/moonsearch。不少于 16 个有效提交（2026-11-11 起，首个提交 `93f613a`），已沿 S01–S12 路线交付，每次是实质增量（实现、测试、文档或 CI）；没有空提交或凑数拆分。S13–S14 尚未声称完成。CI 跑 `moon check`、`fmt --check`、`test`、`testcli`。
 

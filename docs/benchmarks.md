@@ -36,8 +36,8 @@
 CLI 是 3 次采样的中位数；RSS 是单次峰值。
 
 **环境。** Apple M4 Pro、48 GiB、macOS 26.6.2、MoonBit `0.1.20261126 (ccd306a
-2026-11-26)`、release 构建。测量时机器 load average 为 12.86 / 27.60 / 54.04
-（1/5/15 分钟，2026-11-28 15:10），明显高于空闲状态；绝对延迟因此偏保守。所有比较
+2026-11-26)`、release 构建。测量期间（2026-11-28 15:10–15:21）机器 load average
+在 1 分钟 12–17、15 分钟 32–54 之间，明显高于空闲状态；绝对延迟因此偏保守。所有比较
 使用同一时段内的中位数，但跨日比较仍应在空闲机器上重跑。测量提交见
 `bench/results.json` 的 `machine.commit` 字段。
 
@@ -101,18 +101,18 @@ moon run cmd/moonsearch-bench -- --database DB --engine bitmap --first 20 ''
 
 | # | 项目 | 目标（1M） | 折算目标 | 实测 | 结论 |
 | ---: | --- | ---: | ---: | ---: | --- |
-| 1 | 扫描 + 建索引 | < 90 s | 92.7 s | 28.0 s | 达标 |
-| 2 | 数据库加载 | < 800 ms | 824 ms | 176 ms | 达标 |
-| 3 | `ext:jpg` bitmap | < 1 ms | — | 39.4 µs | 达标 |
-| 4 | `ext:jpg size:>1mb` | < 5 ms | — | 66.5 µs | 达标 |
-| 5 | `ext:jpg size:>1mb dm:lastweek` | < 8 ms | — | 79.9 µs | 达标 |
-| 6 | `report` | < 20 ms | — | 2.05 ms | 达标 |
-| 7 | `report pdf` | < 40 ms | — | 2.18 ms | 达标 |
-| 8 | `*.pdf`（glob） | < 120 ms | — | 75.66 ms | 达标 |
-| 9 | `count ext:mp4` | < 1 ms | — | 38.8 µs | 达标 |
-| 10 | 空查询 + `-n 20` | < 1 ms | — | 37.1 µs | 达标 |
+| 1 | 扫描 + 建索引 | < 90 s | 92.7 s | 28.4 s | 达标 |
+| 2 | 数据库加载 | < 800 ms | 824 ms | 183 ms | 达标 |
+| 3 | `ext:jpg` bitmap | < 1 ms | — | 36.2 µs | 达标 |
+| 4 | `ext:jpg size:>1mb` | < 5 ms | — | 66.4 µs | 达标 |
+| 5 | `ext:jpg size:>1mb dm:lastweek` | < 8 ms | — | 76.8 µs | 达标 |
+| 6 | `report` | < 20 ms | — | 1.96 ms | 达标 |
+| 7 | `report pdf` | < 40 ms | — | 2.02 ms | 达标 |
+| 8 | `*.pdf`（glob） | < 120 ms | — | 72.71 ms | 达标 |
+| 9 | `count ext:mp4` | < 1 ms | — | 36.6 µs | 达标 |
+| 10 | 空查询 + `-n 20` | < 1 ms | — | 36.4 µs | 达标 |
 | 11 | 索引额外体积 | < 1.5× | — | 2.86× / 1.66× | **未达标** |
-| 12 | 查询态常驻内存 | < 400 MB | 412 MiB | 332.2 MiB | 达标 |
+| 12 | 查询态常驻内存 | < 400 MB | 412 MiB | 332.4 MiB | 达标 |
 
 第 11 项的两个数字分别是“序列化 NAMES”与“原始 NamePool”口径，定义、拆分和后续计划
 见 §3.4。其余 11 项在主口径上达标。
@@ -123,15 +123,15 @@ moon run cmd/moonsearch-bench -- --database DB --engine bitmap --first 20 ''
 
 | 查询 | 目标 | bitmap 中位数 | scan 中位数 | 命中 | 结论 |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `ext:jpg` | < 1 ms | 39.4 µs | 41.80 ms | 927 | 达标 |
-| `ext:jpg size:>1mb` | < 5 ms | 66.5 µs | 49.36 ms | 3 | 达标 |
-| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 79.9 µs | 57.91 ms | 0 | 达标 |
-| `report` | < 20 ms | 2.05 ms | 44.69 ms | 30,805 | 达标 |
-| `report pdf` | < 40 ms | 2.18 ms | 47.62 ms | 930 | 达标 |
-| `*.pdf` | < 120 ms | 75.66 ms | 69.45 ms | 930 | 达标 |
-| `source map` | < 40 ms | 9.82 ms | 47.51 ms | 2,111 | 达标 |
-| `count ext:mp4` | < 1 ms | 38.8 µs | — | 925 | 达标 |
-| 空查询 + `-n 20` | < 1 ms | 37.1 µs | 36.7 µs | 1,030,056 | 达标 |
+| `ext:jpg` | < 1 ms | 36.2 µs | 41.45 ms | 927 | 达标 |
+| `ext:jpg size:>1mb` | < 5 ms | 66.4 µs | 48.56 ms | 3 | 达标 |
+| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 76.8 µs | 55.66 ms | 0 | 达标 |
+| `report` | < 20 ms | 1.96 ms | 43.88 ms | 30,805 | 达标 |
+| `report pdf` | < 40 ms | 2.02 ms | 46.41 ms | 930 | 达标 |
+| `*.pdf` | < 120 ms | 72.71 ms | 67.79 ms | 930 | 达标 |
+| `source map` | < 40 ms | 9.11 ms | 46.21 ms | 2,111 | 达标 |
+| `count ext:mp4` | < 1 ms | 36.6 µs | — | 925 | 达标 |
+| 空查询 + `-n 20` | < 1 ms | 36.4 µs | 35.8 µs | 1,030,056 | 达标 |
 
 ### 3.3 CLI 墙钟
 
@@ -140,17 +140,17 @@ moon run cmd/moonsearch-bench -- --database DB --engine bitmap --first 20 ''
 
 | 命令 | 引擎目标 | 中位墙钟 | 最小墙钟 |
 | --- | ---: | ---: | ---: |
-| `search 'ext:jpg'` | 1.0 ms | 209.9 ms | 206.0 ms |
-| `search 'ext:jpg size:>1mb'` | 5.0 ms | 199.5 ms | 195.6 ms |
-| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 185.1 ms | 184.1 ms |
-| `search 'report'` | 20.0 ms | 218.7 ms | 217.4 ms |
-| `search 'report pdf'` | 40.0 ms | 213.0 ms | 211.3 ms |
-| `search '*.pdf'` | 120.0 ms | 292.7 ms | 286.5 ms |
-| `search 'source map'` | 40.0 ms | 227.1 ms | 222.8 ms |
-| `count 'ext:mp4'` | 1.0 ms | 196.4 ms | 194.2 ms |
-| `search -n 20 ''` | 1.0 ms | 203.0 ms | 195.8 ms |
+| `search 'ext:jpg'` | 1.0 ms | 201.9 ms | 201.4 ms |
+| `search 'ext:jpg size:>1mb'` | 5.0 ms | 192.2 ms | 190.8 ms |
+| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 175.3 ms | 174.6 ms |
+| `search 'report'` | 20.0 ms | 210.6 ms | 208.7 ms |
+| `search 'report pdf'` | 40.0 ms | 207.6 ms | 203.1 ms |
+| `search '*.pdf'` | 120.0 ms | 270.9 ms | 270.4 ms |
+| `search 'source map'` | 40.0 ms | 219.2 ms | 212.0 ms |
+| `count 'ext:mp4'` | 1.0 ms | 191.2 ms | 187.5 ms |
+| `search -n 20 ''` | 1.0 ms | 189.0 ms | 187.5 ms |
 
-CLI 墙钟由约 176 ms 的数据库加载主导；引擎本身是几十微秒到几十毫秒。交互式反复查询的
+CLI 墙钟由约 183 ms 的数据库加载主导；引擎本身是几十微秒到几十毫秒。交互式反复查询的
 瓶颈在加载，不在查询算子。
 
 ### 3.4 索引体积：两种口径
@@ -217,8 +217,8 @@ u32 id)`，五个字段共 50.7 MB，占额外体积的 62%。`size`、`mtime`�
 
 | 数据集 | S12 前 | S12 后 | 目标（折算） | 结论 |
 | --- | ---: | ---: | ---: | --- |
-| 私有三根，1,030,277 条目 | 949 ms | 203 ms | 824 ms | 达标 |
-| 合成，1,030,056 条目 | — | 176 ms | 824 ms | 达标 |
+| 私有三根，1,030,277 条目 | 949 ms | 194 ms | 824 ms | 达标 |
+| 合成，1,030,056 条目 | — | 183 ms | 824 ms | 达标 |
 
 S12 前，普通加载会用 `validate_canonical_order` 为每个同名条目物化完整路径，验证
 ORDER 的 `(name, path)` 全序；在 1M 条目上这一步约占 740 ms。S12 把完整路径 tie-break
@@ -236,12 +236,12 @@ ORDER 的 `(name, path)` 全序；在 1M 条目上这一步约占 740 ms。S12 �
 
 ### 3.6 建索引与 trigram
 
-`--stats` 细节：`scan: 25,717 ms`，`database: 110,179,928 bytes`，
+`--stats` 细节：`scan: 26,340 ms`，`database: 110,179,928 bytes`，
 `names: 1,030,056 names, 13,807,267 bytes`，`extensions: 11`，`hidden: 916`，
 `ranges: size=1030056 mtime=1030056 depth=1030056 childcount=103006 parent=1030055`，
 `trigram: 872 keys, 11,745,410 postings, 0 short names, 2 stop-grams, 46,981,640 B`。
 
-建索引峰值 RSS 681.4 MiB，主要是构建期 trigram 哈希表；查询态 RSS 332.2 MiB。
+建索引峰值 RSS 681.3 MiB，主要是构建期 trigram 哈希表；查询态 RSS 332.4 MiB。
 trigram 在这个数据集上只增加 872 个键，因为名字模板重复度高；它的收益仍集中在名字
 子串查询（§3.2 的 `report`、`source map`）。
 
@@ -259,20 +259,20 @@ trigram 在这个数据集上只增加 872 个键，因为名字模板重复度�
 | `~/Documents/workspace/dashou-plugin` | 705,445 | `c6f54b42ced235867631545b47911a023717d6cbc4e73140b8e0131b61c6e2a7` |
 | `~/Documents/workspace/plugin` | 22,525 | `a1c91b0f02593e19c8a2ad3682bf0144670b93f99e6c4cab45127ee66990c3bc` |
 
-实测：构建 31.9 s、加载 203 ms、查询态 RSS 372.0 MiB、数据库 115,005,406 B；
+实测：构建 27.5 s、加载 194 ms、查询态 RSS 372.4 MiB、数据库 115,005,406 B；
 索引额外体积 2.80×（序列化 NAMES）/ 1.61×（原始 NamePool），同样未达 1.5×。
 
 | 查询 | 目标 | bitmap 中位数 | scan 中位数 | 命中 | 结论 |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `ext:jpg` | < 1 ms | 37.8 µs | 43.79 ms | 73 | 达标 |
-| `ext:jpg size:>1mb` | < 5 ms | 335.5 µs | 53.80 ms | 2 | 达标 |
-| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 3.93 ms | 62.74 ms | 0 | 达标 |
-| `report` | < 20 ms | 78.5 µs | 49.06 ms | 419 | 达标 |
-| `report pdf` | < 40 ms | 272.6 µs | 51.92 ms | 0 | 达标 |
-| `*.pdf` | < 120 ms | 86.73 ms | 79.39 ms | 4 | 达标 |
-| `source map` | < 40 ms | 13.19 ms | 51.09 ms | 2,445 | 达标 |
-| `count ext:mp4` | < 1 ms | 39.1 µs | — | 25 | 达标 |
-| 空查询 + `-n 20` | < 1 ms | 36.0 µs | 36.7 µs | 1,030,277 | 达标 |
+| `ext:jpg` | < 1 ms | 33.9 µs | 41.54 ms | 73 | 达标 |
+| `ext:jpg size:>1mb` | < 5 ms | 296.0 µs | 51.39 ms | 2 | 达标 |
+| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 3.43 ms | 59.49 ms | 0 | 达标 |
+| `report` | < 20 ms | 71.1 µs | 46.96 ms | 419 | 达标 |
+| `report pdf` | < 40 ms | 299.1 µs | 49.39 ms | 0 | 达标 |
+| `*.pdf` | < 120 ms | 82.27 ms | 75.98 ms | 4 | 达标 |
+| `source map` | < 40 ms | 12.50 ms | 48.54 ms | 2,445 | 达标 |
+| `count ext:mp4` | < 1 ms | 33.9 µs | — | 25 | 达标 |
+| 空查询 + `-n 20` | < 1 ms | 32.8 µs | 33.9 µs | 1,030,277 | 达标 |
 
 私有库的 `ranges` 是 50,577,557 B（size/mtime/depth 各 12,363,329 B，childcount
 1,124,273 B，parent 12,363,293 B），与合成库同量级；这确认体积问题不是合成数据
@@ -284,7 +284,7 @@ trigram 在这个数据集上只增加 872 个键，因为名字模板重复度�
 
 1. **`RANGES` 压缩/分块**。见 §3.4 的后续计划；这是索引体积未达标的主因，也可能
    顺带降低加载时间。
-2. **CLI 交互延迟**。每次调用加载约 176–203 ms；引擎只需几十微秒到几十毫秒。
+2. **CLI 交互延迟**。每次调用加载约 183–194 ms；引擎只需几十微秒到几十毫秒。
    中期方案是常驻进程（daemon/keep-alive）或共享内存缓存；短期在文档中明确
    “单次 CLI 不是 1 ms 级路径”。
 3. **`PARENT_PATHS` 前缀压缩**。13.4 MB 的完整绝对路径重复了父目录前缀；改成
@@ -467,7 +467,7 @@ python3 bench/record_demo.py bench/demo.cast
 - **索引体积未达标**：2.86×（序列化 NAMES）/ 1.66×（原始 NamePool），目标 < 1.5×；
   主因是 50.7 MB 的五字段 `RANGES` 与 13.4 MB 的 `PARENT_PATHS`。后续计划见 §3.4，
   S12 不修改数据库格式。
-- **CLI 每次调用都加载数据库**：约 176–203 ms/1M，远大于引擎延迟；没有 daemon
+- **CLI 每次调用都加载数据库**：约 183–194 ms/1M，远大于引擎延迟；没有 daemon
   或共享缓存。单次 CLI 不是 1 ms 级路径。
 - **冷缓存未测**：本文全部加载/查询数字是热页缓存；没有 `purge`/`drop_caches`。
 - **机器负载偏高**：测量时 load average 1 分钟 12.86、15 分钟 54.04；绝对数字偏保守，

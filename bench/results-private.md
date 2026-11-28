@@ -1,6 +1,6 @@
 # moonsearch benchmark results
 
-Generated: `2026-11-28T07:02:18+00:00`
+Generated: `2026-11-28T07:20:36+00:00`
 
 ## Dataset
 
@@ -24,18 +24,18 @@ Generated: `2026-11-28T07:02:18+00:00`
 | platform | macOS-26.6.2-arm64-arm-64bit |
 | machine | arm64 |
 | moon | moon 0.1.20261126 (ccd306a 2026-11-26) |
-| commit | 9c58969-dirty |
+| commit | fb47a98-dirty |
 
 ## Index build
 
 | Metric | Target | Measured | Status |
 | --- | --- | --- | --- |
-| Scan + build + write | 92.7 s (90 s at 1M) | 31.9 s | PASS |
-| Build peak RSS (information) | n/a | 720.2 MiB | n/a |
+| Scan + build + write | 92.7 s (90 s at 1M) | 27.5 s | PASS |
+| Build peak RSS (information) | n/a | 734.7 MiB | n/a |
 
 Build statistics from `index --stats`:
 
-- `scan_ms`: 30073
+- `scan_ms`: 25924
 - `database_bytes`: 115005406
 - `names`: 1030277
 - `name_bytes`: 16522271
@@ -48,8 +48,8 @@ Build statistics from `index --stats`:
 
 | Metric | Target | Measured | Status |
 | --- | --- | --- | --- |
-| Read MSDB into memory | 824 ms (800 ms at 1M) | 203 ms | PASS |
-| Query-time peak RSS | 400 MiB at 1M | 372.0 MiB | PASS |
+| Read MSDB into memory | 824 ms (800 ms at 1M) | 194 ms | PASS |
+| Query-time peak RSS | 400 MiB at 1M | 372.4 MiB | PASS |
 
 ## Engine latency
 
@@ -57,15 +57,15 @@ Engine numbers come from `moonsearch-bench`: one database load, then `moonsearch
 
 | Query | Target | Bitmap median | Scan median | Matches | Status |
 | --- | --- | --- | --- | --- | --- |
-| `ext:jpg` | 1 ms | 37.8 µs | 43.79 ms | 73 | PASS |
-| `ext:jpg size:>1mb` | 5 ms | 335.5 µs | 53.80 ms | 2 | PASS |
-| `ext:jpg size:>1mb dm:lastweek` | 8 ms | 3.93 ms | 62.74 ms | 0 | PASS |
-| `report` | 20 ms | 78.5 µs | 49.06 ms | 419 | PASS |
-| `report pdf` | 40 ms | 272.6 µs | 51.92 ms | 0 | PASS |
-| `*.pdf` | 120 ms | 86.73 ms | 79.39 ms | 4 | PASS |
-| `source map` | 40 ms | 13.19 ms | 51.09 ms | 2,445 | PASS |
-| `count ext:mp4` | 1.0 ms | 39.1 µs | n/a | 25 | PASS |
-| empty query, `-n 20` | 1.0 ms | 36.0 µs | 36.7 µs | 1,030,277 | PASS |
+| `ext:jpg` | 1 ms | 33.9 µs | 41.54 ms | 73 | PASS |
+| `ext:jpg size:>1mb` | 5 ms | 296.0 µs | 51.39 ms | 2 | PASS |
+| `ext:jpg size:>1mb dm:lastweek` | 8 ms | 3.43 ms | 59.49 ms | 0 | PASS |
+| `report` | 20 ms | 71.1 µs | 46.96 ms | 419 | PASS |
+| `report pdf` | 40 ms | 299.1 µs | 49.39 ms | 0 | PASS |
+| `*.pdf` | 120 ms | 82.27 ms | 75.98 ms | 4 | PASS |
+| `source map` | 40 ms | 12.50 ms | 48.54 ms | 2,445 | PASS |
+| `count ext:mp4` | 1.0 ms | 33.9 µs | n/a | 25 | PASS |
+| empty query, `-n 20` | 1.0 ms | 32.8 µs | 33.9 µs | 1,030,277 | PASS |
 
 ## CLI wall time
 
@@ -73,30 +73,43 @@ Each CLI invocation loads the database and formats results, so this column is th
 
 | Command | Target (engine) | Median wall | Min wall | Status |
 | --- | --- | --- | --- | --- |
-| `search 'ext:jpg'` | 1.0 ms | 242.0 ms | 235.8 ms | n/a (includes load) |
-| `search 'ext:jpg size:>1mb'` | 5.0 ms | 242.6 ms | 235.0 ms | n/a (includes load) |
-| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 215.4 ms | 213.1 ms | n/a (includes load) |
-| `search 'report'` | 20.0 ms | 241.3 ms | 237.3 ms | n/a (includes load) |
-| `search 'report pdf'` | 40.0 ms | 212.1 ms | 209.1 ms | n/a (includes load) |
-| `search '*.pdf'` | 120.0 ms | 317.1 ms | 315.5 ms | n/a (includes load) |
-| `search 'source map'` | 40.0 ms | 256.5 ms | 254.6 ms | n/a (includes load) |
-| `count 'ext:mp4'` | 1.0 ms | 250.1 ms | 239.2 ms | n/a (includes load) |
-| `search -n 20 ''` | 1.0 ms | 236.4 ms | 228.5 ms | n/a (includes load) |
+| `search 'ext:jpg'` | 1.0 ms | 226.3 ms | 225.4 ms | n/a (includes load) |
+| `search 'ext:jpg size:>1mb'` | 5.0 ms | 215.5 ms | 209.7 ms | n/a (includes load) |
+| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 202.6 ms | 198.8 ms | n/a (includes load) |
+| `search 'report'` | 20.0 ms | 241.7 ms | 219.9 ms | n/a (includes load) |
+| `search 'report pdf'` | 40.0 ms | 201.8 ms | 199.0 ms | n/a (includes load) |
+| `search '*.pdf'` | 120.0 ms | 301.7 ms | 300.2 ms | n/a (includes load) |
+| `search 'source map'` | 40.0 ms | 243.3 ms | 240.6 ms | n/a (includes load) |
+| `count 'ext:mp4'` | 1.0 ms | 216.9 ms | 211.4 ms | n/a (includes load) |
+| `search -n 20 ''` | 1.0 ms | 210.1 ms | 210.0 ms | n/a (includes load) |
 
 ## Index size
 
 | Section | Bytes |
 | --- | --- |
 | roots | 209 |
+| excludes | 4 |
 | names | 2,704,661 |
 | folders | 3,185,426 |
 | files | 24,351,288 |
 | order | 4,121,108 |
 | dict | 1,646,568 |
 | ranges | 50,577,557 |
+| parent-paths | 12,522,416 |
 | postings | 15,895,877 |
 | checksum | 8 |
 | **total** | **115,005,406** |
+
+RANGES breakdown (5 B field header + 12 B per `(value, id)` pair):
+
+| Field | Entries | Bytes |
+| --- | ---: | ---: |
+| size | 1,030,277 | 12,363,329 |
+| mtime | 1,030,277 | 12,363,329 |
+| depth | 1,030,277 | 12,363,329 |
+| childcount | 93,689 | 1,124,273 |
+| parent | 1,030,274 | 12,363,293 |
+| field count | — | 4 |
 
 Base (names + entry records): 28.8 MiB. Index extra: 80.8 MiB of the base (2.80×; plan budget 1.5×). Total / base: 3.80×.
 

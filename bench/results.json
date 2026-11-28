@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-11-28T07:00:16+00:00",
+  "generated_at": "2026-11-28T07:19:30+00:00",
   "label": "synthetic-1m",
   "roots": [
     "bench/.data/synthetic-1m"
   ],
-  "database": "bench/.work/synthetic-1m.msdb",
+  "database": "bench/.work/bench.msdb",
   "database_bytes": 110179928,
   "entries": 1030056,
   "info": {
-    "database": "bench/.work/synthetic-1m.msdb",
+    "database": "bench/.work/bench.msdb",
     "format": "MSDB 3.2",
-    "built": "1795849184",
+    "built": "1795850339",
     "roots": "1",
     "folders": "103006",
     "files": "927050",
@@ -34,11 +34,11 @@
     }
   },
   "build": {
-    "wall_s": 27.96,
-    "peak_rss_bytes": 714522624,
+    "wall_s": 28.37,
+    "peak_rss_bytes": 714424320,
     "stdout": "roots: 1\nfolders: 103006\nfiles: 927050\nbytes: 7870520001\n",
     "stats": {
-      "scan_ms": 25717,
+      "scan_ms": 26340,
       "database_bytes": 110179928,
       "names": 1030056,
       "name_bytes": 13807267,
@@ -56,11 +56,11 @@
     "memory": "51539607552",
     "os": "26.6.2",
     "moon": "moon 0.1.20261126 (ccd306a 2026-11-26)",
-    "commit": "9c58969-dirty"
+    "commit": "fb47a98"
   },
   "load_ms": {
-    "bitmap": 175.918834,
-    "scan": 172.685958
+    "bitmap": 183.21725,
+    "scan": 169.13754200000002
   },
   "engine_search": {
     "bitmap": [
@@ -68,65 +68,65 @@
         "engine": "bitmap",
         "matches": 927,
         "query": "ext:jpg",
-        "median_us": 39.440011705033164,
-        "mean_us": 40.529860944206014,
-        "min_us": 37.38737830667187,
-        "max_us": 46.25589481076863,
-        "batch_size": 2563,
+        "median_us": 36.202250265111346,
+        "mean_us": 36.255967847295864,
+        "min_us": 35.71088999646518,
+        "max_us": 37.14144270060092,
+        "batch_size": 2829,
         "runs": 5
       },
       {
         "engine": "bitmap",
         "matches": 3,
         "query": "ext:jpg size:>1mb",
-        "median_us": 66.5193638760712,
-        "mean_us": 66.4225237969677,
-        "min_us": 64.62779630850362,
-        "max_us": 68.72628015820699,
-        "batch_size": 1517,
+        "median_us": 66.40413493064312,
+        "mean_us": 68.71970047919294,
+        "min_us": 63.79199798234552,
+        "max_us": 74.80111916771753,
+        "batch_size": 1586,
         "runs": 5
       },
       {
         "engine": "bitmap",
         "matches": 0,
         "query": "ext:jpg size:>1mb dm:lastweek",
-        "median_us": 79.85456629392972,
-        "mean_us": 80.995066485623,
-        "min_us": 78.01342476038339,
-        "max_us": 86.32845479233227,
-        "batch_size": 1252,
+        "median_us": 76.84889805447472,
+        "mean_us": 77.88647215564202,
+        "min_us": 76.17911828793774,
+        "max_us": 81.2619646692607,
+        "batch_size": 1285,
         "runs": 5
       },
       {
         "engine": "bitmap",
         "matches": 30805,
         "query": "report",
-        "median_us": 2047.78666,
-        "mean_us": 2036.8613288000001,
-        "min_us": 2008.8386760000005,
-        "max_us": 2062.8979879999997,
-        "batch_size": 50,
+        "median_us": 1962.5719019607843,
+        "mean_us": 1962.5134690196078,
+        "min_us": 1950.4932980392157,
+        "max_us": 1970.1982039215686,
+        "batch_size": 51,
         "runs": 5
       },
       {
         "engine": "bitmap",
         "matches": 930,
         "query": "report pdf",
-        "median_us": 2177.975,
-        "mean_us": 2170.9207084444447,
-        "min_us": 2141.0562977777777,
-        "max_us": 2198.2842666666666,
-        "batch_size": 45,
+        "median_us": 2017.0475,
+        "mean_us": 2023.0717704000003,
+        "min_us": 2005.9766680000002,
+        "max_us": 2046.386344,
+        "batch_size": 50,
         "runs": 5
       },
       {
         "engine": "bitmap",
         "matches": 930,
         "query": "*.pdf",
-        "median_us": 75657.64600000001,
-        "mean_us": 75949.48244,
-        "min_us": 74513.0916,
-        "max_us": 77732.0081,
+        "median_us": 72713.14600000001,
+        "mean_us": 72851.16584,
+        "min_us": 72562.9627,
+        "max_us": 73264.3875,
         "batch_size": 2,
         "runs": 5
       },
@@ -134,10 +134,10 @@
         "engine": "bitmap",
         "matches": 2111,
         "query": "source map",
-        "median_us": 9820.121181818182,
-        "mean_us": 9900.282098181819,
-        "min_us": 9732.402981818183,
-        "max_us": 10247.50378181818,
+        "median_us": 9107.625,
+        "mean_us": 9163.031363636364,
+        "min_us": 9055.134854545455,
+        "max_us": 9381.499236363636,
         "batch_size": 11,
         "runs": 5
       }
@@ -147,10 +147,10 @@
         "engine": "scan",
         "matches": 927,
         "query": "ext:jpg",
-        "median_us": 41804.014,
-        "mean_us": 41778.48504,
-        "min_us": 41378.575066666664,
-        "max_us": 42229.83613333333,
+        "median_us": 41449.889,
+        "mean_us": 41360.00454666667,
+        "min_us": 40826.73353333333,
+        "max_us": 41728.0112,
         "batch_size": 3,
         "runs": 5
       },
@@ -158,21 +158,21 @@
         "engine": "scan",
         "matches": 3,
         "query": "ext:jpg size:>1mb",
-        "median_us": 49359.5625,
-        "mean_us": 49387.08762,
-        "min_us": 49325.4752,
-        "max_us": 49497.6294,
-        "batch_size": 2,
+        "median_us": 48559.375,
+        "mean_us": 48342.29054666667,
+        "min_us": 47985.894466666665,
+        "max_us": 48599.405600000006,
+        "batch_size": 3,
         "runs": 5
       },
       {
         "engine": "scan",
         "matches": 0,
         "query": "ext:jpg size:>1mb dm:lastweek",
-        "median_us": 57910.9375,
-        "mean_us": 58009.792460000004,
-        "min_us": 56878.1665,
-        "max_us": 59985.3793,
+        "median_us": 55656.5625,
+        "mean_us": 55715.74902,
+        "min_us": 55357.9039,
+        "max_us": 55988.987199999996,
         "batch_size": 2,
         "runs": 5
       },
@@ -180,10 +180,10 @@
         "engine": "scan",
         "matches": 30805,
         "query": "report",
-        "median_us": 44691.055666666674,
-        "mean_us": 44965.96225333334,
-        "min_us": 44587.961,
-        "max_us": 46033.57226666666,
+        "median_us": 43883.111000000004,
+        "mean_us": 43993.18889333333,
+        "min_us": 43579.50833333333,
+        "max_us": 44578.186133333336,
         "batch_size": 3,
         "runs": 5
       },
@@ -191,10 +191,10 @@
         "engine": "scan",
         "matches": 930,
         "query": "report pdf",
-        "median_us": 47623.222,
-        "mean_us": 47745.46216000001,
-        "min_us": 47243.05840000001,
-        "max_us": 48628.47506666667,
+        "median_us": 46410.666666666664,
+        "mean_us": 46386.10333333333,
+        "min_us": 46288.8888,
+        "max_us": 46493.75286666667,
         "batch_size": 3,
         "runs": 5
       },
@@ -202,10 +202,10 @@
         "engine": "scan",
         "matches": 930,
         "query": "*.pdf",
-        "median_us": 69450.02100000001,
-        "mean_us": 69471.6058,
-        "min_us": 69152.7249,
-        "max_us": 69981.8041,
+        "median_us": 67790.27100000001,
+        "mean_us": 67573.09744000001,
+        "min_us": 66903.0039,
+        "max_us": 68086.1708,
         "batch_size": 2,
         "runs": 5
       },
@@ -213,10 +213,10 @@
         "engine": "scan",
         "matches": 2111,
         "query": "source map",
-        "median_us": 47507.27766666667,
-        "mean_us": 47481.75665333333,
-        "min_us": 46921.225,
-        "max_us": 48053.84993333334,
+        "median_us": 46208.02766666667,
+        "mean_us": 46345.8522,
+        "min_us": 46007.07786666667,
+        "max_us": 46723.82213333333,
         "batch_size": 3,
         "runs": 5
       }
@@ -227,11 +227,11 @@
       "engine": "bitmap",
       "matches": 925,
       "query": "ext:mp4",
-      "median_us": 38.84820955882353,
-      "mean_us": 38.843298088235294,
-      "min_us": 37.54194575163399,
-      "max_us": 40.84715089869281,
-      "batch_size": 2448,
+      "median_us": 36.59897702799713,
+      "mean_us": 36.98606966259871,
+      "min_us": 35.92285556353195,
+      "max_us": 39.50629641062455,
+      "batch_size": 2786,
       "runs": 5
     }
   ],
@@ -240,11 +240,11 @@
       "engine": "bitmap",
       "matches": 1030056,
       "query": "",
-      "median_us": 37.145154848600995,
-      "mean_us": 37.24704421617478,
-      "min_us": 36.26793154465312,
-      "max_us": 38.15823089306247,
-      "batch_size": 2609,
+      "median_us": 36.38659475106137,
+      "mean_us": 39.14212277884986,
+      "min_us": 35.36132134311077,
+      "max_us": 43.952373600926286,
+      "batch_size": 2591,
       "runs": 5
     }
   ],
@@ -253,24 +253,24 @@
       "engine": "scan",
       "matches": 1030056,
       "query": "",
-      "median_us": 36.74767116422514,
-      "mean_us": 36.851362760215885,
-      "min_us": 36.390208249807245,
-      "max_us": 37.50734687740941,
-      "batch_size": 2594,
+      "median_us": 35.82136477313326,
+      "mean_us": 35.739343822793856,
+      "min_us": 35.45065201857806,
+      "max_us": 36.06643436941765,
+      "batch_size": 2799,
       "runs": 5
     }
   ],
   "cli": [
     {
       "samples_ms": [
-        205.953416,
-        209.882625,
-        215.077958
+        201.387375,
+        201.942417,
+        219.920458
       ],
-      "min_ms": 205.953416,
-      "median_ms": 209.882625,
-      "mean_ms": 210.30466633333333,
+      "min_ms": 201.387375,
+      "median_ms": 201.942417,
+      "mean_ms": 207.75008333333335,
       "kind": "search",
       "query": "ext:jpg",
       "target_ms": 1.0,
@@ -278,13 +278,13 @@
     },
     {
       "samples_ms": [
-        195.649625,
-        199.452333,
-        204.270167
+        190.793083,
+        192.152125,
+        195.010958
       ],
-      "min_ms": 195.649625,
-      "median_ms": 199.452333,
-      "mean_ms": 199.79070833333333,
+      "min_ms": 190.793083,
+      "median_ms": 192.152125,
+      "mean_ms": 192.65205533333332,
       "kind": "search",
       "query": "ext:jpg size:>1mb",
       "target_ms": 5.0,
@@ -292,13 +292,13 @@
     },
     {
       "samples_ms": [
-        184.099458,
-        185.138667,
-        185.337875
+        174.630209,
+        175.338416,
+        176.385875
       ],
-      "min_ms": 184.099458,
-      "median_ms": 185.138667,
-      "mean_ms": 184.85866666666666,
+      "min_ms": 174.630209,
+      "median_ms": 175.338416,
+      "mean_ms": 175.45149999999998,
       "kind": "search",
       "query": "ext:jpg size:>1mb dm:lastweek",
       "target_ms": 8.0,
@@ -306,13 +306,13 @@
     },
     {
       "samples_ms": [
-        217.44925,
-        218.665291,
-        220.191125
+        208.68025,
+        210.630375,
+        211.974541
       ],
-      "min_ms": 217.44925,
-      "median_ms": 218.665291,
-      "mean_ms": 218.76855533333332,
+      "min_ms": 208.68025,
+      "median_ms": 210.630375,
+      "mean_ms": 210.42838866666662,
       "kind": "search",
       "query": "report",
       "target_ms": 20.0,
@@ -320,13 +320,13 @@
     },
     {
       "samples_ms": [
-        211.306834,
-        212.999708,
-        213.733083
+        203.073083,
+        207.5975,
+        212.674542
       ],
-      "min_ms": 211.306834,
-      "median_ms": 212.999708,
-      "mean_ms": 212.679875,
+      "min_ms": 203.073083,
+      "median_ms": 207.5975,
+      "mean_ms": 207.7817083333333,
       "kind": "search",
       "query": "report pdf",
       "target_ms": 40.0,
@@ -334,13 +334,13 @@
     },
     {
       "samples_ms": [
-        286.496291,
-        292.690167,
-        294.861875
+        270.397916,
+        270.888833,
+        272.720583
       ],
-      "min_ms": 286.496291,
-      "median_ms": 292.690167,
-      "mean_ms": 291.34944433333334,
+      "min_ms": 270.397916,
+      "median_ms": 270.888833,
+      "mean_ms": 271.3357773333333,
       "kind": "search",
       "query": "*.pdf",
       "target_ms": 120.0,
@@ -348,13 +348,13 @@
     },
     {
       "samples_ms": [
-        222.827625,
-        227.1365,
-        227.94075
+        211.967042,
+        219.237375,
+        224.011125
       ],
-      "min_ms": 222.827625,
-      "median_ms": 227.1365,
-      "mean_ms": 225.9682916666667,
+      "min_ms": 211.967042,
+      "median_ms": 219.237375,
+      "mean_ms": 218.40518066666664,
       "kind": "search",
       "query": "source map",
       "target_ms": 40.0,
@@ -362,13 +362,13 @@
     },
     {
       "samples_ms": [
-        194.184291,
-        196.412583,
-        196.841833
+        187.530417,
+        191.151208,
+        193.980416
       ],
-      "min_ms": 194.184291,
-      "median_ms": 196.412583,
-      "mean_ms": 195.81290233333334,
+      "min_ms": 187.530417,
+      "median_ms": 191.151208,
+      "mean_ms": 190.887347,
       "kind": "count",
       "query": "ext:mp4",
       "target_ms": 1.0,
@@ -376,20 +376,20 @@
     },
     {
       "samples_ms": [
-        195.837209,
-        202.957125,
-        211.870375
+        187.536,
+        188.9835,
+        190.533584
       ],
-      "min_ms": 195.837209,
-      "median_ms": 202.957125,
-      "mean_ms": 203.554903,
+      "min_ms": 187.536,
+      "median_ms": 188.9835,
+      "mean_ms": 189.01769466666667,
       "kind": "first",
       "query": "",
       "target_ms": 1.0,
       "note": "empty query, -n 20"
     }
   ],
-  "query_rss_bytes": 348291072,
+  "query_rss_bytes": 348520448,
   "query_count": "30805",
   "extra_ratio": 2.8585557190273394
 }
