@@ -4,4 +4,6 @@ target/
 target
 .mooncakes/
 .moonagent/
-bench
+bench/.work/
+bench/.data/
+__pycache__/

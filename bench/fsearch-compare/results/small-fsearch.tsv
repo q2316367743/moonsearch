@@ -1,0 +1,9 @@
+META	fsearch	593	1679	23.941	1	1
+QUERY	fsearch		10	0.002	0.002	0.008	2272
+QUERY	fsearch	ext:mbt	10	0.055	0.050	0.060	402
+QUERY	fsearch	ext:json	10	0.055	0.049	0.075	40
+QUERY	fsearch	report	10	0.084	0.074	0.103	0
+QUERY	fsearch	*.md	10	0.088	0.081	0.107	43
+QUERY	fsearch	a	10	0.064	0.060	0.078	1307
+QUERY	fsearch	size:>1kb	10	0.042	0.042	0.046	1719
+QUERY	fsearch	dm:thisyear	10	0.040	0.039	0.062	2272

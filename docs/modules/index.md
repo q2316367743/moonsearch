@@ -337,8 +337,9 @@ Index::to_bytes:
   `name_index` 是名字表序号，加载时把名字按顺序追加到新 `NamePool` 并保存返回的
   `NameRef`，因此条目中的引用自然重建。
 - FOLDERS/FILES 按最终物理规范 id 写入，parent 与 ROOTS.folder 已回填；ORDER 直接写
-  `Store::entries_in_order` 的合并全局 id。恢复时校验它是排列及 `(name, path, GlobalId)`
-  顺序，然后交给 `Store::restore`；不再执行 `Store::new` 的规范排序。
+  `Store::entries_in_order` 的合并全局 id。恢复时普通加载校验它是排列、id 在范围内且
+  相邻名字非递减；完整的 `(name, path, GlobalId)` 顺序只在 `verify=true` 的深语义
+  校验中重算。之后交给 `Store::restore`，不再执行 `Store::new` 的规范排序。
 - `DICT` 的 `Ids` 值使用 `@ids.Ids::to_bytes`，每个值前带 `u32` 字节长度，读取器可以
   独立解码并拒绝尾随字节。
 - `RANGES` 始终包含五个核心字段；两个可选 child-count 字段只在选择时写入。加载器按

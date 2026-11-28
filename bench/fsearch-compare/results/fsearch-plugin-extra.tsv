@@ -1,0 +1,5 @@
+META	fsearch	25424	272171	7642.110	1	1
+QUERY	fsearch	dm:thisyear	5	7.334	6.286	7.872	297536
+QUERY	fsearch	dm:thismonth	5	6.440	5.110	7.565	16659
+QUERY	fsearch	size:>1000000	5	7.254	5.733	8.286	1552
+QUERY	fsearch	file:size:>1000	5	7.389	7.179	7.683	179570

@@ -1,51 +1,51 @@
 {
-  "generated_at": "2026-11-18T04:50:08+00:00",
-  "label": "workspace-1m",
+  "generated_at": "2026-11-28T07:00:16+00:00",
+  "label": "synthetic-1m",
   "roots": [
-    "~/Documents/workspace/app",
-    "~/Documents/workspace/dashou-plugin",
-    "~/Documents/workspace/plugin"
+    "bench/.data/synthetic-1m"
   ],
-  "database": "/tmp/moonsearch-bench/subset.msdb",
-  "database_bytes": 90950983,
-  "entries": 1219537,
+  "database": "bench/.work/synthetic-1m.msdb",
+  "database_bytes": 110179928,
+  "entries": 1030056,
   "info": {
-    "database": "/tmp/moonsearch-bench/subset.msdb",
-    "format": "MSDB 2.0",
-    "built": "1794976945",
-    "roots": "3",
-    "folders": "113665",
-    "files": "1105872",
-    "names": "169415",
-    "size": "90950983 bytes",
-    "trigram": "41567 keys",
+    "database": "bench/.work/synthetic-1m.msdb",
+    "format": "MSDB 3.2",
+    "built": "1795849184",
+    "roots": "1",
+    "folders": "103006",
+    "files": "927050",
+    "names": "145930",
+    "size": "110179928 bytes",
+    "trigram": "872 keys",
     "checksum": "metadata",
-    "sections": "roots=209 names=2592055 folders=3864610 files=28752672 order=4878148 dict=1730103 ranges=29268902 postings=19864032 checksum=8",
+    "sections": "roots=111 excludes=4 names=949203 folders=3502204 files=24103300 order=4120224 dict=1495802 ranges=50678777 parent-paths=13439312 postings=11890699 checksum=8",
     "section_bytes": {
-      "roots": 209,
-      "names": 2592055,
-      "folders": 3864610,
-      "files": 28752672,
-      "order": 4878148,
-      "dict": 1730103,
-      "ranges": 29268902,
-      "postings": 19864032,
+      "roots": 111,
+      "excludes": 4,
+      "names": 949203,
+      "folders": 3502204,
+      "files": 24103300,
+      "order": 4120224,
+      "dict": 1495802,
+      "ranges": 50678777,
+      "parent-paths": 13439312,
+      "postings": 11890699,
       "checksum": 8
     }
   },
   "build": {
-    "wall_s": 75.36,
-    "peak_rss_bytes": 814055424,
-    "stdout": "roots: 3\nfolders: 113665\nfiles: 1105872\nbytes: 19638658431\n",
+    "wall_s": 27.96,
+    "peak_rss_bytes": 714522624,
+    "stdout": "roots: 1\nfolders: 103006\nfiles: 927050\nbytes: 7870520001\n",
     "stats": {
-      "scan_ms": 73937,
-      "database_bytes": 90950983,
-      "names": 1219537,
-      "name_bytes": 19157482,
-      "extensions": 220,
-      "hidden": 4813,
-      "ranges": "size=1219537 mtime=1219537",
-      "trigram": "41567 keys, 16634757 postings, 7786 short names, 4 stop-grams, 66539028 B"
+      "scan_ms": 25717,
+      "database_bytes": 110179928,
+      "names": 1030056,
+      "name_bytes": 13807267,
+      "extensions": 11,
+      "hidden": 916,
+      "ranges": "size=1030056 mtime=1030056 depth=1030056 childcount=103006 parent=1030055",
+      "trigram": "872 keys, 11745410 postings, 0 short names, 2 stop-grams, 46981640 B"
     }
   },
   "machine": {
@@ -55,169 +55,169 @@
     "cpu": "Apple M4 Pro",
     "memory": "51539607552",
     "os": "26.6.2",
-    "moon": "moon 0.1.20261104 (940aa18 2026-11-04) Feature flags enabled: rr_moon_mod,rr_moon_pkg",
-    "commit": "f9ff66f-dirty"
+    "moon": "moon 0.1.20261126 (ccd306a 2026-11-26)",
+    "commit": "9c58969-dirty"
   },
   "load_ms": {
-    "bitmap": 1135.690708,
-    "scan": 1150.698167
+    "bitmap": 175.918834,
+    "scan": 172.685958
   },
   "engine_search": {
     "bitmap": [
       {
         "engine": "bitmap",
-        "matches": 99,
+        "matches": 927,
         "query": "ext:jpg",
-        "median_us": 34.14665380116959,
-        "mean_us": 34.7794023079922,
-        "min_us": 33.505604444444444,
-        "max_us": 37.412394230019494,
-        "batch_size": 2565,
+        "median_us": 39.440011705033164,
+        "mean_us": 40.529860944206014,
+        "min_us": 37.38737830667187,
+        "max_us": 46.25589481076863,
+        "batch_size": 2563,
         "runs": 5
       },
       {
         "engine": "bitmap",
-        "matches": 2,
+        "matches": 3,
         "query": "ext:jpg size:>1mb",
-        "median_us": 309.1647570422535,
-        "mean_us": 311.3116361971831,
-        "min_us": 307.53277394366194,
-        "max_us": 316.26000563380285,
-        "batch_size": 284,
+        "median_us": 66.5193638760712,
+        "mean_us": 66.4225237969677,
+        "min_us": 64.62779630850362,
+        "max_us": 68.72628015820699,
+        "batch_size": 1517,
         "runs": 5
       },
       {
         "engine": "bitmap",
         "matches": 0,
         "query": "ext:jpg size:>1mb dm:lastweek",
-        "median_us": 4411.1105217391305,
-        "mean_us": 4413.446733913044,
-        "min_us": 4386.116295652174,
-        "max_us": 4454.753243478261,
-        "batch_size": 23,
+        "median_us": 79.85456629392972,
+        "mean_us": 80.995066485623,
+        "min_us": 78.01342476038339,
+        "max_us": 86.32845479233227,
+        "batch_size": 1252,
         "runs": 5
       },
       {
         "engine": "bitmap",
-        "matches": 726,
+        "matches": 30805,
         "query": "report",
-        "median_us": 76.62700228832952,
-        "mean_us": 78.41766053394355,
-        "min_us": 76.38575469107552,
-        "max_us": 84.9043664378337,
-        "batch_size": 1311,
+        "median_us": 2047.78666,
+        "mean_us": 2036.8613288000001,
+        "min_us": 2008.8386760000005,
+        "max_us": 2062.8979879999997,
+        "batch_size": 50,
         "runs": 5
       },
       {
         "engine": "bitmap",
-        "matches": 0,
+        "matches": 930,
         "query": "report pdf",
-        "median_us": 183.34319449541283,
-        "mean_us": 185.84885893577982,
-        "min_us": 181.60301174311925,
-        "max_us": 196.80665174311926,
-        "batch_size": 545,
+        "median_us": 2177.975,
+        "mean_us": 2170.9207084444447,
+        "min_us": 2141.0562977777777,
+        "max_us": 2198.2842666666666,
+        "batch_size": 45,
         "runs": 5
       },
       {
         "engine": "bitmap",
-        "matches": 6,
+        "matches": 930,
         "query": "*.pdf",
-        "median_us": 72292.8125,
-        "mean_us": 72842.0825,
-        "min_us": 71968.45420000001,
-        "max_us": 75129.0208,
+        "median_us": 75657.64600000001,
+        "mean_us": 75949.48244,
+        "min_us": 74513.0916,
+        "max_us": 77732.0081,
         "batch_size": 2,
         "runs": 5
       },
       {
         "engine": "bitmap",
-        "matches": 2941,
+        "matches": 2111,
         "query": "source map",
-        "median_us": 16236.57142857143,
-        "mean_us": 16297.975245714286,
-        "min_us": 16211.280942857144,
-        "max_us": 16426.702428571432,
-        "batch_size": 7,
+        "median_us": 9820.121181818182,
+        "mean_us": 9900.282098181819,
+        "min_us": 9732.402981818183,
+        "max_us": 10247.50378181818,
+        "batch_size": 11,
         "runs": 5
       }
     ],
     "scan": [
       {
         "engine": "scan",
-        "matches": 99,
+        "matches": 927,
         "query": "ext:jpg",
-        "median_us": 46243.861333333334,
-        "mean_us": 46249.316640000005,
-        "min_us": 45928.436,
-        "max_us": 46507.8972,
+        "median_us": 41804.014,
+        "mean_us": 41778.48504,
+        "min_us": 41378.575066666664,
+        "max_us": 42229.83613333333,
         "batch_size": 3,
         "runs": 5
       },
       {
         "engine": "scan",
-        "matches": 2,
+        "matches": 3,
         "query": "ext:jpg size:>1mb",
-        "median_us": 48879,
-        "mean_us": 49298.316666666666,
-        "min_us": 47952.18326666667,
-        "max_us": 52197.8584,
-        "batch_size": 3,
+        "median_us": 49359.5625,
+        "mean_us": 49387.08762,
+        "min_us": 49325.4752,
+        "max_us": 49497.6294,
+        "batch_size": 2,
         "runs": 5
       },
       {
         "engine": "scan",
         "matches": 0,
         "query": "ext:jpg size:>1mb dm:lastweek",
-        "median_us": 54107.9585,
-        "mean_us": 53996.708380000004,
-        "min_us": 53641.2627,
-        "max_us": 54281.279200000004,
+        "median_us": 57910.9375,
+        "mean_us": 58009.792460000004,
+        "min_us": 56878.1665,
+        "max_us": 59985.3793,
         "batch_size": 2,
         "runs": 5
       },
       {
         "engine": "scan",
-        "matches": 726,
+        "matches": 30805,
         "query": "report",
-        "median_us": 65133.75,
-        "mean_us": 65330.54504,
-        "min_us": 64994.8792,
-        "max_us": 66148.075,
-        "batch_size": 2,
+        "median_us": 44691.055666666674,
+        "mean_us": 44965.96225333334,
+        "min_us": 44587.961,
+        "max_us": 46033.57226666666,
+        "batch_size": 3,
         "runs": 5
       },
       {
         "engine": "scan",
-        "matches": 0,
+        "matches": 930,
         "query": "report pdf",
-        "median_us": 68923.9795,
-        "mean_us": 69111.73766000001,
-        "min_us": 68698.5043,
-        "max_us": 70072.18350000001,
-        "batch_size": 2,
+        "median_us": 47623.222,
+        "mean_us": 47745.46216000001,
+        "min_us": 47243.05840000001,
+        "max_us": 48628.47506666667,
+        "batch_size": 3,
         "runs": 5
       },
       {
         "engine": "scan",
-        "matches": 6,
+        "matches": 930,
         "query": "*.pdf",
-        "median_us": 92672.104,
-        "mean_us": 93481.38732000001,
-        "min_us": 91715.983,
-        "max_us": 97733.5581,
+        "median_us": 69450.02100000001,
+        "mean_us": 69471.6058,
+        "min_us": 69152.7249,
+        "max_us": 69981.8041,
         "batch_size": 2,
         "runs": 5
       },
       {
         "engine": "scan",
-        "matches": 2941,
+        "matches": 2111,
         "query": "source map",
-        "median_us": 70926.60399999999,
-        "mean_us": 70346.12087999999,
-        "min_us": 67569.1498,
-        "max_us": 73244.4336,
-        "batch_size": 2,
+        "median_us": 47507.27766666667,
+        "mean_us": 47481.75665333333,
+        "min_us": 46921.225,
+        "max_us": 48053.84993333334,
+        "batch_size": 3,
         "runs": 5
       }
     ]
@@ -225,52 +225,52 @@
   "engine_count": [
     {
       "engine": "bitmap",
-      "matches": 5,
+      "matches": 925,
       "query": "ext:mp4",
-      "median_us": 34.02921423774345,
-      "mean_us": 34.03026748153123,
-      "min_us": 33.904712290127605,
-      "max_us": 34.156450167897916,
-      "batch_size": 2978,
+      "median_us": 38.84820955882353,
+      "mean_us": 38.843298088235294,
+      "min_us": 37.54194575163399,
+      "max_us": 40.84715089869281,
+      "batch_size": 2448,
       "runs": 5
     }
   ],
   "engine_first": [
     {
       "engine": "bitmap",
-      "matches": 1219537,
+      "matches": 1030056,
       "query": "",
-      "median_us": 33.44016587677725,
-      "mean_us": 33.4549469465132,
-      "min_us": 33.134114759647936,
-      "max_us": 33.95814163845633,
-      "batch_size": 2954,
+      "median_us": 37.145154848600995,
+      "mean_us": 37.24704421617478,
+      "min_us": 36.26793154465312,
+      "max_us": 38.15823089306247,
+      "batch_size": 2609,
       "runs": 5
     }
   ],
   "engine_scan_first": [
     {
       "engine": "scan",
-      "matches": 1219537,
+      "matches": 1030056,
       "query": "",
-      "median_us": 33.831059952846076,
-      "mean_us": 33.676493836308524,
-      "min_us": 33.11134503199731,
-      "max_us": 34.03835756146851,
-      "batch_size": 2969,
+      "median_us": 36.74767116422514,
+      "mean_us": 36.851362760215885,
+      "min_us": 36.390208249807245,
+      "max_us": 37.50734687740941,
+      "batch_size": 2594,
       "runs": 5
     }
   ],
   "cli": [
     {
       "samples_ms": [
-        1154.31825,
-        1162.4345,
-        1164.97275
+        205.953416,
+        209.882625,
+        215.077958
       ],
-      "min_ms": 1154.31825,
-      "median_ms": 1162.4345,
-      "mean_ms": 1160.5751666666667,
+      "min_ms": 205.953416,
+      "median_ms": 209.882625,
+      "mean_ms": 210.30466633333333,
       "kind": "search",
       "query": "ext:jpg",
       "target_ms": 1.0,
@@ -278,13 +278,13 @@
     },
     {
       "samples_ms": [
-        1155.475875,
-        1157.205666,
-        1187.679166
+        195.649625,
+        199.452333,
+        204.270167
       ],
-      "min_ms": 1155.475875,
-      "median_ms": 1157.205666,
-      "mean_ms": 1166.7869023333333,
+      "min_ms": 195.649625,
+      "median_ms": 199.452333,
+      "mean_ms": 199.79070833333333,
       "kind": "search",
       "query": "ext:jpg size:>1mb",
       "target_ms": 5.0,
@@ -292,13 +292,13 @@
     },
     {
       "samples_ms": [
-        1150.811292,
-        1153.503708,
-        1159.2365
+        184.099458,
+        185.138667,
+        185.337875
       ],
-      "min_ms": 1150.811292,
-      "median_ms": 1153.503708,
-      "mean_ms": 1154.5171666666668,
+      "min_ms": 184.099458,
+      "median_ms": 185.138667,
+      "mean_ms": 184.85866666666666,
       "kind": "search",
       "query": "ext:jpg size:>1mb dm:lastweek",
       "target_ms": 8.0,
@@ -306,13 +306,13 @@
     },
     {
       "samples_ms": [
-        1197.399084,
-        1199.832167,
-        1329.633834
+        217.44925,
+        218.665291,
+        220.191125
       ],
-      "min_ms": 1197.399084,
-      "median_ms": 1199.832167,
-      "mean_ms": 1242.2883616666668,
+      "min_ms": 217.44925,
+      "median_ms": 218.665291,
+      "mean_ms": 218.76855533333332,
       "kind": "search",
       "query": "report",
       "target_ms": 20.0,
@@ -320,13 +320,13 @@
     },
     {
       "samples_ms": [
-        1078.170625,
-        1112.527459,
-        1116.884417
+        211.306834,
+        212.999708,
+        213.733083
       ],
-      "min_ms": 1078.170625,
-      "median_ms": 1112.527459,
-      "mean_ms": 1102.5275003333334,
+      "min_ms": 211.306834,
+      "median_ms": 212.999708,
+      "mean_ms": 212.679875,
       "kind": "search",
       "query": "report pdf",
       "target_ms": 40.0,
@@ -334,13 +334,13 @@
     },
     {
       "samples_ms": [
-        1157.537917,
-        1162.092292,
-        1174.92225
+        286.496291,
+        292.690167,
+        294.861875
       ],
-      "min_ms": 1157.537917,
-      "median_ms": 1162.092292,
-      "mean_ms": 1164.8508196666667,
+      "min_ms": 286.496291,
+      "median_ms": 292.690167,
+      "mean_ms": 291.34944433333334,
       "kind": "search",
       "query": "*.pdf",
       "target_ms": 120.0,
@@ -348,13 +348,13 @@
     },
     {
       "samples_ms": [
-        1123.284417,
-        1124.203958,
-        1149.546208
+        222.827625,
+        227.1365,
+        227.94075
       ],
-      "min_ms": 1123.284417,
-      "median_ms": 1124.203958,
-      "mean_ms": 1132.3448609999998,
+      "min_ms": 222.827625,
+      "median_ms": 227.1365,
+      "mean_ms": 225.9682916666667,
       "kind": "search",
       "query": "source map",
       "target_ms": 40.0,
@@ -362,13 +362,13 @@
     },
     {
       "samples_ms": [
-        1073.634625,
-        1096.10725,
-        1099.880208
+        194.184291,
+        196.412583,
+        196.841833
       ],
-      "min_ms": 1073.634625,
-      "median_ms": 1096.10725,
-      "mean_ms": 1089.8740276666665,
+      "min_ms": 194.184291,
+      "median_ms": 196.412583,
+      "mean_ms": 195.81290233333334,
       "kind": "count",
       "query": "ext:mp4",
       "target_ms": 1.0,
@@ -376,20 +376,20 @@
     },
     {
       "samples_ms": [
-        1082.5765,
-        1085.831208,
-        1091.189625
+        195.837209,
+        202.957125,
+        211.870375
       ],
-      "min_ms": 1082.5765,
-      "median_ms": 1085.831208,
-      "mean_ms": 1086.5324443333332,
+      "min_ms": 195.837209,
+      "median_ms": 202.957125,
+      "mean_ms": 203.554903,
       "kind": "first",
       "query": "",
       "target_ms": 1.0,
       "note": "empty query, -n 20"
     }
   ],
-  "query_rss_bytes": 379518976,
-  "query_count": "726",
-  "extra_ratio": 1.5831495492232643
+  "query_rss_bytes": 348291072,
+  "query_count": "30805",
+  "extra_ratio": 2.8585557190273394
 }

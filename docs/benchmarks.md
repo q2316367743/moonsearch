@@ -1,13 +1,17 @@
-# 基准测试与调优记录（S14）
+# 基准测试与调优记录（S12）
 
-本文说明 `moonsearch` 的基准口径、复现方式、实测结果和后续调优清单。原始报告由
-`bench/run_bench.py` 生成：
+本文说明 `moonsearch` 的基准口径、复现方式、实测结果和后续调优清单。S12 起主口径改为
+可由干净克隆重建的确定性合成数据集；私有工作树只作为补充快照，不再作为验收依据。
 
-- `bench/results.md` / `bench/results.json`：主数据集，1,219,537 条目。
-- `bench/results-full-tree.md` / `bench/results-full-tree.json`：全量压力数据集，
-  2,362,503 条目。
-- `bench/fsearch-compare/results-plugin.md`：与 FSearch core library 的同条件
-  对照，297,595 条目（见 §6）。
+原始报告由 `bench/run_bench.py` 生成：
+
+- `bench/results.md` / `bench/results.json`：**主口径**，`synthetic-1m`，
+  1,030,056 条目。
+- `bench/results-private.md` / `bench/results-private.json`：**补充口径**，私有三根
+  快照，1,030,277 条目；无法由干净克隆重建。
+- `bench/fsearch-compare/results-synthetic-300k.md`：可复现的 FSearch 同条件对照，
+  300,000 条目。
+- `bench/fsearch-compare/results-plugin.md`：2026-11-18 的私有历史快照，仅作参考。
 
 ## 1. 测量口径
 
@@ -16,38 +20,62 @@
 | 建索引 | `index --stats` + `/usr/bin/time -l` | 扫描、构建 `Store`、字典/范围/posting、原子写库的总墙钟；RSS 为进程峰值 |
 | 数据库加载 | `moonsearch-bench` | `Index::read_database` 单次调用的墙钟，不含查询 |
 | 引擎延迟 | `moonsearch-bench` | 一次加载后，对 `exec_indexed` / `exec_scan_with` 采样；包含查询编译，与 CLI 每次调用一致。`moonbitlang/core/bench` 用原生单调时钟，批量到约 100 ms，取中位数 |
-| CLI 墙钟 | `bench/run_bench.py` | 正常可执行文件的一次完整调用：解析参数、加载数据库、执行、格式化、退出 |
+| CLI 墙钟 | `bench/run_bench.py` | 正常可执行文件的一次完整调用：解析参数、加载数据库、执行、格式化、退出；一次热身后的 3 次中位数 |
 | 查询态 RSS | `/usr/bin/time -l` | 一次 `count --engine bitmap report` 的进程峰值 |
-| 索引体积 | `info` | 各 section 的字节数；基础体积 = NAMES + FOLDERS + FILES |
+| 索引体积 | `info` | 各 section 的字节数；基础体积分别按“序列化 NAMES”和“原始 NamePool”两种口径计算，见 §3.4 |
 
 引擎延迟与 CLI 墙钟刻意分开：前者回答“索引结构本身多快”，后者回答“用户敲一次命令
 等多久”。当前 CLI 每次调用都要重新加载数据库，所以 CLI 墙钟由加载时间主导。
 
-环境：Apple M4 Pro、48 GiB、macOS 26.6.2、MoonBit `0.1.20261104`、release 构建。
-查询延迟取多次样本的中位数；建索引与数据库加载是单次运行的墙钟。`--stats` 的毫秒值是粗粒度参考。
+**冷/热缓存。** 本文所有加载与查询数字都是**热页缓存**：数据库刚由建索引写出或刚被
+基准进程读过，没有执行 `purge`/`drop_caches`。因此它们不代表冷盘首次读取；冷启动可能
+更慢。建索引本身是对目录树的一次性扫描，文件元数据是否在缓存中取决于运行前的系统状态，
+本文没有单独控制。没有测量冷缓存数字，也不把热缓存数字说成冷启动。
+
+**单次/中位数。** 建索引和数据库加载是单次墙钟；引擎延迟是进程内 5 次采样的中位数；
+CLI 是 3 次采样的中位数；RSS 是单次峰值。
+
+**环境。** Apple M4 Pro、48 GiB、macOS 26.6.2、MoonBit `0.1.20261126 (ccd306a
+2026-11-26)`、release 构建。测量时机器 load average 为 12.86 / 27.60 / 54.04
+（1/5/15 分钟，2026-11-28 15:10），明显高于空闲状态；绝对延迟因此偏保守。所有比较
+使用同一时段内的中位数，但跨日比较仍应在空闲机器上重跑。测量提交见
+`bench/results.json` 的 `machine.commit` 字段。
 
 ## 2. 复现
 
+主基准完全由仓库内脚本生成，不读取用户目录：
+
 ```bash
+# 1. 生成确定性数据集：1,030,056 条目，稀疏文件，固定 mtime
+python3 bench/gen_dataset.py --dir bench/.data/synthetic-1m --entries 1030056 \
+  --reference-time 2026-11-28T00:00:00Z \
+  --manifest-json bench/.data/synthetic-1m.manifest.json
+
+# 2. 构建 release 二进制并跑 12 项基准
 moon build --target native --release
+python3 bench/run_bench.py --label synthetic-1m \
+  --root bench/.data/synthetic-1m --rebuild-index
 
-# 主数据集：workspace 下的三棵子树
-python3 bench/run_bench.py \
-  --label workspace-1m \
-  --root ~/Documents/workspace/app \
-  --root ~/Documents/workspace/dashou-plugin \
-  --root ~/Documents/workspace/plugin \
-  --rebuild-index
-
-# 全量：整个 workspace
-python3 bench/run_bench.py --label workspace-2.36m \
-  --root ~/Documents/workspace --rebuild-index
+# 3. 随时重新计算 manifest（不生成文件）
+python3 bench/gen_dataset.py --manifest-only --dir bench/.data/synthetic-1m
 ```
+
+生成器对固定 `--reference-time` 是确定性的：名字、扩展名、大小和相对 mtime 都由条目
+序号推导，不使用随机数；文件是稀疏文件，不写内容。主数据集 manifest：
+
+```text
+entries              1,030,056 (103,006 folders + 927,050 files)
+total_file_bytes     7,870,520,001
+manifest_sha256      d907e16671e4547db803a128098df08f28c139e56c776e7a19d69c46aaed6c81
+manifest_fields      relative_path, type, size, mtime_seconds
+```
+
+`bench/.data/` 与 `bench/.work/` 在 `.gitignore` 中，生成物不提交；脚本、manifest
+命令和哈希提交。FSearch 对照的生成与运行命令见 §6 和
+`bench/fsearch-compare/README.md`。
 
 `run_bench.py` 在数据库缺失或传入 `--rebuild-index` 时先建索引，并把建索引的时间、
 RSS 和 `--stats` 摘要写进 `<work-dir>/<label>-index.json`；复用数据库时读取该文件。
-输出路径由 `--output` / `--json-output` 指定，默认 `bench/results.md` 与
-`bench/results.json`。
 
 `moonsearch-bench` 也可以单独使用：
 
@@ -61,124 +89,222 @@ moon run cmd/moonsearch-bench -- --database DB --engine bitmap --first 20 ''
 它每次输出一行 `LOAD` 和若干行 `BENCH`（TSV，最后一列是核心库的 JSON 摘要），不
 打印命中路径，因此适合脚本和录屏之外的精确测量。
 
-## 3. 主数据集（1,219,537 条目）
+## 3. 主口径：确定性合成数据集（1,030,056 条目）
 
-数据：`~/Documents/workspace/{app,dashou-plugin,plugin}`，113,665 个文件夹、
-1,105,872 个文件、169,415 个不同名字；数据库 86.7 MiB。
+数据：103,006 个文件夹、927,050 个文件、145,930 个不同名字；数据库 105.1 MiB
+（110,179,928 字节）。构建参数与 manifest 见 §2。
 
-### 3.1 建索引与加载
+### 3.1 十二项验收目标
 
-| 指标 | 目标（1M） | 实测 | 结论 |
-| --- | --- | --- | --- |
-| 扫描 + 构建 + 写库 | < 90 s | 75.4 s | 达标（按条目数线性折算目标 109.8 s） |
-| 建索引峰值 RSS | 信息项 | 776.3 MiB | 含构建期 trigram 哈希表 |
-| 数据库加载 | < 800 ms | 1136 ms | 未达标，按 1M 折算约 0.93 s |
-| 查询态 RSS | < 400 MB | 361.9 MiB | 达标 |
-| 索引额外体积 | < 1.5× 基础 | 1.58× | 略超 |
+目标来自 `MIGRATION_PLAN.md` §10.1，建索引/加载/RSS 按条目数线性折算
+（1,030,056 / 1,000,000 = 1.030056）。
 
-`--stats` 细节：`scan: 73937 ms`，`database: 90,950,983 bytes`，
-`names: 1,219,537 names, 19,157,482 bytes`，
-`trigram: 41,567 keys, 16,634,757 postings, 7,786 short names, 4 stop-grams, 66,539,028 B`。
+| # | 项目 | 目标（1M） | 折算目标 | 实测 | 结论 |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 1 | 扫描 + 建索引 | < 90 s | 92.7 s | 28.0 s | 达标 |
+| 2 | 数据库加载 | < 800 ms | 824 ms | 176 ms | 达标 |
+| 3 | `ext:jpg` bitmap | < 1 ms | — | 39.4 µs | 达标 |
+| 4 | `ext:jpg size:>1mb` | < 5 ms | — | 66.5 µs | 达标 |
+| 5 | `ext:jpg size:>1mb dm:lastweek` | < 8 ms | — | 79.9 µs | 达标 |
+| 6 | `report` | < 20 ms | — | 2.05 ms | 达标 |
+| 7 | `report pdf` | < 40 ms | — | 2.18 ms | 达标 |
+| 8 | `*.pdf`（glob） | < 120 ms | — | 75.66 ms | 达标 |
+| 9 | `count ext:mp4` | < 1 ms | — | 38.8 µs | 达标 |
+| 10 | 空查询 + `-n 20` | < 1 ms | — | 37.1 µs | 达标 |
+| 11 | 索引额外体积 | < 1.5× | — | 2.86× / 1.66× | **未达标** |
+| 12 | 查询态常驻内存 | < 400 MB | 412 MiB | 332.2 MiB | 达标 |
+
+第 11 项的两个数字分别是“序列化 NAMES”与“原始 NamePool”口径，定义、拆分和后续计划
+见 §3.4。其余 11 项在主口径上达标。
 
 ### 3.2 引擎延迟
 
+`moonsearch-bench` 一次加载后采样，包含查询编译。中位数：
+
 | 查询 | 目标 | bitmap 中位数 | scan 中位数 | 命中 | 结论 |
-| --- | --- | --- | --- | --- | --- |
-| `ext:jpg` | < 1 ms | 34.1 µs | 46.24 ms | 99 | 达标（约 1356×） |
-| `ext:jpg size:>1mb` | < 5 ms | 309.2 µs | 48.88 ms | 2 | 达标（约 158×） |
-| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 4.41 ms | 54.11 ms | 0 | 达标（约 12×） |
-| `report` | < 20 ms | 76.6 µs | 65.13 ms | 726 | 达标（约 850×） |
-| `report pdf` | < 40 ms | 183.3 µs | 68.92 ms | 0 | 达标（约 376×） |
-| `*.pdf`（纯 glob） | < 120 ms | 72.29 ms | 92.67 ms | 6 | 达标；无索引可用，仅谓词下推 |
-| `source map`（两组常见 trigram） | < 40 ms | 16.24 ms | 70.93 ms | 2,941 | 达标（约 4.4×） |
-| `count ext:mp4` | < 1 ms | 34.0 µs | — | 5 | 达标 |
-| 空查询 + `-n 20` | < 1 ms | 33.4 µs | 33.8 µs | 1,219,537 | 达标；规范化顺序提前停止 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `ext:jpg` | < 1 ms | 39.4 µs | 41.80 ms | 927 | 达标 |
+| `ext:jpg size:>1mb` | < 5 ms | 66.5 µs | 49.36 ms | 3 | 达标 |
+| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 79.9 µs | 57.91 ms | 0 | 达标 |
+| `report` | < 20 ms | 2.05 ms | 44.69 ms | 30,805 | 达标 |
+| `report pdf` | < 40 ms | 2.18 ms | 47.62 ms | 930 | 达标 |
+| `*.pdf` | < 120 ms | 75.66 ms | 69.45 ms | 930 | 达标 |
+| `source map` | < 40 ms | 9.82 ms | 47.51 ms | 2,111 | 达标 |
+| `count ext:mp4` | < 1 ms | 38.8 µs | — | 925 | 达标 |
+| 空查询 + `-n 20` | < 1 ms | 37.1 µs | 36.7 µs | 1,030,056 | 达标 |
 
-### 3.3 索引体积
+### 3.3 CLI 墙钟
 
-| Section | 字节 |
-| --- | --- |
-| names | 2,592,055 |
-| folders | 3,864,610 |
-| files | 28,752,672 |
-| order | 4,878,148 |
-| dict | 1,730,103 |
-| ranges | 29,268,902 |
-| postings | 19,864,032 |
-| roots + checksum | 217 |
-| **total** | **90,950,983** |
+每次 CLI 调用都重新加载数据库，因此这一列是用户可见成本，不是 §3.2 的引擎成本。
+一次热身后的 3 次中位数：
 
-基础体积（names + folders + files）33.6 MiB；额外 53.2 MiB，即 1.58×。`ranges`
-（size + mtime 两个字段）和 `postings` 是主要增量。
+| 命令 | 引擎目标 | 中位墙钟 | 最小墙钟 |
+| --- | ---: | ---: | ---: |
+| `search 'ext:jpg'` | 1.0 ms | 209.9 ms | 206.0 ms |
+| `search 'ext:jpg size:>1mb'` | 5.0 ms | 199.5 ms | 195.6 ms |
+| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 185.1 ms | 184.1 ms |
+| `search 'report'` | 20.0 ms | 218.7 ms | 217.4 ms |
+| `search 'report pdf'` | 40.0 ms | 213.0 ms | 211.3 ms |
+| `search '*.pdf'` | 120.0 ms | 292.7 ms | 286.5 ms |
+| `search 'source map'` | 40.0 ms | 227.1 ms | 222.8 ms |
+| `count 'ext:mp4'` | 1.0 ms | 196.4 ms | 194.2 ms |
+| `search -n 20 ''` | 1.0 ms | 203.0 ms | 195.8 ms |
 
-### 3.4 CLI 墙钟
+CLI 墙钟由约 176 ms 的数据库加载主导；引擎本身是几十微秒到几十毫秒。交互式反复查询的
+瓶颈在加载，不在查询算子。
 
-| 命令 | 中位数 |
-| --- | --- |
-| `search --engine bitmap 'ext:jpg'` | 1162 ms |
-| `search --engine bitmap 'report'` | 1200 ms |
-| `count --engine bitmap 'ext:mp4'` | 1096 ms |
-| `search --engine bitmap -n 20 ''` | 1086 ms |
+### 3.4 索引体积：两种口径
 
-引擎本身只需几十微秒到几十毫秒，CLI 墙钟几乎全部是 1.1 s 左右的数据库加载。这是
-当前交互体验的主要瓶颈，调优优先级高于查询算子。
+第 11 项目标写作“< 1.5× 名字池+条目”。这个分母有两种合理解释，S12 同时报告：
 
-## 4. 全量压力数据集（2,362,503 条目）
+| 口径 | 基础体积（分母） | 额外体积（分子） | 倍数 | 结论 |
+| --- | ---: | ---: | ---: | --- |
+| 序列化 NAMES | 28,554,707 B（NAMES + FOLDERS + FILES） | 81,625,221 B | **2.86×** | 未达标 |
+| 原始 NamePool | 41,412,771 B（`name_bytes` + FOLDERS + FILES） | 68,767,157 B | **1.66×** | 未达标 |
 
-整个 `~/Documents/workspace`（含各项目的 `node_modules`、`_build` 等构建产物）：230,946 个文件夹、2,131,557 个文件、166.0 MiB 数据库。
+- 序列化口径对应数据库里实际写出的 NAMES 段（前向编码后 949,203 B），是
+  `bench/run_bench.py` 的 base 定义。
+- 原始口径使用 `index --stats` 报出的 `name_bytes`（13,807,267 B，即名字原始字节
+  总和），更接近“名字池”的字面含义，也更宽松。
+- 即使按更宽松的原始口径，1.66× 仍比 1.5× 高约 10.7%。总文件 / 序列化基础为 3.86×。
 
-| 指标 | 1M 目标 | 实测（2.36M） | 说明 |
-| --- | --- | --- | --- |
-| 扫描 + 构建 + 写库 | < 90 s | 150.0 s | 按条目折算约 63.5 s/1M |
-| 建索引峰值 RSS | 信息项 | 1.4 GiB | trigram 构建期 |
-| 数据库加载 | < 800 ms | 2453 ms | 约 1.04 s/1M |
-| 查询态 RSS | < 400 MB | 679.3 MiB | 约 287 MiB/1M，达标 |
-| `ext:jpg` | < 1 ms | 34.1 µs | 228 命中 |
-| `ext:jpg size:>1mb` | < 5 ms | 728.3 µs | 2 命中 |
-| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 4.98 ms | 0 命中 |
-| `report` | < 20 ms | 116.9 µs | 1,389 命中 |
-| `report pdf` | < 40 ms | 395.2 µs | 0 命中 |
-| `*.pdf` | < 120 ms | 143.07 ms | 8 命中；折算约 61 ms/1M |
-| `source map` | < 40 ms | 31.98 ms | 4,899 命中 |
-| `count ext:mp4` | < 1 ms | 34.6 µs | 9 命中 |
-| 空查询 + `-n 20` | < 1 ms | 33.7 µs | 2,362,503 命中 |
-| 索引额外体积 | < 1.5× | 1.58× | RANGES 56.7 MB + POSTINGS 37.3 MB |
+Section 明细：
 
-全量树上查询目标里唯一按原始数值未达标的是 `*.pdf`（143 ms vs 120 ms），但按条目数折算约为
-61 ms/1M。它没有 trigram 可用，仍然要走 236 万条目的名字扫描；`ext:` 字典不能直
-接回答 glob，除非优化器识别 `*.ext` 形式。其余查询目标全部达标。
+| Section | 字节 | 占额外体积 |
+| --- | ---: | ---: |
+| names | 949,203 | —（基础） |
+| folders | 3,502,204 | —（基础） |
+| files | 24,103,300 | —（基础） |
+| ranges | 50,678,777 | 62.1% |
+| parent-paths | 13,439,312 | 16.5% |
+| postings | 11,890,699 | 14.6% |
+| order | 4,120,224 | 5.0% |
+| dict | 1,495,802 | 1.8% |
+| excludes | 4 | 0.0% |
+| roots + checksum + header/table | 403 | 0.0% |
+| **total** | **110,179,928** | |
+
+`ranges` 的五个核心字段每个是 `5 B 字段头 + 12 B × 条目数`（8 B value + 4 B id）：
+
+| 字段 | 条目数 | 字节 |
+| --- | ---: | ---: |
+| size | 1,030,056 | 12,360,677 |
+| mtime | 1,030,056 | 12,360,677 |
+| depth | 1,030,056 | 12,360,677 |
+| childcount | 103,006 | 1,236,077 |
+| parent | 1,030,055 | 12,360,665 |
+| field count | — | 4 |
+| **合计** | | **50,678,777** |
+
+**未达标原因。** `RANGES` 对每个条目的每个核心字段都存一对未压缩的 `(i64 value,
+u32 id)`，五个字段共 50.7 MB，占额外体积的 62%。`size`、`mtime`、`depth` 都是每个
+条目一条记录，即使值分布可以用 delta 或分块编码压缩，当前格式没有做。`parent-paths`
+再占 13.4 MB（完整绝对路径）。`postings` 已是 delta-varint，继续压缩空间有限。
+
+**后续计划（S12 不修改数据库格式）。**
+
+1. 确认验收口径：建议以原始 NamePool 为分母，或明确“序列化 NAMES”；两种口径都保留
+   在报告中，避免下次再出现 1.58× 与 1.66× 混淆。
+2. `RANGES` 值列与 id 列分开，做 delta/varint 或分块（block）编码；`size`/`mtime`
+   这类近似有序的值列收益最大。格式变更需要升次版本并同步 `docs/db-format.md` 与
+   布局测试。
+3. 评估 `depth` 是否必须全量持久化：它可由父链在加载时派生，或只存分块索引；这会把
+   12.4 MB 从磁盘换到加载 CPU，需要同时测加载时间。
+4. `PARENT_PATHS` 改成“父 id + 单段名字”或前缀压缩，去掉完整路径重复。
+5. 任何格式变更后重跑 §3.1 全部 12 项，确认加载仍 < 800 ms/1M。
+
+### 3.5 数据库加载：S12 前后
+
+| 数据集 | S12 前 | S12 后 | 目标（折算） | 结论 |
+| --- | ---: | ---: | ---: | --- |
+| 私有三根，1,030,277 条目 | 949 ms | 203 ms | 824 ms | 达标 |
+| 合成，1,030,056 条目 | — | 176 ms | 824 ms | 达标 |
+
+S12 前，普通加载会用 `validate_canonical_order` 为每个同名条目物化完整路径，验证
+ORDER 的 `(name, path)` 全序；在 1M 条目上这一步约占 740 ms。S12 把完整路径 tie-break
+移入 `verify=true` 深语义分支（与 S08 的加载分层一致），普通加载保留：
+
+- ORDER 是 `0..total-1` 的排列、无重复、id 在范围内；
+- 相邻条目的名字非递减（按名字排序的查询不会在乱序 ORDER 上提前停止）。
+
+`verify=true` 仍执行完整规范顺序、字典/范围/posting/父路径的语义重算。实测
+`info --verify` 在合成库上 2.13–2.20 s，私有库 2.14–2.23 s；这是显式的深度校验成本，
+不是普通加载路径。
+
+**1M 折算方法。** 目标按 `800 ms × 条目数 / 1,000,000` 线性折算；实测是单次
+`Index::read_database` 墙钟，不含查询与进程启动。
+
+### 3.6 建索引与 trigram
+
+`--stats` 细节：`scan: 25,717 ms`，`database: 110,179,928 bytes`，
+`names: 1,030,056 names, 13,807,267 bytes`，`extensions: 11`，`hidden: 916`，
+`ranges: size=1030056 mtime=1030056 depth=1030056 childcount=103006 parent=1030055`，
+`trigram: 872 keys, 11,745,410 postings, 0 short names, 2 stop-grams, 46,981,640 B`。
+
+建索引峰值 RSS 681.4 MiB，主要是构建期 trigram 哈希表；查询态 RSS 332.2 MiB。
+trigram 在这个数据集上只增加 872 个键，因为名字模板重复度高；它的收益仍集中在名字
+子串查询（§3.2 的 `report`、`source map`）。
+
+## 4. 补充口径：私有三根快照（1,030,277 条目）
+
+数据：`~/Documents/workspace/{app,dashou-plugin,plugin}`，93,689 个文件夹、
+936,588 个文件、171,485 个不同名字；数据库 109.7 MiB。该树是私有工作区，
+**不能由干净克隆重建**，只用于交叉验证主口径，不替代主口径。
+
+各根的 metadata manifest（字段同上）：
+
+| 根 | 条目 | manifest SHA-256 |
+| --- | ---: | --- |
+| `~/Documents/workspace/app` | 302,307 | `52fc49571ddde05143a4f7e2c50b383f8a661a63197642f0465671fe92afdb4a` |
+| `~/Documents/workspace/dashou-plugin` | 705,445 | `c6f54b42ced235867631545b47911a023717d6cbc4e73140b8e0131b61c6e2a7` |
+| `~/Documents/workspace/plugin` | 22,525 | `a1c91b0f02593e19c8a2ad3682bf0144670b93f99e6c4cab45127ee66990c3bc` |
+
+实测：构建 31.9 s、加载 203 ms、查询态 RSS 372.0 MiB、数据库 115,005,406 B；
+索引额外体积 2.80×（序列化 NAMES）/ 1.61×（原始 NamePool），同样未达 1.5×。
+
+| 查询 | 目标 | bitmap 中位数 | scan 中位数 | 命中 | 结论 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `ext:jpg` | < 1 ms | 37.8 µs | 43.79 ms | 73 | 达标 |
+| `ext:jpg size:>1mb` | < 5 ms | 335.5 µs | 53.80 ms | 2 | 达标 |
+| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 3.93 ms | 62.74 ms | 0 | 达标 |
+| `report` | < 20 ms | 78.5 µs | 49.06 ms | 419 | 达标 |
+| `report pdf` | < 40 ms | 272.6 µs | 51.92 ms | 0 | 达标 |
+| `*.pdf` | < 120 ms | 86.73 ms | 79.39 ms | 4 | 达标 |
+| `source map` | < 40 ms | 13.19 ms | 51.09 ms | 2,445 | 达标 |
+| `count ext:mp4` | < 1 ms | 39.1 µs | — | 25 | 达标 |
+| 空查询 + `-n 20` | < 1 ms | 36.0 µs | 36.7 µs | 1,030,277 | 达标 |
+
+私有库的 `ranges` 是 50,577,557 B（size/mtime/depth 各 12,363,329 B，childcount
+1,124,273 B，parent 12,363,293 B），与合成库同量级；这确认体积问题不是合成数据
+特有的。
 
 ## 5. 调优清单
 
 按预期收益排序，均尚未实现；实现后需要重跑本文的两份报告。
 
-1. **稠密范围切片的位图构建**。`RangeIndex::slice` 先复制并全局排序 id，再逐个
-   `Bitmap::add`；对 150 万级集合（全量树的 `size:>1kb`、主数据集的
-   `dm:thisyear`）分别达到 84 ms 和 31 ms。建议按 65536 的块分桶、块内排序去重、
-   直接写 word；`And(小 Const, Range)` 可改为遍历小集合、按 id 查值，避免物化大
-   范围集。目标是把稠密范围降到个位数毫秒。
-2. **数据库加载**。1.22M 条目 1.14 s、2.36M 条目 2.45 s，距 800 ms/1M 目标还差
-   约 20%。建议先做 section 级计时，区分读文件、解码 names、重建 `Store`、恢复
-   ranges/postings 的耗时；再考虑零拷贝/mmap 或按需加载 `RANGES`。
-3. **CLI 交互延迟**。每次调用都完整加载数据库；1.1–2.5 s 的启动成本不适合交互
-   式反复查询。中期方案是常驻进程（daemon/keep-alive）或 `--database` 的共享内存
-   缓存；短期可以在文档中明确“单次 CLI 不是 1 ms 级路径”。
-4. **索引体积**。`RANGES` 已是 29.3 MB（1.22M）/ 56.7 MB（2.36M），是超出 1.5×
-   预算的主因。可对 `(value, id)` 的值列做 delta 编码，或把 `mtime` 留作惰性字段；
-   `POSTINGS` 已经是 delta-varint，继续压缩空间有限。
-5. **`*.ext` 的 glob 快路径**。`*.pdf` 与 `ext:pdf` 语义等价（忽略文件名里含
-   `/` 的边界），编译器可在纯净 `*.ext` 模式上直接取扩展名字典；这样 143 ms 的
-   全量扫描会变成一次字典查找。需要同时在扫描引擎保持等价，避免两引擎分叉。
-6. **建索引峰值 RSS**。构建期 776 MiB（1.22M）/ 1.4 GiB（2.36M），查询态只有
-   362 MiB / 679 MiB。可把 trigram 构建拆成分片、尽早释放哈希表，或改成两遍扫描
-   （先计数再写 posting）。
+1. **`RANGES` 压缩/分块**。见 §3.4 的后续计划；这是索引体积未达标的主因，也可能
+   顺带降低加载时间。
+2. **CLI 交互延迟**。每次调用加载约 176–203 ms；引擎只需几十微秒到几十毫秒。
+   中期方案是常驻进程（daemon/keep-alive）或共享内存缓存；短期在文档中明确
+   “单次 CLI 不是 1 ms 级路径”。
+3. **`PARENT_PATHS` 前缀压缩**。13.4 MB 的完整绝对路径重复了父目录前缀；改成
+   “父 id + 单段名字”需要改 section，属于下一次格式变更。
+4. **稠密范围切片的位图构建**。`RangeIndex::slice` 先复制并全局排序 id，再逐个
+   `Bitmap::add`；密集的 `size:>1kb`、`dm:thisyear` 仍达到十几毫秒。按 65536 分块
+   排序或直接遍历小集合查值可把密集范围降到个位数毫秒。
+5. **`*.ext` 的 glob 快路径**。`*.pdf` 与 `ext:pdf` 语义近似，编译器可在纯净
+   `*.ext` 模式上直接取扩展名字典。需要扫描引擎保持等价，避免两引擎分叉。
+6. **建索引峰值 RSS**。构建期 681 MiB（1M）/ 204 MiB（300k），查询态只有 332 MiB。
+   可把 trigram 构建拆成分片、尽早释放哈希表，或两遍扫描。
+7. **冷缓存基准**。本文没有冷盘数字；如需验收冷启动，应在独立机器上用 `purge`
+   或重启后测量，并单独列表。
 
-## 6. 与 FSearch 的同条件对照（S14 补充）
+## 6. 与 FSearch 的同条件对照
 
 评审反馈要求补足上游依据和同条件对照。本节使用 FSearch 自身的 core library
-（无 GUI）在同一棵树上测查询，回答“单遍逐条目求值”与“索引候选生成 + 集合代数”
-在同数据、同查询下的实际差异。完整表格、原始 TSV 和复现脚本在
-`bench/fsearch-compare/`；汇总报告是 `bench/fsearch-compare/results-plugin.md`。
+（无 GUI）在同一棵确定性合成树上测查询，回答“单遍逐条目求值”与“索引候选生成 +
+集合代数”在同数据、同查询下的实际差异。完整表格、原始 TSV 和复现脚本在
+`bench/fsearch-compare/`；主报告是 `results-synthetic-300k.md`。
 
 ### 6.1 方法
 
@@ -187,128 +313,167 @@ moon run cmd/moonsearch-bench -- --database DB --engine bitmap --first 20 ''
   `fsearch_query_match()`；`:1401` 的 `index_store_search()` 按线程切分；
   `src/fsearch_query.c:138` 的 `matches()` 对查询树做 AND/OR 短路。因此不存在
   “每个条件遍历一遍”。
-- 数据：`~/Documents/workspace/plugin`，25,424 个文件夹 + 272,171 个文件 =
-  297,595 个条目，2026-11-18 快照。
-- 口径：FSearch worker pool 固定 1 线程，与单线程 moonsearch 对齐；取多次运行的
-  中位数。另测 FSearch 默认多线程作为产品参考。
+- 数据：`bench/.data/synthetic-300k`，30,000 个文件夹 + 270,000 个文件 =
+  300,000 个条目；manifest SHA-256
+  `4cc38f9684090e853b1583a03e9e503cf701a97e76ddf3ae3bd1da53d3db18cf`。
+- 口径：FSearch worker pool 固定 1 线程，与单线程 moonsearch 对齐；取 5 次运行的
+  中位数。FSearch 的构建 3.56 s 是内存索引构建，不含持久库写入。
 - 缓存：查询都在索引驻留后测量（FSearch 先建内存索引并热身，moonsearch 先加载
-  数据库）；构建与加载是单独的冷路径，不计入查询延迟。
-- 结果模式：`count` 只取集合基数；`full` 额外按规范顺序遍历并物化命中。两者分开，
-  避免把“集合大小”当成“完整搜索结果”。
+  数据库）；构建与加载是单独的冷路径，不计入查询延迟。均为热缓存。
+- 结果模式：`bitmap` 只取集合基数；`bitmap full` 额外按规范顺序遍历并物化命中
+  （`--first 400000`，大于命中数），与 FSearch 完整搜索同形。两者分开，避免把
+  “集合大小”当成“完整搜索结果”。
 - moonsearch 的扫描引擎与位图引擎共用词法/语法/谓词，FSearch 与扫描引擎在语义上
   同构，因此“扫描 → 位图”的差异可以归因于候选源替换。
 - Everything 闭源，只作语义参考，不作为性能基线。
 
-### 6.2 代表性与退化结果（毫秒）
+### 6.2 可复现结果（300,000 条目，毫秒）
 
-| 查询 | 命中 | FSearch 1T | moonsearch scan | bitmap count | bitmap full | FSearch/full |
+| 查询 | 命中 | FSearch 1T | scan | bitmap count | bitmap full | FSearch/full |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `ext:jpg` | 9 | 8.581 | 7.060 | 0.037 | 1.030 | 8.3× |
-| `ext:jpg size:>1mb` | 2 | 8.085 | 7.488 | 0.058 | 0.627 | 12.9× |
-| `report` | 192 | 14.403 | 10.343 | 0.049 | 2.730 | 5.3× |
-| `report pdf` | 0 | 16.327 | 11.433 | 0.054 | 0.371 | 44.0× |
-| `index` | 18,139 | 13.904 | 11.829 | 1.071 | 5.062 | 2.7× |
-| `size:>1mb` | 1,552 | 6.875 | 4.516 | 0.056 | 4.480 | 1.5× |
-| `source map` | 450 | 15.995 | 11.051 | 3.741 | 6.874 | 2.3× |
-| `a` (1 字节) | 172,894 | 10.110 | 9.709 | 10.942 | 11.841 | 0.85× |
-| `ab` (2 字节) | 6,088 | 13.090 | 12.112 | 14.883 | 20.245 | 0.65× |
-| `.js` (stop-gram) | 142,693 | 13.361 | 11.812 | 12.379 | — | — |
-| `size:>1kb` (稠密) | 201,582 | 6.729 | 5.699 | 10.454 | 11.470 | 0.59× |
-| `dm:thisyear` (99.98%) | 297,536 | 7.334 | 5.692 | 7.760 | 8.497 | 0.86× |
-| `*.pdf` (glob) | 0 | 13.866 | 17.558 | 14.415 | 14.757 | 0.94× |
-| `regex:^report.*\.pdf$` | 0 | 9.934 | 19.496 | 18.547 | 18.900 | 0.53× |
-| `path:src` | 14,367 | 80.982 | 140.808 | 123.016 | 127.574 | 0.63× |
-| 空查询 | 297,595 | 0.136 | 1.011 | 0.036 | 0.726 | 0.19× |
+| 空查询 | 300,000 | 0.570 | 4.716 | 0.036 | 0.732 | 0.78× |
+| `ext:jpg` | 269 | 11.243 | 12.376 | 0.037 | 2.729 | 4.12× |
+| `ext:jpg size:>1mb` | 0 | 13.061 | 14.634 | 0.045 | 0.453 | 28.80× |
+| `report` | 8,972 | 19.713 | 13.618 | 0.684 | 1.402 | 14.06× |
+| `report pdf` | 271 | 20.251 | 14.354 | 0.703 | 3.575 | 5.66× |
+| `source map` | 614 | 21.489 | 14.298 | 2.774 | 6.441 | 3.34× |
+| `*.pdf`（glob） | 271 | 13.114 | 20.497 | 22.061 | 25.021 | 0.52× |
+| `regex:^report.*\.pdf$` | 270 | 12.651 | 20.585 | 21.996 | 25.200 | 0.50× |
+| `a`（1 字节） | 119,812 | 16.780 | 13.510 | 15.695 | 17.853 | 0.94× |
+| `ab`（2 字节） | 0 | 19.912 | 14.297 | 16.723 | 16.584 | 1.20× |
+| `size:>1kb`（稠密） | 283,530 | 10.174 | 6.684 | 15.553 | 16.270 | 0.63× |
+| `dm:thisyear` | 233,916 | 11.080 | 7.046 | 9.939 | 11.148 | 0.99× |
+| `path:src` | 150,760 | 104.947 | 124.300 | 125.151 | 127.855 | 0.82× |
+| `package.json` | 0 | 19.688 | 12.538 | 0.039 | 0.452 | 43.58× |
+| `node_modules` | 3,750 | 19.313 | 12.381 | 0.239 | 4.300 | 4.49× |
+| `.js` | 54,138 | 20.454 | 14.349 | 4.467 | 5.347 | 3.83× |
+
+完整 34 条查询见 `bench/fsearch-compare/results-synthetic-300k.md`。
 
 关键读数：
 
-- 选择性高的可索引查询，完整搜索相对 FSearch 单线程快 1.5–44×；退化查询
-  （短 needle、stop-gram、glob/regex/`path:`、稠密范围、空查询）反而更慢，
-  `FSearch/完整` 为 0.19–0.94（即 moonsearch 慢 1.1–5.3×）。
-- `source map` 只有 450 个命中却要 3.741 ms；`ing` 有 8,151 个命中只要 0.603 ms。
-  成本由 posting 长度/交集决定，不由命中数决定。
-- 结果物化不可忽略：`ext:jpg` 的集合是 0.037 ms，完整搜索是 1.030 ms；空查询是
-  0.036 ms → 0.726 ms。
-- 与 FSearch 默认多线程相比，完整搜索在 `report`（2.730 vs 2.075 ms）、
-  `source map`（6.874 vs 2.301 ms）等场景已经落后；`count` 仍有优势（`report`
-  0.049 vs 2.075 ms）。当前实现是单线程的，不能把这些场景说成“更快”。
-- `size:>1kb` 的命中数 FSearch 为 201,582、moonsearch 为 201,557；差异来自
-  符号链接尺寸（FSearch 计入文件夹子树的 `st_size`，moonsearch 按 0 字节索引）。
-  `file:size:>1000` 两边一致（179,570）。
+- 选择性高且可索引的完整搜索相对 FSearch 单线程快 2.65–47×（`size:>1mb` 2.65×、
+  `report` 14.06×、`package.json` 43.58×、`ing` 47.07×）；对这些可索引查询，count
+  路径为 0.036–4.467 ms，FSearch 同查询为 6.956–23.855 ms。短 needle、glob/regex、
+  稠密范围的 count 只有 0.57–1.19×（基本持平或更慢）。
+- 退化查询（短 needle、stop-gram、glob/regex/`path:`、稠密范围、空查询）的
+  `FSearch/full` 为 0.50–0.99，即 moonsearch 慢 1.01–2×。`path:src` 两边都在
+  100 ms 级，是共同瓶颈。
+- 结果物化不可忽略：空查询 0.036 → 0.732 ms，`report` 0.684 → 1.402 ms，
+  `source map` 2.774 → 6.441 ms。
+- 成本由 posting 长度/候选规模决定，不由命中数决定：`source map` 614 命中要
+  2.774 ms，`package.json` 0 命中只要 0.039 ms。
+- 两处命中数差异是解析语义，不是缺条目：`ext:jpg OR ext:png` 差 14 个隐藏
+  `.png`（moonsearch 把前导点视为无扩展名，FSearch 报 `png`）；`dm:lastweek`
+  FSearch 解释为上一个日历周，moonsearch 解释为过去 7 天，268 个 0–4 天前的文件
+  只落在后者。
 
-### 6.3 构建、更新与内存
+### 6.3 历史私有快照（2026-11-18，297,595 条目）
+
+`results-plugin.md` 使用 `~/Documents/workspace/plugin` 的 2026-11-18 快照，
+不是主口径，也不能由干净克隆重建。代表性读数：
+
+| 查询 | 命中 | FSearch 1T | bitmap count | bitmap full | FSearch/full |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `report` | 192 | 14.403 | 0.049 | 2.730 | 5.3× |
+| `source map` | 450 | 15.995 | 3.741 | 6.874 | 2.3× |
+| `a`（1 字节） | 172,894 | 10.110 | 10.942 | 11.841 | 0.85× |
+| `*.pdf` | 0 | 13.866 | 14.415 | 14.757 | 0.94× |
+| `path:src` | 14,367 | 80.982 | 123.016 | 127.574 | 0.63× |
+| `size:>1kb` | 201,582 | 6.729 | 10.454 | 11.470 | 0.59× |
+
+它与合成主口径的方向一致：可索引的高选择性查询领先，glob/regex/`path:`/短 needle/
+稠密范围落后。旧表里的符号链接计数差异只适用于该私有树，不适用于合成树。
+
+### 6.4 构建、更新与内存
+
+合成 300k（可复现）：
 
 | 指标 | moonsearch + trigram | moonsearch `--no-trigram` | FSearch 1T |
 | --- | ---: | ---: | ---: |
-| 构建 | 20.9 s | 18.0 s | 4.8–7.6 s |
-| 构建峰值 RSS | 172 MiB | 160 MiB | 49 MiB |
-| 数据库 | 22.5 MB | 17.5 MB | 未测 |
-| 加载 | ~0.26 s | ~0.24 s | 未测 |
-| 查询态 RSS | 96 MiB | — | 49 MiB（构建 + 查询） |
-| `update` | 21.2 s，全量重建 | — | — |
+| 构建 | 7.42 s | 4.25 s | 3.56 s |
+| 构建峰值 RSS | 204.1 MiB | 155.6 MiB | 未测 |
+| 数据库 | 31.0 MB | 27.7 MB | 未测 |
+| 加载 | 59.9 ms | 未测 | 未测 |
 
 FSearch 的数字是内存索引构建，不建 trigram、不写数据库；这不是同工作量的对比。
-moonsearch 的构建成本不占优，用构建/更新/内存换查询。Trigram 的代价约为
-+2.9 s（+16%）、+5.0 MB 数据库（+29%）、+11 MiB 峰值 RSS；收益集中在名字子串
-（`report` 263×、`the` 228×、`node_modules` 99×、`index` 12.6×、`source map`
-4.2×），对 glob/regex/`path:`/短 needle 没有帮助。
-
-### 6.4 小树交叉点
-
-同一套代码在 2,272 条目的 moonsearch 仓库上：moonsearch 构建 0.17 s、数据库
-271 KB、加载 1.5–1.9 ms；FSearch 构建 0.024 s。查询上 FSearch 为 0.002–0.088 ms，
-moonsearch 为 0.034–0.128 ms。小树上索引没有稳定优势，加载时间比多数查询还大。
+moonsearch 的构建成本不占优，用构建/更新/内存换查询。Trigram 的代价约为 +3.17 s、
++3.5 MB 数据库、+48.5 MiB 峰值 RSS；收益集中在名字子串（`report` 22.5×、
+`the` 25.2×、`node_modules` 60×、`package.json` 369×），对 glob/regex/`path:`/
+短 needle 没有帮助。历史私有树的构建/更新/内存数字见
+`bench/fsearch-compare/costs.md`。
 
 ### 6.5 结论
 
 优势应表述为条件化的：大索引 + 选择性高且可索引的谓词，完整搜索相对 FSearch
-单线程快 1.5–44×、count 快 4–300×；短 needle、stop-gram、glob/regex/`path:`、
+单线程快 2.65–47×、count 快约 4–585×；短 needle、stop-gram、glob/regex/`path:`、
 稠密范围、小树和一次性搜索不占优，完整结果物化与 FSearch 多线程相比也可能落后。
-代价是 20.9 s 构建、21.2 s 全量更新、96 MiB 查询态内存和每进程约 0.26 s 的加载。
+代价是 0.2 s/1M 量级的每进程加载、1M 条目 28 s 构建与 681 MiB 构建峰值内存。
 这比“多条件必然多次全表遍历”“成本只由命中集决定”更准确，也更可检验。
 
-复现：
+复现命令：
 
 ```bash
-# 示例查询；完整查询集合见 bench/fsearch-compare/results/*.tsv 的 QUERY/BENCH 名称
-# 同一棵树上的 FSearch core harness（1 线程）
-TZ=Asia/Shanghai /tmp/bench_fsearch --threads 1 --root ~/Documents/workspace/plugin \
-  --runs 5 'ext:jpg' 'report' 'a' 'size:>1kb'
+# 1. 生成 300k 确定性树
+python3 bench/gen_dataset.py --dir bench/.data/synthetic-300k --entries 300000 \
+  --reference-time 2026-11-28T00:00:00Z
 
-# moonsearch 两引擎
-_build/native/release/build/cmd/moonsearch-bench/moonsearch-bench.exe \
-  --database /tmp/plugin.msdb --engine bitmap --runs 5 'report'
+# 2. 构建 FSearch core harness（需要 FSearch 1208a34 checkout 与 glib/pango/pcre2/icu）
+PKG_CONFIG_PATH="$(brew --prefix icu4c)/lib/pkgconfig" \
+  bash bench/fsearch-compare/build.sh /path/to/fsearch /tmp/bench_fsearch
 
-# 合并报告（base + extra + common + stopgram 全量输入）
+# 3. moonsearch 建库
+moon build --target native --release
+_build/native/release/build/cmd/moonsearch/moonsearch.exe \
+  -D bench/.work/synthetic-300k.msdb index -r bench/.data/synthetic-300k --stats
+
+# 4. 两边的查询集合见 results/*.tsv；合并报告
 python3 bench/fsearch-compare/compare.py \
-  --fsearch bench/fsearch-compare/results/fsearch-plugin-st.tsv \
-  --fsearch bench/fsearch-compare/results/fsearch-plugin-extra.tsv \
-  --fsearch bench/fsearch-compare/results/fsearch-common.tsv \
-  --fsearch bench/fsearch-compare/results/fsearch-stopgram.tsv \
-  --scan bench/fsearch-compare/results/scan.tsv \
-  --scan bench/fsearch-compare/results/scan-extra.tsv \
-  --scan bench/fsearch-compare/results/scan-common.tsv \
-  --scan bench/fsearch-compare/results/scan-stopgram.tsv \
-  --bitmap bench/fsearch-compare/results/bitmap.tsv \
-  --bitmap bench/fsearch-compare/results/bitmap-extra.tsv \
-  --bitmap bench/fsearch-compare/results/bitmap-common.tsv \
-  --bitmap bench/fsearch-compare/results/bitmap-stopgram.tsv \
-  --bitmap-full bench/fsearch-compare/results/bitmap-fullwalk-all.tsv \
-  --no-trigram bench/fsearch-compare/results/bitmap-notrigram.tsv \
-  --label plugin-297k --markdown /tmp/results.md
+  --fsearch bench/fsearch-compare/results/synthetic-fsearch.tsv \
+  --scan bench/fsearch-compare/results/synthetic-scan.tsv \
+  --bitmap bench/fsearch-compare/results/synthetic-bitmap.tsv \
+  --bitmap-full bench/fsearch-compare/results/synthetic-bitmap-full.tsv \
+  --no-trigram bench/fsearch-compare/results/synthetic-bitmap-notrigram.tsv \
+  --label synthetic-300k \
+  --markdown bench/fsearch-compare/results-synthetic-300k.md \
+  --json bench/fsearch-compare/results-synthetic-300k.json
 ```
 
 ## 7. 演示与录屏
 
 `bench/demo.sh` 在临时目录生成一棵小树，依次演示建索引、trigram 查询、位图 ×
 范围、`--explain`、`count`、排序/JSON、扫描引擎对照和 `info --verify`。脚本只依
-赖仓库自身的 release 二进制，不读写用户的数据库。
+赖仓库自身的 release 二进制，不读写用户的数据库：
 
 ```bash
 bash bench/demo.sh
-
-# 若安装了 asciinema：
-asciinema rec bench/demo.cast -c "bash bench/demo.sh"
 ```
 
-录屏文件不提交到仓库；`demo.sh` 是可复现的演示源，输出顺序和查询都固定。
+录屏产物是 `bench/demo.cast`（asciicast v2，由 `bench/record_demo.py` 实际运行
+`bench/demo.sh` 捕获，不是手工拼接）。有 `asciinema` 时：
+
+```bash
+asciinema play bench/demo.cast
+```
+
+没有 `asciinema` 时，`bench/record_demo.py` 可以重新生成同一条录制：
+
+```bash
+python3 bench/record_demo.py bench/demo.cast
+```
+
+## 8. 已知限制
+
+- **索引体积未达标**：2.86×（序列化 NAMES）/ 1.66×（原始 NamePool），目标 < 1.5×；
+  主因是 50.7 MB 的五字段 `RANGES` 与 13.4 MB 的 `PARENT_PATHS`。后续计划见 §3.4，
+  S12 不修改数据库格式。
+- **CLI 每次调用都加载数据库**：约 176–203 ms/1M，远大于引擎延迟；没有 daemon
+  或共享缓存。单次 CLI 不是 1 ms 级路径。
+- **冷缓存未测**：本文全部加载/查询数字是热页缓存；没有 `purge`/`drop_caches`。
+- **机器负载偏高**：测量时 load average 1 分钟 12.86、15 分钟 54.04；绝对数字偏保守，
+  跨日比较应在空闲机器上重跑。
+- **verify 成本**：`info --verify` / `verify=true` 在 1M 条目上约 2.1–2.2 s，是显式
+  深度校验，不是普通加载。
+- **私有快照不可重建**：§4 与 §6.3 的数字只作补充，不替代 §3 的合成主口径。
+- **FSearch 对照条件**：FSearch 是内存索引构建，moonsearch 包含 trigram 与持久库
+  写入；构建数字不是同工作量对比。日期与隐藏文件扩展名存在已记录的解析差异。

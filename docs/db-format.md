@@ -175,9 +175,11 @@ GlobalId = folder id                        0 .. folder_count - 1
          = folder_count + file id           folder_count .. total - 1
 ```
 
-读取端要求它是 `0 .. total-1` 的排列：每个 id 在范围内且不重复。相邻条目还必须满足
-`(name, path)` 单调：名字相同（自然序）时才比较完整路径；完全同键时文件夹在前。加载后
-直接作为 `Store` 的 `order`，不重新排序；顺序损坏时拒绝整个文件。二进制布局未变，因此
+读取端要求它是 `0 .. total-1` 的排列：每个 id 在范围内且不重复。普通加载（`verify=false`）
+还检查相邻条目的名字非递减，因此按名字排序的查询不会在乱序 ORDER 上提前停止；完整
+`(name, path)` 单调要求——名字相同（自然序）时才比较完整路径，完全同键时文件夹在前——
+需要为每个同名条目物化完整路径，属于 `verify=true` 的深语义校验。加载后直接作为
+`Store` 的 `order`，不重新排序；顺序损坏时拒绝整个文件。这一分层不改变二进制布局，因此
 版本仍为 v3.0；旧 v3 文件可通过 ORDER 保持查询顺序，新写入文件同时保证条目数组的物理
 规范顺序。
 
@@ -355,9 +357,12 @@ POSTINGS，多个单独合法的集合不能绕过总上限。调用方可通过
 或 `Ids::from_bytes_with_budget` 提供更严格的预算；预算耗尽返回 `DbError::TooLarge` /
 `IdsError::LimitExceeded`。
 
-普通加载（`verify=false`）只执行结构、引用和资源边界校验，不重算派生索引。
-`verify=true` 在 full CRC 之后从恢复的 Store 重新构建并逐项比较：
+普通加载（`verify=false`）只执行结构、引用和资源边界校验，不重算派生索引。ORDER 的
+排列与名字单调性属于结构校验：它只需比较相邻条目的名字，不构造完整路径，因此每次加载
+都执行。`verify=true` 在 full CRC 之后从恢复的 Store 重新构建并逐项比较：
 
+- ORDER 的完整 `(name, path)` 规范顺序，包括同名条目的完整路径 tie-break 与同键时
+  文件夹在前；
 - files/folders/hidden/visible 集合与条目类型、hidden flags 一致；
 - 每个 extension、category、root 集合与名字及父链一致；
 - 每个已持久化 RANGES 字段的覆盖范围、值和 id 与 Store 一致；`verify=true` 会立即解码全部字段；
@@ -391,4 +396,7 @@ CHECKSUM 顺序与 EOF、未知 section、恶意 header/Ids 长度、共享预�
   范围字段完整持久化，次版本升为 v3.2。`--fast-fields` 改为控制加载时立即解码的字段；
   未立即解码的字段从自有 DB 切片恢复，不再从 Store 重建。旧 v3.1 文件仍可加载，缺失的
   PARENT_PATHS 仅在加载时派生一次。
+- S12 把 ORDER 的同名完整路径 tie-break 从普通加载移入 `verify=true` 深语义分支，普通
+  加载仍检查排列与名字单调性；布局、CRC 覆盖与版本不变。这使 1M 条目数据库的加载不再
+  为每个同名条目构造完整路径。
 - 每次格式变更必须同步更新本文件与 `src/index/db_test.mbt` 的布局断言。

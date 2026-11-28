@@ -45,6 +45,9 @@ Query
 `EntryView` 把谓词输入与 `Store + EntryRef` 解耦：完整扫描从 Store 适配，live 扫描直接
 使用 Scanner 提供的 path/name/kind/size/mtime/flags/depth/parent。两路径共用同一个
 `CompiledScan`，因此字段、日期、glob/regex 和 kind/visibility 语义不会分叉。
+`CompiledScan::needs()` 汇总表达式会读取的可选字段（name/path/size/mtime/depth/
+child counts/parent path），Store 适配只物化这些字段；未请求的字段保持文档化的默认值
+（空 bytes、0、`None`）。这是纯性能分层，不改变任何谓词结果。
 `CompiledScan::needs_folder_totals` 在表达式包含 `size:`、`childcount:`、
 `childfilecount:`、`childfoldercount:` 或 `empty:` 时返回 true；live 流式路径遇到这些
 字段必须回退完整 Store 扫描，因为文件夹统计只有在后序递归完成后才存在。

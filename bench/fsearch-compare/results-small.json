@@ -1,0 +1,103 @@
+{
+  "label": "small-2272",
+  "fsearch_meta": {
+    "backend": "fsearch",
+    "folders": 593,
+    "files": 1679,
+    "build_ms": 23.941,
+    "roots": 1,
+    "threads": 1
+  },
+  "scan_meta": {
+    "entries": 2272,
+    "load_ms": 1.500208
+  },
+  "bitmap_meta": {
+    "entries": 2272,
+    "load_ms": 1.870333
+  },
+  "full_meta": {},
+  "no_trigram_meta": {},
+  "rows": [
+    {
+      "query": "",
+      "matches": 2272,
+      "matches_consistent": true,
+      "fsearch_ms": 0.002,
+      "scan_ms": 0.04355914203027605,
+      "bitmap_ms": 0.03390901051917204,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ext:mbt",
+      "matches": 402,
+      "matches_consistent": true,
+      "fsearch_ms": 0.055,
+      "scan_ms": 0.080993017578125,
+      "bitmap_ms": 0.039366603919239906,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ext:json",
+      "matches": 40,
+      "matches_consistent": true,
+      "fsearch_ms": 0.055,
+      "scan_ms": 0.07597351812688823,
+      "bitmap_ms": 0.03776257859589041,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "report",
+      "matches": 0,
+      "matches_consistent": true,
+      "fsearch_ms": 0.084,
+      "scan_ms": 0.09002741938883034,
+      "bitmap_ms": 0.03452598016701461,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "*.md",
+      "matches": 43,
+      "matches_consistent": true,
+      "fsearch_ms": 0.088,
+      "scan_ms": 0.11948441176470588,
+      "bitmap_ms": 0.12817343350383628,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "a",
+      "matches": 1307,
+      "matches_consistent": true,
+      "fsearch_ms": 0.064,
+      "scan_ms": 0.07726065027110766,
+      "bitmap_ms": 0.08944310161870504,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "size:>1kb",
+      "matches": 1719,
+      "matches_consistent": true,
+      "fsearch_ms": 0.042,
+      "scan_ms": 0.06722539659863945,
+      "bitmap_ms": 0.0806583873692679,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "dm:thisyear",
+      "matches": 2272,
+      "matches_consistent": true,
+      "fsearch_ms": 0.04,
+      "scan_ms": 0.06575946958556149,
+      "bitmap_ms": 0.09626195014245015,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    }
+  ]
+}

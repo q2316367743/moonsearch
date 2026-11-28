@@ -1,18 +1,18 @@
 # moonsearch benchmark results
 
-Generated: `2026-11-18T04:50:08+00:00`
+Generated: `2026-11-28T07:00:16+00:00`
 
 ## Dataset
 
 | Field | Value |
 | --- | --- |
-| Label | `workspace-1m` |
-| Roots | `~/Documents/workspace/app`<br>`~/Documents/workspace/dashou-plugin`<br>`~/Documents/workspace/plugin` |
-| Entries | 1,219,537 |
-| Folders / files | 113,665 / 1,105,872 |
-| Names (unique) | 169,415 |
-| Database | 86.7 MiB |
-| Format | `MSDB 2.0` |
+| Label | `synthetic-1m` |
+| Roots | `bench/.data/synthetic-1m` |
+| Entries | 1,030,056 |
+| Folders / files | 103,006 / 927,050 |
+| Names (unique) | 145,930 |
+| Database | 105.1 MiB |
+| Format | `MSDB 3.2` |
 
 ## Environment
 
@@ -23,33 +23,33 @@ Generated: `2026-11-18T04:50:08+00:00`
 | os | 26.6.2 |
 | platform | macOS-26.6.2-arm64-arm-64bit |
 | machine | arm64 |
-| moon | moon 0.1.20261104 (940aa18 2026-11-04) Feature flags enabled: rr_moon_mod,rr_moon_pkg |
-| commit | f9ff66f-dirty |
+| moon | moon 0.1.20261126 (ccd306a 2026-11-26) |
+| commit | 9c58969-dirty |
 
 ## Index build
 
 | Metric | Target | Measured | Status |
 | --- | --- | --- | --- |
-| Scan + build + write | 109.8 s (90 s at 1M) | 75.4 s | PASS |
-| Build peak RSS (information) | n/a | 776.3 MiB | n/a |
+| Scan + build + write | 92.7 s (90 s at 1M) | 28.0 s | PASS |
+| Build peak RSS (information) | n/a | 681.4 MiB | n/a |
 
 Build statistics from `index --stats`:
 
-- `scan_ms`: 73937
-- `database_bytes`: 90950983
-- `names`: 1219537
-- `name_bytes`: 19157482
-- `extensions`: 220
-- `hidden`: 4813
-- `ranges`: size=1219537 mtime=1219537
-- `trigram`: 41567 keys, 16634757 postings, 7786 short names, 4 stop-grams, 66539028 B
+- `scan_ms`: 25717
+- `database_bytes`: 110179928
+- `names`: 1030056
+- `name_bytes`: 13807267
+- `extensions`: 11
+- `hidden`: 916
+- `ranges`: size=1030056 mtime=1030056 depth=1030056 childcount=103006 parent=1030055
+- `trigram`: 872 keys, 11745410 postings, 0 short names, 2 stop-grams, 46981640 B
 
 ## Database load
 
 | Metric | Target | Measured | Status |
 | --- | --- | --- | --- |
-| Read MSDB into memory | 976 ms (800 ms at 1M) | 1136 ms | MISS |
-| Query-time peak RSS | 400 MiB at 1M | 361.9 MiB | PASS |
+| Read MSDB into memory | 824 ms (800 ms at 1M) | 176 ms | PASS |
+| Query-time peak RSS | 400 MiB at 1M | 332.2 MiB | PASS |
 
 ## Engine latency
 
@@ -57,15 +57,15 @@ Engine numbers come from `moonsearch-bench`: one database load, then `moonsearch
 
 | Query | Target | Bitmap median | Scan median | Matches | Status |
 | --- | --- | --- | --- | --- | --- |
-| `ext:jpg` | 1 ms | 34.1 µs | 46.24 ms | 99 | PASS |
-| `ext:jpg size:>1mb` | 5 ms | 309.2 µs | 48.88 ms | 2 | PASS |
-| `ext:jpg size:>1mb dm:lastweek` | 8 ms | 4.41 ms | 54.11 ms | 0 | PASS |
-| `report` | 20 ms | 76.6 µs | 65.13 ms | 726 | PASS |
-| `report pdf` | 40 ms | 183.3 µs | 68.92 ms | 0 | PASS |
-| `*.pdf` | 120 ms | 72.29 ms | 92.67 ms | 6 | PASS |
-| `source map` | 40 ms | 16.24 ms | 70.93 ms | 2,941 | PASS |
-| `count ext:mp4` | 1.0 ms | 34.0 µs | n/a | 5 | PASS |
-| empty query, `-n 20` | 1.0 ms | 33.4 µs | 33.8 µs | 1,219,537 | PASS |
+| `ext:jpg` | 1 ms | 39.4 µs | 41.80 ms | 927 | PASS |
+| `ext:jpg size:>1mb` | 5 ms | 66.5 µs | 49.36 ms | 3 | PASS |
+| `ext:jpg size:>1mb dm:lastweek` | 8 ms | 79.9 µs | 57.91 ms | 0 | PASS |
+| `report` | 20 ms | 2.05 ms | 44.69 ms | 30,805 | PASS |
+| `report pdf` | 40 ms | 2.18 ms | 47.62 ms | 930 | PASS |
+| `*.pdf` | 120 ms | 75.66 ms | 69.45 ms | 930 | PASS |
+| `source map` | 40 ms | 9.82 ms | 47.51 ms | 2,111 | PASS |
+| `count ext:mp4` | 1.0 ms | 38.8 µs | n/a | 925 | PASS |
+| empty query, `-n 20` | 1.0 ms | 37.1 µs | 36.7 µs | 1,030,056 | PASS |
 
 ## CLI wall time
 
@@ -73,32 +73,32 @@ Each CLI invocation loads the database and formats results, so this column is th
 
 | Command | Target (engine) | Median wall | Min wall | Status |
 | --- | --- | --- | --- | --- |
-| `search 'ext:jpg'` | 1.0 ms | 1162.4 ms | 1154.3 ms | n/a (includes load) |
-| `search 'ext:jpg size:>1mb'` | 5.0 ms | 1157.2 ms | 1155.5 ms | n/a (includes load) |
-| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 1153.5 ms | 1150.8 ms | n/a (includes load) |
-| `search 'report'` | 20.0 ms | 1199.8 ms | 1197.4 ms | n/a (includes load) |
-| `search 'report pdf'` | 40.0 ms | 1112.5 ms | 1078.2 ms | n/a (includes load) |
-| `search '*.pdf'` | 120.0 ms | 1162.1 ms | 1157.5 ms | n/a (includes load) |
-| `search 'source map'` | 40.0 ms | 1124.2 ms | 1123.3 ms | n/a (includes load) |
-| `count 'ext:mp4'` | 1.0 ms | 1096.1 ms | 1073.6 ms | n/a (includes load) |
-| `search -n 20 ''` | 1.0 ms | 1085.8 ms | 1082.6 ms | n/a (includes load) |
+| `search 'ext:jpg'` | 1.0 ms | 209.9 ms | 206.0 ms | n/a (includes load) |
+| `search 'ext:jpg size:>1mb'` | 5.0 ms | 199.5 ms | 195.6 ms | n/a (includes load) |
+| `search 'ext:jpg size:>1mb dm:lastweek'` | 8.0 ms | 185.1 ms | 184.1 ms | n/a (includes load) |
+| `search 'report'` | 20.0 ms | 218.7 ms | 217.4 ms | n/a (includes load) |
+| `search 'report pdf'` | 40.0 ms | 213.0 ms | 211.3 ms | n/a (includes load) |
+| `search '*.pdf'` | 120.0 ms | 292.7 ms | 286.5 ms | n/a (includes load) |
+| `search 'source map'` | 40.0 ms | 227.1 ms | 222.8 ms | n/a (includes load) |
+| `count 'ext:mp4'` | 1.0 ms | 196.4 ms | 194.2 ms | n/a (includes load) |
+| `search -n 20 ''` | 1.0 ms | 203.0 ms | 195.8 ms | n/a (includes load) |
 
 ## Index size
 
 | Section | Bytes |
 | --- | --- |
-| roots | 209 |
-| names | 2,592,055 |
-| folders | 3,864,610 |
-| files | 28,752,672 |
-| order | 4,878,148 |
-| dict | 1,730,103 |
-| ranges | 29,268,902 |
-| postings | 19,864,032 |
+| roots | 111 |
+| names | 949,203 |
+| folders | 3,502,204 |
+| files | 24,103,300 |
+| order | 4,120,224 |
+| dict | 1,495,802 |
+| ranges | 50,678,777 |
+| postings | 11,890,699 |
 | checksum | 8 |
-| **total** | **90,950,983** |
+| **total** | **110,179,928** |
 
-Base (names + entry records): 33.6 MiB. Index extra: 53.2 MiB of the base (1.58×; plan budget 1.5×). Total / base: 2.58×.
+Base (names + entry records): 27.2 MiB. Index extra: 77.8 MiB of the base (2.86×; plan budget 1.5×). Total / base: 3.86×.
 
 ## Notes
 

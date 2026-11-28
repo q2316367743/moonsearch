@@ -16,6 +16,42 @@ moonsearch 'ext:pdf size:>1mb' -n 20
 - 索引只加速部分查询：短查询串、glob、正则与 `path:` 会退化为全扫描。原因与实测边界
   见 [`docs/benchmarks.md`](docs/benchmarks.md)。
 
+## 性能与边界
+
+主口径是仓库内 `bench/gen_dataset.py` 生成的 1,030,056 条目确定性合成树
+（manifest SHA-256 `d907e166…ed6c81`），可由干净克隆重建；私有工作树只作补充。
+环境：Apple M4 Pro、48 GiB、macOS 26.6.2、MoonBit `0.1.20261126`、release 构建；
+加载/查询为热页缓存中位数，建索引为单次墙钟。
+
+| 项目 | 目标（1M 条目） | 实测 | 结论 |
+| --- | ---: | ---: | --- |
+| 扫描 + 建索引 | < 90 s | 28.0 s | 达标 |
+| 数据库加载 | < 800 ms | 176 ms | 达标 |
+| `ext:jpg` bitmap | < 1 ms | 39.4 µs | 达标 |
+| `ext:jpg size:>1mb` | < 5 ms | 66.5 µs | 达标 |
+| `ext:jpg size:>1mb dm:lastweek` | < 8 ms | 79.9 µs | 达标 |
+| `report`（trigram） | < 20 ms | 2.05 ms | 达标 |
+| `report pdf` | < 40 ms | 2.18 ms | 达标 |
+| `*.pdf`（glob） | < 120 ms | 75.66 ms | 达标 |
+| `count ext:mp4` | < 1 ms | 38.8 µs | 达标 |
+| 空查询 + `-n 20` | < 1 ms | 37.1 µs | 达标 |
+| 索引额外体积 | < 1.5× | 2.86× / 1.66× | **未达标** |
+| 查询态常驻内存 | < 400 MB | 332.2 MiB | 达标 |
+
+索引体积的两个数字分别是“序列化 NAMES”与“原始 NamePool”口径；两者都超过 1.5×，
+主因是每个核心范围字段都存未压缩的 `(value, id)`，五字段 `RANGES` 共 50.7 MB，
+`PARENT_PATHS` 再占 13.4 MB。S12 只记录拆分与后续计划（值列编码、分块、按需加载、
+路径前缀压缩），不修改数据库格式。CLI 每次调用重新加载数据库，约 176–203 ms/1M，
+所以单次命令是百毫秒级，不是 1 ms 级；交互式反复查询需要常驻进程。`info --verify`
+是显式深度校验，1M 条目约 2.1–2.2 s。
+
+同条件 FSearch core 对照（300,000 条目、单线程）：可索引的高选择性完整搜索快
+2.65–47×，count 快约 4–585×；短 needle、stop-gram、glob/regex/`path:`、稠密范围
+不占优。构建成本高于 FSearch 的内存索引（300k：7.42 s 对 3.56 s），因为它额外建
+trigram 并写持久库。完整表格与复现命令见
+[`docs/benchmarks.md`](docs/benchmarks.md) §6 与
+[`bench/fsearch-compare/`](bench/fsearch-compare/)。
+
 ## 安装
 
 ```bash
@@ -441,10 +477,12 @@ stdout 的下游管道关闭（EPIPE，例如 `| head`）时安静退出 `0`，�
 | [`docs/benchmarks.md`](docs/benchmarks.md) | 基准口径、实测结果与调优待办 |
 | [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) | 迁移计划与设计取舍 |
 
-补漏计划按步骤验收；S01–S11 已落地，包括字节安全扫描、live 流式输出、默认 bitmap、
-管道/信号可靠性，以及 DST、稀疏文件、真实进程差分等测试补齐。S12 的基准与可复现
-材料，以及明确的 P1/P2 扩展（Unicode casefold、libmagic 内容类型、PCRE2 正则、路径
-trigram、增量监控）以 [`plan/补漏计划书.md`](plan/补漏计划书.md) 的状态为准。
+补漏计划按步骤验收；S01–S12 已落地，包括字节安全扫描、live 流式输出、默认 bitmap、
+管道/信号可靠性，以及 DST、稀疏文件、真实进程差分等测试补齐。S12 补齐了可复现合成
+数据集、12 项基准、FSearch 同条件对照和加载分层；其中索引体积仍未达到 1.5× 目标
+（2.86×/1.66×），结论与后续计划见 [`docs/benchmarks.md`](docs/benchmarks.md)。明确的
+P1/P2 扩展（Unicode casefold、libmagic 内容类型、PCRE2 正则、路径 trigram、增量监控）
+以 [`plan/补漏计划书.md`](plan/补漏计划书.md) 的状态为准。
 
 ## 开发
 

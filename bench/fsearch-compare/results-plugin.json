@@ -1,0 +1,369 @@
+{
+  "label": "plugin-297k",
+  "fsearch_meta": {
+    "backend": "fsearch",
+    "folders": 25424,
+    "files": 272171,
+    "build_ms": 6849.956,
+    "roots": 1,
+    "threads": 1
+  },
+  "scan_meta": {
+    "entries": 297595,
+    "load_ms": 262.32120799999996
+  },
+  "bitmap_meta": {
+    "entries": 297595,
+    "load_ms": 263.43570900000003
+  },
+  "full_meta": {
+    "entries": 297595,
+    "load_ms": 255.828166
+  },
+  "no_trigram_meta": {
+    "entries": 297595,
+    "load_ms": 237.35875
+  },
+  "rows": [
+    {
+      "query": "",
+      "matches": 297595,
+      "matches_consistent": true,
+      "fsearch_ms": 0.136,
+      "scan_ms": 1.0106599393939395,
+      "bitmap_ms": 0.036345561261922225,
+      "bitmap_full_ms": 0.7264583309352518,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ext:jpg",
+      "matches": 9,
+      "matches_consistent": true,
+      "fsearch_ms": 8.581,
+      "scan_ms": 7.0601556,
+      "bitmap_ms": 0.036859199339207054,
+      "bitmap_full_ms": 1.0303503367346938,
+      "no_trigram_ms": 0.03475005598390882
+    },
+    {
+      "query": "ext:jpg size:>1mb",
+      "matches": 2,
+      "matches_consistent": true,
+      "fsearch_ms": 8.085,
+      "scan_ms": 7.4879743076923075,
+      "bitmap_ms": 0.05834392432120162,
+      "bitmap_full_ms": 0.6268461538461538,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ext:jpg size:>1mb dm:lastweek",
+      "matches": 0,
+      "matches_consistent": true,
+      "fsearch_ms": 9.362,
+      "scan_ms": 8.271770833333333,
+      "bitmap_ms": 0.06050830662460567,
+      "bitmap_full_ms": 0.3781982276119403,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "report",
+      "matches": 192,
+      "matches_consistent": true,
+      "fsearch_ms": 14.403,
+      "scan_ms": 10.3430708,
+      "bitmap_ms": 0.049269728769943386,
+      "bitmap_full_ms": 2.7297522432432433,
+      "no_trigram_ms": 12.97000525
+    },
+    {
+      "query": "report pdf",
+      "matches": 0,
+      "matches_consistent": true,
+      "fsearch_ms": 16.327,
+      "scan_ms": 11.432759222222224,
+      "bitmap_ms": 0.053745598391420915,
+      "bitmap_full_ms": 0.3708839744525548,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "source map",
+      "matches": 450,
+      "matches_consistent": true,
+      "fsearch_ms": 15.995,
+      "scan_ms": 11.0508292,
+      "bitmap_ms": 3.7407577407407406,
+      "bitmap_full_ms": 6.8735556,
+      "no_trigram_ms": 15.666172714285718
+    },
+    {
+      "query": "*.pdf",
+      "matches": 0,
+      "matches_consistent": true,
+      "fsearch_ms": 13.866,
+      "scan_ms": 17.557683400000002,
+      "bitmap_ms": 14.415380857142857,
+      "bitmap_full_ms": 14.756684428571429,
+      "no_trigram_ms": 14.494357142857144
+    },
+    {
+      "query": "a",
+      "matches": 172894,
+      "matches_consistent": true,
+      "fsearch_ms": 10.11,
+      "scan_ms": 9.7085583,
+      "bitmap_ms": 10.9419875,
+      "bitmap_full_ms": 11.840925888888886,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ab",
+      "matches": 6088,
+      "matches_consistent": true,
+      "fsearch_ms": 13.09,
+      "scan_ms": 12.111504666666667,
+      "bitmap_ms": 14.882851142857142,
+      "bitmap_full_ms": 20.2451332,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "the",
+      "matches": 701,
+      "matches_consistent": true,
+      "fsearch_ms": 15.173,
+      "scan_ms": 11.6085084,
+      "bitmap_ms": 0.061328949876237625,
+      "bitmap_full_ms": 4.08219,
+      "no_trigram_ms": 13.977395875000001
+    },
+    {
+      "query": "index",
+      "matches": 18139,
+      "matches_consistent": true,
+      "fsearch_ms": 13.904,
+      "scan_ms": 11.8288292,
+      "bitmap_ms": 1.0712601914893616,
+      "bitmap_full_ms": 5.062483350000001,
+      "no_trigram_ms": 13.518625
+    },
+    {
+      "query": "node_modules",
+      "matches": 2450,
+      "matches_consistent": true,
+      "fsearch_ms": 12.404,
+      "scan_ms": 8.700256999999999,
+      "bitmap_ms": 0.09910018145956608,
+      "bitmap_full_ms": 3.9649791538461536,
+      "no_trigram_ms": 9.769875
+    },
+    {
+      "query": "package.json",
+      "matches": 2528,
+      "matches_consistent": true,
+      "fsearch_ms": 12.756,
+      "scan_ms": 8.648472250000001,
+      "bitmap_ms": 0.13131544517833552,
+      "bitmap_full_ms": 4.98376045,
+      "no_trigram_ms": 9.514670454545454
+    },
+    {
+      "query": "size:>1kb",
+      "matches": 201582,
+      "matches_consistent": false,
+      "fsearch_ms": 6.729,
+      "scan_ms": 5.698784722222222,
+      "bitmap_ms": 10.4540375,
+      "bitmap_full_ms": 11.469689777777777,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "size:>1mb",
+      "matches": 1552,
+      "matches_consistent": true,
+      "fsearch_ms": 6.875,
+      "scan_ms": 4.516032894736843,
+      "bitmap_ms": 0.05627940169491525,
+      "bitmap_full_ms": 4.480110521739131,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ext:jpg OR ext:png",
+      "matches": 169,
+      "matches_consistent": true,
+      "fsearch_ms": 10.529,
+      "scan_ms": 11.714541666666666,
+      "bitmap_ms": 0.039863487139516755,
+      "bitmap_full_ms": 2.4808892195121954,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "case:Report",
+      "matches": 6,
+      "matches_consistent": true,
+      "fsearch_ms": 12.871,
+      "scan_ms": 8.662336833333333,
+      "bitmap_ms": 0.04630460185614849,
+      "bitmap_full_ms": 0.8053109756097561,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "exact:report",
+      "matches": 0,
+      "matches_consistent": true,
+      "fsearch_ms": 5.062,
+      "scan_ms": 7.570726214285714,
+      "bitmap_ms": 0.044918593130779394,
+      "bitmap_full_ms": 0.3567979390681003,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "regex:^report.*\\.pdf$",
+      "matches": 0,
+      "matches_consistent": true,
+      "fsearch_ms": 9.934,
+      "scan_ms": 19.496,
+      "bitmap_ms": 18.547125,
+      "bitmap_full_ms": 18.899708333333333,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "path:src",
+      "matches": 14367,
+      "matches_consistent": true,
+      "fsearch_ms": 80.982,
+      "scan_ms": 140.807542,
+      "bitmap_ms": 123.016334,
+      "bitmap_full_ms": 127.574,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "folder:src",
+      "matches": 480,
+      "matches_consistent": true,
+      "fsearch_ms": 5.528,
+      "scan_ms": 1.6457837586206896,
+      "bitmap_ms": 0.05094490394877268,
+      "bitmap_full_ms": 2.435891857142857,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "depth:>5",
+      "matches": 270916,
+      "matches_consistent": true,
+      "fsearch_ms": 9.989,
+      "scan_ms": 10.637870333333332,
+      "bitmap_ms": 5.2205667,
+      "bitmap_full_ms": 5.973955882352941,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "dm:lastweek",
+      "matches": 0,
+      "matches_consistent": true,
+      "fsearch_ms": 5.487,
+      "scan_ms": 5.630358923076923,
+      "bitmap_ms": 0.03793285811080111,
+      "bitmap_full_ms": 0.34946775618374554,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "dm:thisyear",
+      "matches": 297536,
+      "matches_consistent": true,
+      "fsearch_ms": 7.334,
+      "scan_ms": 5.6915104375,
+      "bitmap_ms": 7.760352615384616,
+      "bitmap_full_ms": 8.497170166666667,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "dm:thismonth",
+      "matches": 16659,
+      "matches_consistent": true,
+      "fsearch_ms": 6.44,
+      "scan_ms": 5.717210526315789,
+      "bitmap_ms": 0.4804921875,
+      "bitmap_full_ms": 3.2464341612903227,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "size:>1000000",
+      "matches": 1552,
+      "matches_consistent": true,
+      "fsearch_ms": 7.254,
+      "scan_ms": 5.224995578947367,
+      "bitmap_ms": 0.05335226838638858,
+      "bitmap_full_ms": 4.488155782608695,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "file:size:>1000",
+      "matches": 179570,
+      "matches_consistent": true,
+      "fsearch_ms": 7.389,
+      "scan_ms": 5.673504666666667,
+      "bitmap_ms": 10.4510834,
+      "bitmap_full_ms": 11.55218988888889,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ing",
+      "matches": 8151,
+      "matches_consistent": true,
+      "fsearch_ms": 13.606,
+      "scan_ms": 11.594453777777778,
+      "bitmap_ms": 0.602772843373494,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ion",
+      "matches": 12530,
+      "matches_consistent": true,
+      "fsearch_ms": 14.139,
+      "scan_ms": 11.847949111111111,
+      "bitmap_ms": 0.9991435643564356,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "ent",
+      "matches": 10463,
+      "matches_consistent": true,
+      "fsearch_ms": 14.081,
+      "scan_ms": 12.280356444444443,
+      "bitmap_ms": 0.792170336,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": "com",
+      "matches": 5780,
+      "matches_consistent": true,
+      "fsearch_ms": 14.632,
+      "scan_ms": 11.266601777777778,
+      "bitmap_ms": 0.3594877562724014,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": ".js",
+      "matches": 142693,
+      "matches_consistent": true,
+      "fsearch_ms": 13.361,
+      "scan_ms": 11.812125,
+      "bitmap_ms": 12.379239625,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    },
+    {
+      "query": ".ts",
+      "matches": 76182,
+      "matches_consistent": true,
+      "fsearch_ms": 14.989,
+      "scan_ms": 11.823759333333333,
+      "bitmap_ms": 12.465224000000001,
+      "bitmap_full_ms": null,
+      "no_trigram_ms": null
+    }
+  ]
+}

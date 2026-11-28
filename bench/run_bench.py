@@ -602,11 +602,41 @@ def main():
     lines.append("")
     lines.append("| Section | Bytes |")
     lines.append("| --- | --- |")
-    for name in ("roots", "names", "folders", "files", "order", "dict", "ranges", "postings", "checksum"):
+    for name in (
+        "roots",
+        "excludes",
+        "names",
+        "folders",
+        "files",
+        "order",
+        "dict",
+        "ranges",
+        "parent-paths",
+        "postings",
+        "checksum",
+    ):
         if name in sections:
             lines.append("| %s | %s |" % (name, f"{sections[name]:,}"))
     lines.append("| **total** | **%s** |" % f"{db_size:,}")
     lines.append("")
+    range_counts = {
+        name: int(count)
+        for name, count in re.findall(r"([a-z]+)=(\d+)", stats.get("ranges", ""))
+    }
+    if range_counts:
+        # RANGES stores a value column and an id column per field: 5 bytes of
+        # field header plus 12 bytes per (value, id) pair.  The section header
+        # is one u32 field count.
+        lines.append(
+            "RANGES breakdown (5 B field header + 12 B per `(value, id)` pair):"
+        )
+        lines.append("")
+        lines.append("| Field | Entries | Bytes |")
+        lines.append("| --- | ---: | ---: |")
+        for name, count in range_counts.items():
+            lines.append("| %s | %s | %s |" % (name, f"{count:,}", f"{5 + 12 * count:,}"))
+        lines.append("| field count | — | 4 |")
+        lines.append("")
     lines.append(
         "Base (names + entry records): %s. Index extra: %s of the base (%.2f×; "
         "plan budget 1.5×). Total / base: %.2f×."
