@@ -352,6 +352,38 @@ fn replace_section(
 }
 
 ///|
+/// Decode the ORDER section as the global ids it stores.
+fn order_section_values(bytes : Bytes) -> Array[UInt32] {
+  let (_, sections) = database_parts(bytes)
+  for (kind, data) in sections {
+    if kind == 6 {
+      let values : Array[UInt32] = []
+      let mut offset = 0
+      while offset < data.length() {
+        values.push(get_test_u32(data, offset))
+        offset = offset + 4
+      }
+      return values
+    }
+  }
+  abort("missing ORDER section")
+}
+
+///|
+/// Re-encode a mutated ORDER sequence and repair the checksums.
+fn replace_order_values(bytes : Bytes, values : Array[UInt32]) -> Bytes {
+  let out : Array[Byte] = []
+  for value in values {
+    let mut shift = 0
+    while shift < 4 {
+      out.push(((value >> (shift * 8)) & 0xFFU).to_byte())
+      shift = shift + 1
+    }
+  }
+  replace_section(bytes, 6, Bytes::from_array(out[:]))
+}
+
+///|
 /// Replace one dictionary key's Ids blob, preserving every other key.
 fn replace_dict_ids(bytes : Bytes, key_index : Int32, ids : Bytes) -> Bytes {
   let (header, sections) = database_parts(bytes)
@@ -1090,6 +1122,78 @@ test "full verification rejects range values that no longer match Store" {
     replace_section(bytes, 8, Bytes::from_array(ranges[:])),
     "size range values",
   )
+}
+
+///|
+test "normal load checks name order but defers the deep path tie-break" {
+  let bytes = encoded(sample_index())
+  let values = order_section_values(bytes)
+  // sample_index has two `same.txt` entries whose only difference is the
+  // parent path. Canonical ids place them at 4 (/data/same.txt) and 5
+  // (/data/sub/same.txt); they are adjacent because ORDER sorts by name first.
+  let mut left = -1
+  let mut right = -1
+  for position in 0..<values.length() {
+    if values[position] == 4U {
+      left = position
+    }
+    if values[position] == 5U {
+      right = position
+    }
+  }
+  assert_true(left >= 0 && right >= 0)
+  assert_true(left == right + 1 || right == left + 1)
+  let swapped : Array[UInt32] = []
+  for value in values {
+    swapped.push(value)
+  }
+  let saved = swapped[left]
+  swapped[left] = swapped[right]
+  swapped[right] = saved
+  // Names stay equal, so the cheap check accepts the file; the full semantic
+  // path tie-break still rejects it under verify=true.
+  assert_semantic_tamper(
+    replace_order_values(bytes, swapped),
+    "order is not sorted by path",
+  )
+}
+
+///|
+test "normal load rejects ORDER that is no longer sorted by name" {
+  let bytes = encoded(sample_index())
+  let values = order_section_values(bytes)
+  let store = decoded(bytes, verify=false).store()
+  let order = store.entries_in_order()
+  assert_true(order.length() >= 2)
+  assert_false(
+    @util.eq_bytes(
+      store.entry_name(order[0]),
+      store.entry_name(order[1]),
+      false,
+    ),
+  )
+  let swapped : Array[UInt32] = []
+  for value in values {
+    swapped.push(value)
+  }
+  let saved = swapped[0]
+  swapped[0] = swapped[1]
+  swapped[1] = saved
+  let tampered = replace_order_values(bytes, swapped)
+  match database_error(tampered, verify=false) {
+    @index.DbError::Corrupt(actual) =>
+      if !actual.contains("order is not sorted by name") {
+        abort("unexpected corruption message: \{actual}")
+      }
+    other => abort("expected a name-order error, got \{other.message()}")
+  }
+  match database_error(tampered, verify=true) {
+    @index.DbError::Corrupt(actual) =>
+      if !actual.contains("order is not sorted by name") {
+        abort("unexpected corruption message: \{actual}")
+      }
+    other => abort("expected a name-order error, got \{other.message()}")
+  }
 }
 
 ///|

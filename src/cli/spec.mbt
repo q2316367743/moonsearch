@@ -74,9 +74,11 @@ fn filter_options() -> Array[@argparse.OptionArg] {
       about="Restrict the result kind: any, file, or folder",
       default_values=["any"],
     ),
-    @argparse.OptionArg("engine", about="Execution engine: scan or bitmap", default_values=[
-      "bitmap",
-    ]),
+    @argparse.OptionArg(
+      "engine",
+      about="Execution engine: scan or bitmap; unindexed terms fall back to a scan",
+      default_values=["bitmap"],
+    ),
     @argparse.OptionArg(
       "root",
       about="Root directory for a live scan; may be repeated",
@@ -224,7 +226,10 @@ fn scan_flags() -> Array[@argparse.FlagArg] {
       "allow-nested-roots",
       about="Allow roots that are nested inside each other",
     ),
-    @argparse.FlagArg("no-trigram", about="Do not build the trigram index"),
+    @argparse.FlagArg(
+      "no-trigram",
+      about="Do not build the trigram index; name substrings then scan",
+    ),
   ]
 }
 
@@ -307,7 +312,7 @@ fn info_command() -> @argparse.Command {
 pub fn build_command() -> @argparse.Command {
   @argparse.Command(
     "moonsearch",
-    about="Fast file search over a persistent inverted index",
+    about="Fast file search over a persistent inverted index\nName substrings use the trigram index; globs, regexes, short needles, and path: fall back to a full scan.",
     version=@core.VERSION_TEXT,
     options=global_options(),
     flags=global_flags(),

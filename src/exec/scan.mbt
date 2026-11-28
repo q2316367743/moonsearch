@@ -111,6 +111,7 @@ pub fn exec_scan_ordered_stats(
     resolved_zone(options),
     compat~,
   )
+  let needs = compiled.needs()
   let hits : Array[@core.EntryRef] = []
   if compiled.expr is None {
     return {
@@ -128,7 +129,7 @@ pub fn exec_scan_ordered_stats(
   while index >= 0 && index < order.length() {
     let entry = order[index]
     candidates = candidates + 1
-    if compiled.matches(EntryView::of_store(store, entry)) {
+    if compiled.matches(EntryView::of_store_for(store, entry, needs)) {
       hits.push(entry)
       if options.limit > 0 && hits.length() >= options.limit {
         stopped_early = index > 0 &&
@@ -191,6 +192,7 @@ pub fn exec_count_with_stats(
     resolved_zone(options),
     compat~,
   )
+  let needs = compiled.needs()
   match compiled.expr {
     None => { count: 0, candidates: 0, }
     All => { count: store.entry_count(), candidates: 0, }
@@ -199,7 +201,7 @@ pub fn exec_count_with_stats(
       let mut candidates = 0
       for entry in store.entries_in_order() {
         candidates = candidates + 1
-        if compiled.matches(EntryView::of_store(store, entry)) {
+        if compiled.matches(EntryView::of_store_for(store, entry, needs)) {
           count = count + 1
         }
       }

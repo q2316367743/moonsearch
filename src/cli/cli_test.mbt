@@ -75,6 +75,7 @@ async test "top-level help is stable" {
       #|Usage: moonsearch [options] [command]
       #|
       #|Fast file search over a persistent inverted index
+      #|Name substrings use the trigram index; globs, regexes, short needles, and path: fall back to a full scan.
       #|
       #|Commands:
       #|  index   Scan the configured roots and write the index
@@ -124,7 +125,7 @@ async test "index help is stable" {
       #|  --one-file-system                                  Do not cross file system boundaries
       #|  --no-default-excludes                              Do not skip /proc, /sys, /dev, and /run
       #|  --allow-nested-roots                               Allow roots that are nested inside each other
-      #|  --no-trigram                                       Do not build the trigram index
+      #|  --no-trigram                                       Do not build the trigram index; name substrings then scan
       #|  -r, --root <root>                                  Root directory to index; may be repeated
       #|  -x, --exclude <exclude>                            Exclude pattern; may be repeated
       #|  --exclude-scope <exclude-scope>                    Pattern scope: full_path or basename [default: full_path]
@@ -161,7 +162,7 @@ async test "update help is stable" {
       #|  --one-file-system                                  Do not cross file system boundaries
       #|  --no-default-excludes                              Do not skip /proc, /sys, /dev, and /run
       #|  --allow-nested-roots                               Allow roots that are nested inside each other
-      #|  --no-trigram                                       Do not build the trigram index
+      #|  --no-trigram                                       Do not build the trigram index; name substrings then scan
       #|  -r, --root <root>                                  Root directory to index; may be repeated
       #|  -x, --exclude <exclude>                            Exclude pattern; may be repeated
       #|  --exclude-scope <exclude-scope>                    Pattern scope: full_path or basename [default: full_path]
@@ -207,7 +208,7 @@ async test "search help is stable" {
       #|  --json                       Print one JSON object per result
       #|  --basename                   Print only the entry name
       #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>            Execution engine: scan or bitmap [default: bitmap]
+      #|  --engine <engine>            Execution engine: scan or bitmap; unindexed terms fall back to a scan [default: bitmap]
       #|  --root <root>                Root directory for a live scan; may be repeated
       #|  --fast-fields <fast-fields>  Range fields loaded eagerly: size,mtime [default: size,mtime]
       #|  --sort <sort>                Result order: name, path, size, mtime, ext, or type [default: name]
@@ -248,7 +249,7 @@ async test "count help is stable" {
       #|  --auto-index                 Build the index first when the database is missing
       #|  --compat                     Reproduce upstream query error recovery
       #|  --type <type>                Restrict the result kind: any, file, or folder [default: any]
-      #|  --engine <engine>            Execution engine: scan or bitmap [default: bitmap]
+      #|  --engine <engine>            Execution engine: scan or bitmap; unindexed terms fall back to a scan [default: bitmap]
       #|  --root <root>                Root directory for a live scan; may be repeated
       #|  --fast-fields <fast-fields>  Range fields loaded eagerly: size,mtime [default: size,mtime]
     ),

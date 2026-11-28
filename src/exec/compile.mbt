@@ -161,6 +161,46 @@ pub fn CompiledScan::needs_folder_totals(self : CompiledScan) -> Bool {
 }
 
 ///|
+/// Optional entry-view fields this compiled expression can observe.
+fn CompiledScan::needs(self : CompiledScan) -> ScanNeeds {
+  expr_needs(self.expr)
+}
+
+///|
+/// Collect the union of view fields read by every leaf in an expression.
+fn expr_needs(expr : ScanExpr) -> ScanNeeds {
+  match expr {
+    All | None => ScanNeeds::new()
+    Test(term) => term_needs(term)
+    And(left, right) | Or(left, right) =>
+      expr_needs(left).union(expr_needs(right))
+    Not(inner) => expr_needs(inner)
+  }
+}
+
+///|
+/// View fields one leaf predicate reads. Kind and visibility filters only use
+/// the entry reference and flags, which every view carries.
+fn term_needs(term : ScanTerm) -> ScanNeeds {
+  match term.body {
+    Name(matcher) =>
+      if matcher.path {
+        ScanNeeds::new(path=true)
+      } else {
+        ScanNeeds::new(name=true)
+      }
+    Kind(_) | Visibility(_) => ScanNeeds::new()
+    Category(_, _) | Extensions(_) | ContentType(_) => ScanNeeds::new(name=true)
+    Size(_) => ScanNeeds::new(size=true)
+    Depth(_) => ScanNeeds::new(depth=true)
+    ChildCount(_) | ChildFileCount(_) | ChildFolderCount(_) | Empty =>
+      ScanNeeds::new(child_counts=true)
+    Modified(_) => ScanNeeds::new(mtime=true)
+    Parent(_) => ScanNeeds::new(parent_path=true)
+  }
+}
+
+///|
 /// Conservatively detect fields unavailable during pre-order streaming.
 fn expr_needs_folder_totals(expr : ScanExpr) -> Bool {
   match expr {

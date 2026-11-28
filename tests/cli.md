@@ -12,6 +12,7 @@ $ moonx q2316367743/moonsearch/cmd/moonsearch --help
 Usage: moonsearch [options] [command]
 
 Fast file search over a persistent inverted index
+Name substrings use the trigram index; globs, regexes, short needles, and path: fall back to a full scan.
 
 Commands:
   index   Scan the configured roots and write the index
@@ -64,7 +65,7 @@ Options:
   --one-file-system                                  Do not cross file system boundaries
   --no-default-excludes                              Do not skip /proc, /sys, /dev, and /run
   --allow-nested-roots                               Allow roots that are nested inside each other
-  --no-trigram                                       Do not build the trigram index
+  --no-trigram                                       Do not build the trigram index; name substrings then scan
   -r, --root <root>                                  Root directory to index; may be repeated
   -x, --exclude <exclude>                            Exclude pattern; may be repeated
   --exclude-scope <exclude-scope>                    Pattern scope: full_path or basename [default: full_path]
@@ -94,7 +95,7 @@ Options:
   --one-file-system                                  Do not cross file system boundaries
   --no-default-excludes                              Do not skip /proc, /sys, /dev, and /run
   --allow-nested-roots                               Allow roots that are nested inside each other
-  --no-trigram                                       Do not build the trigram index
+  --no-trigram                                       Do not build the trigram index; name substrings then scan
   -r, --root <root>                                  Root directory to index; may be repeated
   -x, --exclude <exclude>                            Exclude pattern; may be repeated
   --exclude-scope <exclude-scope>                    Pattern scope: full_path or basename [default: full_path]

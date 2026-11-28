@@ -19,58 +19,154 @@ pub(all) struct EntryView {
 }
 
 ///|
-/// Build a view from one immutable Store entry.
+/// Optional fields a compiled predicate can observe.
+///
+/// The scan engine builds one view per entry. Materializing the full path,
+/// parent path, depth chain, and folder totals for every entry costs far more
+/// than the predicate itself for name-only queries, so the engine asks for
+/// exactly the fields the compiled expression can read. Every unrequested
+/// field keeps its documented default (empty bytes, zero, `None`); evaluation
+/// must never rely on a field it did not request.
+priv struct ScanNeeds {
+  name : Bool
+  path : Bool
+  size : Bool
+  mtime : Bool
+  depth : Bool
+  child_counts : Bool
+  parent_path : Bool
+}
+
+///|
+/// Build a requirement set; unnamed fields default to `false`.
+fn ScanNeeds::new(
+  name~ : Bool = false,
+  path~ : Bool = false,
+  size~ : Bool = false,
+  mtime~ : Bool = false,
+  depth~ : Bool = false,
+  child_counts~ : Bool = false,
+  parent_path~ : Bool = false,
+) -> ScanNeeds {
+  { name, path, size, mtime, depth, child_counts, parent_path, }
+}
+
+///|
+/// A requirement set that computes every optional field.
+fn ScanNeeds::all() -> ScanNeeds {
+  ScanNeeds::new(
+    name=true,
+    path=true,
+    size=true,
+    mtime=true,
+    depth=true,
+    child_counts=true,
+    parent_path=true,
+  )
+}
+
+///|
+/// Union of two requirement sets.
+fn ScanNeeds::union(self : ScanNeeds, other : ScanNeeds) -> ScanNeeds {
+  ScanNeeds::new(
+    name=self.name || other.name,
+    path=self.path || other.path,
+    size=self.size || other.size,
+    mtime=self.mtime || other.mtime,
+    depth=self.depth || other.depth,
+    child_counts=self.child_counts || other.child_counts,
+    parent_path=self.parent_path || other.parent_path,
+  )
+}
+
+///|
+/// Build a view from one immutable Store entry with every optional field.
+///
+/// Prefer `of_store_for` inside the executor; this constructor is kept for
+/// callers that genuinely need the complete view.
 pub fn EntryView::of_store(
   store : @core.Store,
   entry : @core.EntryRef,
 ) -> EntryView {
-  let parent_id : Int32 = match entry.kind {
-    @core.Folder =>
-      match store.folder(entry.id) {
-        Some(folder) => folder.parent()
-        None => @core.NO_PARENT
-      }
-    @core.File =>
-      match store.file(entry.id) {
-        Some(file) => file.parent()
-        None => @core.NO_PARENT
-      }
-  }
-  let parent_path = if parent_id >= 0 {
-    Some(store.folder_path(parent_id))
-  } else {
-    None
-  }
-  let (flags, child_count, num_files, num_folders) = match entry.kind {
+  EntryView::of_store_for(store, entry, ScanNeeds::all())
+}
+
+///|
+/// Build a view that materializes only the fields in `needs`.
+fn EntryView::of_store_for(
+  store : @core.Store,
+  entry : @core.EntryRef,
+  needs : ScanNeeds,
+) -> EntryView {
+  let (flags, parent_id, child_count, num_files, num_folders) = match
+    entry.kind {
     @core.Folder =>
       match store.folder(entry.id) {
         Some(folder) =>
           (
             folder.flags(),
+            folder.parent(),
             folder.child_count(),
             folder.num_files(),
             folder.num_folders(),
           )
-        None => (0, 0, 0, 0)
+        None => (0, @core.NO_PARENT, 0, 0, 0)
       }
     @core.File =>
       match store.file(entry.id) {
-        Some(file) => (file.flags(), 0, 0, 0)
-        None => (0, 0, 0, 0)
+        Some(file) => (file.flags(), file.parent(), 0U, 0U, 0U)
+        None => (0, @core.NO_PARENT, 0, 0, 0)
       }
   }
+  let parent_path = if needs.parent_path && parent_id >= 0 {
+    Some(store.folder_path(parent_id))
+  } else {
+    None
+  }
   {
-    path: store.entry_path(entry),
-    name: store.entry_name(entry).to_owned(),
+    path: if needs.path {
+      store.entry_path(entry)
+    } else {
+      b""
+    },
+    name: if needs.name {
+      store.entry_name(entry).to_owned()
+    } else {
+      b""
+    },
     kind: entry.kind,
-    size: store.entry_size(entry).unwrap_or(0L),
-    mtime: store.entry_mtime(entry).unwrap_or(0L),
+    size: if needs.size {
+      store.entry_size(entry).unwrap_or(0L)
+    } else {
+      0L
+    },
+    mtime: if needs.mtime {
+      store.entry_mtime(entry).unwrap_or(0L)
+    } else {
+      0L
+    },
     flags,
-    depth: view_depth(store, entry),
+    depth: if needs.depth {
+      view_depth(store, entry)
+    } else {
+      0
+    },
     parent_path,
-    child_count,
-    num_files,
-    num_folders,
+    child_count: if needs.child_counts {
+      child_count
+    } else {
+      0U
+    },
+    num_files: if needs.child_counts {
+      num_files
+    } else {
+      0U
+    },
+    num_folders: if needs.child_counts {
+      num_folders
+    } else {
+      0U
+    },
   }
 }
 

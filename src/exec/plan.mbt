@@ -998,7 +998,8 @@ fn filter_result(
   if source.ids.is_empty() {
     return source
   }
-  let pred = fn(id) { verify_term(term, context, id) }
+  let needs = term_needs(term)
+  let pred = fn(id) { verify_term(term, needs, context, id) }
   match (source.ids, source.recyclable) {
     (@ids.Ids::Sorted(_), Some(owned)) => {
       compact_filter(owned, pred)
@@ -1032,10 +1033,16 @@ fn filter_result(
 ///
 /// Candidates come from postings and range slices, so an id is expected to be
 /// in range; an out-of-range id is treated as a non-match instead of panicking.
-fn verify_term(term : ScanTerm, context : EvalContext, id : Int32) -> Bool {
+fn verify_term(
+  term : ScanTerm,
+  needs : ScanNeeds,
+  context : EvalContext,
+  id : Int32,
+) -> Bool {
   context.candidates = context.candidates + 1
   match context.store.entry_at(id) {
-    Some(entry) => eval_term(term, EntryView::of_store(context.store, entry))
+    Some(entry) =>
+      eval_term(term, EntryView::of_store_for(context.store, entry, needs))
     None => false
   }
 }

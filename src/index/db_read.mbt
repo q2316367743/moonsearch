@@ -45,13 +45,18 @@ fn decode_index(
     built_at=envelope.built_at,
     order~,
   )
-  validate_canonical_order(store)
+  // Normal loads keep only the cheap structural check: ORDER must be a
+  // permutation of in-range ids and its names must be non-decreasing. The
+  // canonical path tie-break materializes a full path per same-named entry, so
+  // it belongs to the deep semantic pass behind `verify=true` (S08's split).
+  validate_name_order(store)
   let dict = parse_dict(bytes, envelope, total, decode_budget)
   let load_eager = if verify { RangeFieldSet::all() } else { eager }
   let ranges = parse_ranges(bytes, envelope, store, total, load_eager)
   let trigram = parse_postings(bytes, envelope, total, decode_budget)
   let index = Index::restore(store~, dict~, ranges~, trigram~, excludes~)
   if verify {
+    validate_canonical_order(store)
     validate_semantics(index)
   }
   (index, envelope)
@@ -466,12 +471,40 @@ fn parse_order(
 }
 
 ///|
-/// Validate that ORDER is still the canonical `(name, path)` sequence.
+/// Validate the part of the canonical order that is cheap enough for every
+/// load: adjacent names must be non-decreasing.
+///
+/// ORDER is already known to be a permutation of in-range ids from
+/// `parse_order`, so this check plus the section size and checksums rejects
+/// truncated, reordered-by-name, and out-of-range order sections. The exact
+/// `(name, path)` tie-break is a deep semantic check and runs under
+/// `verify=true` in `validate_canonical_order`.
+fn validate_name_order(store : @core.Store) -> Unit raise DbError {
+  let order = store.entries_in_order()
+  for position in 1..<order.length() {
+    let left = order[position - 1]
+    let right = order[position]
+    let name_order = @util.cmp_paths(
+      store.entry_name(left),
+      store.entry_name(right),
+    )
+    if name_order > 0 {
+      raise DbError::Corrupt("order is not sorted by name")
+    }
+  }
+}
+
+///|
+/// Validate that ORDER is the canonical `(name, path)` sequence.
 ///
 /// Comparing adjacent names is free for the common case; a full path is only
 /// materialized when the names tie. Exact name/path ties use the persisted
 /// store-wide id, which puts folders before files and matches `Store::new`'s
 /// linear merge of the two physically sorted arrays.
+///
+/// This is a deep semantic check: it materializes one full path per tie and is
+/// therefore only run for `verify=true`. Normal loads call
+/// `validate_name_order` instead.
 fn validate_canonical_order(store : @core.Store) -> Unit raise DbError {
   let order = store.entries_in_order()
   for position in 1..<order.length() {
